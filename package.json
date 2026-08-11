@@ -1,6 +1,8 @@
 {
   "name": "adspilot-mcp",
   "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
   "description": "AdsPilot — Google Ads MCP server: connect your site, let Claude run your ads (write-enabled, human-approval gated)",
   "type": "module",
   "main": "dist/index.js",

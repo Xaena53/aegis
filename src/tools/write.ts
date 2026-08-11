@@ -17,6 +17,11 @@ function writesDisabled() {
   );
 }
 
+// Yazma araçları: openWorld (dış API), idempotent değil.
+// destructiveHint: para harcamasını/mevcut durumu değiştirenlerde true.
+const WRITE_SAFE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
+
 /**
  * Ülke geo hedef ID'leri: Google'ın ülke geoTargetConstant ID'si = 2000 + ISO 3166 sayısal kod.
  * (Örn. TR=792→2792, US=840→2840 — Google'ın kendi listesiyle birebir doğrulanmış kalıp.)
@@ -40,6 +45,17 @@ function invalidId(label: string, v: string): string | null {
   return /^\d+$/.test(v.trim()) ? null : `Geçersiz ${label}: '${v}' — sadece rakamlardan oluşmalı.`;
 }
 
+/** Büyük/küçük harf duyarsız tekilleştirme; sıra korunur. */
+function dedupe(items: string[]): string[] {
+  const seen = new Set<string>();
+  return items.filter((s) => {
+    const k = s.trim().toLowerCase();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 /** Bütçe kelepçesi: tavanı aşan istekleri reddeder. */
 function budgetGuard(amount: number): string | null {
   const cap = getConfig().maxDailyBudget;
@@ -54,25 +70,29 @@ function budgetGuard(amount: number): string | null {
 }
 
 export function registerWriteTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "create_search_campaign",
-    "Yeni bir Arama kampanyası oluşturur (bütçe + kampanya + reklam grubu + anahtar kelimeler). GÜVENLİK: kampanya her zaman PAUSED (duraklatılmış) oluşturulur; yayına almak için kullanıcı onayı sonrası set_campaign_status kullanılır.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID"),
-      name: z.string().min(1).describe("Kampanya adı"),
-      dailyBudget: z.number().positive().describe("Günlük bütçe (hesap para biriminde, örn. 50)"),
-      keywords: z
-        .array(z.string().min(1))
-        .min(1)
-        .max(50)
-        .describe("Anahtar kelimeler (PHRASE eşleme ile eklenir)"),
-      countryCodes: z
-        .array(z.string().length(2))
-        .min(1)
-        .describe(
-          "Hedef ülkeler, ISO alpha-2 (örn. ['TR']). ZORUNLU — verilmezse Google kampanyayı DÜNYA GENELİ yayınlar ve bütçe çöpe gider."
-        ),
-      adGroupName: z.string().optional().describe("Reklam grubu adı (varsayılan: 'Reklam Grubu 1')"),
+      description:
+        "Yeni bir Arama kampanyası oluşturur (bütçe + kampanya + ülke hedefleme + reklam grubu + anahtar kelimeler). GÜVENLİK: kampanya her zaman PAUSED (duraklatılmış) oluşturulur; yayına almak için kullanıcı onayı sonrası set_campaign_status kullanılır.",
+      annotations: WRITE_SAFE,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        name: z.string().min(1).describe("Kampanya adı"),
+        dailyBudget: z.number().positive().describe("Günlük bütçe (hesap para biriminde, örn. 50)"),
+        keywords: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(50)
+          .describe("Anahtar kelimeler (PHRASE eşleme ile eklenir)"),
+        countryCodes: z
+          .array(z.string().length(2))
+          .min(1)
+          .describe(
+            "Hedef ülkeler, ISO alpha-2 (örn. ['TR']). ZORUNLU — verilmezse Google kampanyayı DÜNYA GENELİ yayınlar ve bütçe çöpe gider."
+          ),
+        adGroupName: z.string().optional().describe("Reklam grubu adı (varsayılan: 'Reklam Grubu 1')"),
+      },
     },
     async ({ customerId, name, dailyBudget, keywords, countryCodes, adGroupName }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
@@ -87,6 +107,8 @@ export function registerWriteTools(server: McpServer) {
           );
         geoIds.push(id);
       }
+      const uniqueKeywords = dedupe(keywords);
+      if (!uniqueKeywords.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
@@ -144,7 +166,7 @@ export function registerWriteTools(server: McpServer) {
               location: { geo_target_constant: `geoTargetConstants/${gid}` },
             },
           })),
-          ...keywords.map((kw) => ({
+          ...uniqueKeywords.map((kw) => ({
             entity: "ad_group_criterion",
             operation: "create" as const,
             resource: {
@@ -162,7 +184,7 @@ export function registerWriteTools(server: McpServer) {
             ?.map((v: any) => v?.resource_name)
             ?.filter(Boolean) ?? [];
         return text(
-          `Kampanya PAUSED olarak oluşturuldu (${keywords.length} anahtar kelime, günlük bütçe ${dailyBudget}, hedef: ${countryCodes.join(", ").toUpperCase()}).\n` +
+          `Kampanya PAUSED olarak oluşturuldu (${uniqueKeywords.length} anahtar kelime, günlük bütçe ${dailyBudget}, hedef: ${countryCodes.join(", ").toUpperCase()}).\n` +
             `Oluşan kaynaklar:\n${created.join("\n")}\n\n` +
             `SONRAKİ ADIM: Reklam metni ekle (create_responsive_search_ad), kullanıcı onayını al, sonra set_campaign_status ile yayına al.`
         );
@@ -172,20 +194,35 @@ export function registerWriteTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "create_responsive_search_ad",
-    "Bir reklam grubuna Duyarlı Arama Ağı Reklamı (RSA) ekler. En az 3 başlık (30 karakter) ve 2 açıklama (90 karakter) gerekir.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID"),
-      adGroupId: z.string().describe("Reklam grubu ID"),
-      finalUrl: z.string().url().describe("Reklamın gideceği sayfa URL'i"),
-      headlines: z.array(z.string().min(1).max(30)).min(3).max(15).describe("Başlıklar (maks 30 karakter)"),
-      descriptions: z.array(z.string().min(1).max(90)).min(2).max(4).describe("Açıklamalar (maks 90 karakter)"),
+      description:
+        "Bir reklam grubuna Duyarlı Arama Ağı Reklamı (RSA) ekler. En az 3 başlık (30 karakter) ve 2 açıklama (90 karakter) gerekir; başlık/açıklamalar birbirinden farklı olmalı.",
+      annotations: WRITE_SAFE,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        adGroupId: z.string().describe("Reklam grubu ID"),
+        finalUrl: z.string().url().describe("Reklamın gideceği sayfa URL'i"),
+        headlines: z.array(z.string().min(1).max(30)).min(3).max(15).describe("Başlıklar (maks 30 karakter)"),
+        descriptions: z.array(z.string().min(1).max(90)).min(2).max(4).describe("Açıklamalar (maks 90 karakter)"),
+      },
     },
     async ({ customerId, adGroupId, finalUrl, headlines, descriptions }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
       const idErr = invalidId("reklam grubu ID", adGroupId);
       if (idErr) return text(idErr);
+      // Google tekrar eden varlıkları reddeder — burada anlaşılır mesajla yakala
+      const uh = dedupe(headlines);
+      const ud = dedupe(descriptions);
+      if (uh.length < 3)
+        return text(
+          `Reddedildi: tekrarlar ayıklanınca ${uh.length} benzersiz başlık kaldı — en az 3 FARKLI başlık gerekli.`
+        );
+      if (ud.length < 2)
+        return text(
+          `Reddedildi: tekrarlar ayıklanınca ${ud.length} benzersiz açıklama kaldı — en az 2 FARKLI açıklama gerekli.`
+        );
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
@@ -196,8 +233,8 @@ export function registerWriteTools(server: McpServer) {
             ad: {
               final_urls: [finalUrl],
               responsive_search_ad: {
-                headlines: headlines.map((t) => ({ text: t })),
-                descriptions: descriptions.map((t) => ({ text: t })),
+                headlines: uh.map((t) => ({ text: t })),
+                descriptions: ud.map((t) => ({ text: t })),
               },
             },
           },
@@ -212,13 +249,17 @@ export function registerWriteTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "update_campaign_budget",
-    "Bir kampanyanın günlük bütçesini günceller. Güvenlik tavanı (ADSPILOT_MAX_DAILY_BUDGET) üzerindeki istekler reddedilir.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID"),
-      campaignId: z.string().describe("Kampanya ID"),
-      newDailyBudget: z.number().positive().describe("Yeni günlük bütçe (hesap para biriminde)"),
+      description:
+        "Bir kampanyanın günlük bütçesini günceller. Güvenlik tavanı (ADSPILOT_MAX_DAILY_BUDGET) üzerindeki istekler ve paylaşımlı bütçeler reddedilir.",
+      annotations: WRITE_DESTRUCTIVE,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        campaignId: z.string().describe("Kampanya ID"),
+        newDailyBudget: z.number().positive().describe("Yeni günlük bütçe (hesap para biriminde)"),
+      },
     },
     async ({ customerId, campaignId, newDailyBudget }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
@@ -255,37 +296,45 @@ export function registerWriteTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "add_keywords",
-    "Mevcut bir reklam grubuna anahtar kelime ekler.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID"),
-      adGroupId: z.string().describe("Reklam grubu ID"),
-      keywords: z.array(z.string().min(1)).min(1).max(100).describe("Eklenecek anahtar kelimeler"),
-      matchType: z
-        .enum(["EXACT", "PHRASE", "BROAD"])
-        .optional()
-        .describe("Eşleme türü (varsayılan PHRASE)"),
-      negative: z.boolean().optional().describe("true ise negatif anahtar kelime olarak eklenir"),
+      description: "Mevcut bir reklam grubuna anahtar kelime ekler.",
+      annotations: WRITE_SAFE,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        adGroupId: z.string().describe("Reklam grubu ID"),
+        keywords: z.array(z.string().min(1)).min(1).max(100).describe("Eklenecek anahtar kelimeler"),
+        matchType: z
+          .enum(["EXACT", "PHRASE", "BROAD"])
+          .optional()
+          .describe("Eşleme türü (varsayılan PHRASE)"),
+        negative: z.boolean().optional().describe("true ise negatif anahtar kelime olarak eklenir"),
+      },
     },
     async ({ customerId, adGroupId, keywords, matchType, negative }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
       const idErr = invalidId("reklam grubu ID", adGroupId);
       if (idErr) return text(idErr);
+      const unique = dedupe(keywords);
+      if (!unique.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
         await customer.adGroupCriteria.create(
-          keywords.map((kw) => ({
+          unique.map((kw) => ({
             ad_group: ResourceNames.adGroup(cid, adGroupId),
             // negatif kriterlerde status gönderilmez
             ...(negative ? { negative: true } : { status: enums.AdGroupCriterionStatus.ENABLED }),
             keyword: { text: kw, match_type: mt },
           }))
         );
+        const skipped = keywords.length - unique.length;
         return text(
-          `${keywords.length} ${negative ? "negatif " : ""}anahtar kelime eklendi [${matchType ?? "PHRASE"}].`
+          `${unique.length} ${negative ? "negatif " : ""}anahtar kelime eklendi [${matchType ?? "PHRASE"}]` +
+            (skipped ? ` (${skipped} tekrar/boş atlandı)` : "") +
+            "."
         );
       } catch (e) {
         return err(e);
@@ -293,17 +342,21 @@ export function registerWriteTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "set_campaign_status",
-    "Kampanyayı yayına alır (ENABLED) veya duraklatır (PAUSED). GÜVENLİK: ENABLED yapmak gerçek para harcatır — yalnızca kullanıcı bu konuşmada açıkça onay verdiyse confirm=true gönder.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID"),
-      campaignId: z.string().describe("Kampanya ID"),
-      status: z.enum(["ENABLED", "PAUSED"]).describe("Hedef durum"),
-      confirm: z
-        .boolean()
-        .optional()
-        .describe("ENABLED için zorunlu: kullanıcının açık onayını aldıysan true"),
+      description:
+        "Kampanyayı yayına alır (ENABLED) veya duraklatır (PAUSED). GÜVENLİK: ENABLED yapmak gerçek para harcatır — yalnızca kullanıcı bu konuşmada açıkça onay verdiyse confirm=true gönder.",
+      annotations: WRITE_DESTRUCTIVE,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        campaignId: z.string().describe("Kampanya ID"),
+        status: z.enum(["ENABLED", "PAUSED"]).describe("Hedef durum"),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe("ENABLED için zorunlu: kullanıcının açık onayını aldıysan true"),
+      },
     },
     async ({ customerId, campaignId, status, confirm }) => {
       if (!getConfig().writeEnabled) return writesDisabled();

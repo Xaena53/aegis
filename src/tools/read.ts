@@ -14,9 +14,16 @@ function err(e: unknown) {
   return { content: [{ type: "text" as const, text: formatAdsError(e) }], isError: true };
 }
 
-/** Son N günü kapsayan GAQL tarih koşulu (bugün hariç dünden geriye). */
+const READ_ANNOTATIONS = { readOnlyHint: true, openWorldHint: true };
+
+/**
+ * Son N günü kapsayan GAQL tarih koşulu (bugün hariç dünden geriye).
+ * Yerel saat kullanılır — UTC gece yarısı kaymasıyla gün-kayması yaşanmasın.
+ * (Hesabın kendi saat dilimi farklıysa ±1 gün sapabilir; raporlama için kabul edilebilir.)
+ */
 function dateRange(days: number): string {
-  const fmt = (t: Date) => t.toISOString().slice(0, 10);
+  const fmt = (t: Date) =>
+    `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
   const end = new Date();
   end.setDate(end.getDate() - 1);
   const start = new Date(end);
@@ -25,10 +32,13 @@ function dateRange(days: number): string {
 }
 
 export function registerReadTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "list_accounts",
-    "Bağlı Google hesabının erişebildiği tüm Google Ads müşteri hesaplarını (customer ID) listeler. Diğer araçlara vereceğin customerId'yi buradan seç.",
-    {},
+    {
+      description:
+        "Bağlı Google hesabının erişebildiği tüm Google Ads müşteri hesaplarını (customer ID) listeler; MCC (yönetici) hesapların alt hesapları da gösterilir. Diğer araçlara vereceğin customerId'yi buradan seç.",
+      annotations: READ_ANNOTATIONS,
+    },
     async () => {
       try {
         const ids = await listAccessibleCustomers();
@@ -69,35 +79,48 @@ export function registerReadTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "run_gaql",
-    "Bir hesapta ham GAQL (Google Ads Query Language) sorgusu çalıştırır ve JSON satırları döner. Esnek raporlama için kullan; hazır özet için campaign_performance aracını tercih et.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID (örn. 1234567890)"),
-      query: z.string().describe("GAQL sorgusu, örn: SELECT campaign.name, metrics.clicks FROM campaign WHERE segments.date DURING LAST_30_DAYS"),
-      limit: z.number().int().min(1).max(1000).optional().describe("Maks satır (varsayılan 100)"),
+      description:
+        "Bir hesapta ham GAQL (Google Ads Query Language) sorgusu çalıştırır ve JSON satırları döner. Esnek raporlama için kullan; hazır özet için campaign_performance aracını tercih et.",
+      annotations: READ_ANNOTATIONS,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID (örn. 1234567890)"),
+        query: z.string().describe("GAQL sorgusu, örn: SELECT campaign.name, metrics.clicks FROM campaign WHERE segments.date DURING LAST_30_DAYS"),
+        limit: z.number().int().min(1).max(1000).optional().describe("Maks satır (varsayılan 100)"),
+      },
     },
     async ({ customerId, query, limit }) => {
       try {
         const rows = await getCustomer(customerId).query(query);
         const capped = rows.slice(0, limit ?? 100);
-        return text(
-          `${rows.length} satır (${capped.length} gösteriliyor):\n` +
-            JSON.stringify(capped, null, 2)
-        );
+        // Kompakt JSON + karakter tavanı: dev hesaplarda bağlamı şişirmesin
+        let body = JSON.stringify(capped);
+        const CHAR_CAP = 20_000;
+        if (body.length > CHAR_CAP) {
+          body =
+            body.slice(0, CHAR_CAP) +
+            `\n… [çıktı ${body.length} karakterdi, ${CHAR_CAP}'de kesildi — daha az alan seç veya limit düşür]`;
+        }
+        return text(`${rows.length} satır (${capped.length} gösteriliyor):\n${body}`);
       } catch (e) {
         return err(e);
       }
     }
   );
 
-  server.tool(
+  server.registerTool(
     "campaign_performance",
-    "Hesaptaki kampanyaların son N gündeki performans özetini verir: maliyet, tıklama, gösterim, dönüşüm, CTR, ort. TBM. Hızlı durum fotoğrafı için ilk başvurulacak araç.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID"),
-      days: z.number().int().min(1).max(365).optional().describe("Kaç günlük pencere (varsayılan 30)"),
-      includePaused: z.boolean().optional().describe("Duraklatılmış kampanyalar da dahil edilsin mi (varsayılan true)"),
+      description:
+        "Hesaptaki kampanyaların son N gündeki performans özetini verir: maliyet, tıklama, gösterim, dönüşüm, CTR, ort. TBM. Hızlı durum fotoğrafı için ilk başvurulacak araç.",
+      annotations: READ_ANNOTATIONS,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        days: z.number().int().min(1).max(365).optional().describe("Kaç günlük pencere (varsayılan 30)"),
+        includePaused: z.boolean().optional().describe("Duraklatılmış kampanyalar da dahil edilsin mi (varsayılan true)"),
+      },
     },
     async ({ customerId, days, includePaused }) => {
       try {
@@ -135,13 +158,17 @@ export function registerReadTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "keyword_performance",
-    "Bir kampanyanın (veya tüm hesabın) anahtar kelime bazlı performansını listeler. Boşa harcanan kelimeleri ve kazananları tespit etmek için kullan.",
     {
-      customerId: z.string().describe("Google Ads müşteri ID"),
-      campaignId: z.string().optional().describe("Tek kampanyaya filtrelemek için kampanya ID"),
-      days: z.number().int().min(1).max(365).optional().describe("Kaç günlük pencere (varsayılan 30)"),
+      description:
+        "Bir kampanyanın (veya tüm hesabın) anahtar kelime bazlı performansını listeler. Boşa harcanan kelimeleri ve kazananları tespit etmek için kullan.",
+      annotations: READ_ANNOTATIONS,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        campaignId: z.string().optional().describe("Tek kampanyaya filtrelemek için kampanya ID"),
+        days: z.number().int().min(1).max(365).optional().describe("Kaç günlük pencere (varsayılan 30)"),
+      },
     },
     async ({ customerId, campaignId, days }) => {
       try {
