@@ -1,6 +1,12 @@
 import { z } from "zod";
+import { lookup } from "node:dns/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { extractPageFacts, validateAnalyzeUrl, isPrivateHostname } from "../siteExtract.js";
+import {
+  extractPageFacts,
+  validateAnalyzeUrl,
+  isPrivateHostname,
+  sniffCharset,
+} from "../siteExtract.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -8,42 +14,92 @@ function text(s: string) {
 
 const FETCH_TIMEOUT_MS = 12_000;
 const MAX_BODY_BYTES = 1_500_000; // 1.5MB — dev sayfalara karşı tavan
+const MAX_REDIRECTS = 5;
+
+/**
+ * DNS-rebinding/decimal-IP guard'ı: hostname'in ÇÖZÜMLENDİĞİ adresler de özel olamaz.
+ * (örn. http://2130706433/ → 127.0.0.1, ya da evil.com A-kaydı 192.168.1.1)
+ * Not: çözüm ile bağlantı arasında TOCTOU penceresi kalır (undici IP sabitlemeye izin
+ * vermiyor); self-hosted yerel kullanım için kabul edilen kalıntı risk.
+ */
+async function assertPublicHost(hostname: string): Promise<void> {
+  if (isPrivateHostname(hostname)) {
+    throw new Error(`'${hostname}' yerel/özel ağ adresi — SSRF koruması.`);
+  }
+  let addrs: { address: string }[];
+  try {
+    addrs = await lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    throw new Error(`DNS çözümlenemedi: ${hostname}`);
+  }
+  for (const a of addrs) {
+    if (isPrivateHostname(a.address)) {
+      throw new Error(`'${hostname}' özel ağ adresine çözümleniyor (${a.address}) — SSRF koruması.`);
+    }
+  }
+}
 
 async function fetchPage(url: string): Promise<{ finalUrl: string; html: string; status: number }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; AdsPilotBot/0.1; +https://github.com/Xaena53/google-ads-mcp)",
-        Accept: "text/html,application/xhtml+xml",
-        "Accept-Language": "tr,en;q=0.8",
-      },
-    });
-    // Redirect sonrası varılan host da özel ağ olmamalı (açık redirect → SSRF)
-    const finalUrl = res.url || url;
-    if (isPrivateHostname(new URL(finalUrl).hostname)) {
-      throw new Error(`Yönlendirme özel ağ adresine gitti (${finalUrl}) — SSRF koruması.`);
-    }
-    const reader = res.body?.getReader();
-    let received = 0;
-    const chunks: Uint8Array[] = [];
-    if (reader) {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        received += value.byteLength;
-        chunks.push(value);
-        if (received >= MAX_BODY_BYTES) {
-          ctrl.abort();
-          break;
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      // Her durak (ilk URL + tüm yönlendirmeler) hem isim hem DNS düzeyinde doğrulanır
+      const invalid = validateAnalyzeUrl(current);
+      if (invalid) throw new Error(invalid);
+      await assertPublicHost(new URL(current).hostname);
+
+      const res = await fetch(current, {
+        signal: ctrl.signal,
+        redirect: "manual",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; AdsPilotBot/0.1; +https://github.com/Xaena53/google-ads-mcp)",
+          Accept: "text/html,application/xhtml+xml",
+          "Accept-Language": "tr,en;q=0.8",
+        },
+      });
+
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const loc = res.headers.get("location");
+        if (!loc) throw new Error(`Yönlendirme (${res.status}) location başlıksız.`);
+        res.body?.cancel().catch(() => {});
+        current = new URL(loc, current).toString();
+        continue;
+      }
+
+      const contentType = res.headers.get("content-type");
+      if (contentType && !/text\/html|application\/xhtml|text\/plain|xml/i.test(contentType)) {
+        throw new Error(`HTML değil (${contentType.split(";")[0]}) — bu araç yalnız web sayfası analiz eder.`);
+      }
+
+      const reader = res.body?.getReader();
+      let received = 0;
+      const chunks: Uint8Array[] = [];
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+          chunks.push(value);
+          if (received >= MAX_BODY_BYTES) {
+            ctrl.abort();
+            break;
+          }
         }
       }
+      const buf = Buffer.concat(chunks);
+      // Charset: başlık > meta sniff > utf-8 (Türkçe legacy: windows-1254/iso-8859-9)
+      const charset = sniffCharset(contentType, buf.subarray(0, 4096).toString("latin1"));
+      let html: string;
+      try {
+        html = new TextDecoder(charset).decode(buf);
+      } catch {
+        html = buf.toString("utf8");
+      }
+      return { finalUrl: current, html, status: res.status };
     }
-    const html = Buffer.concat(chunks).toString("utf8");
-    return { finalUrl, html, status: res.status };
+    throw new Error(`Çok fazla yönlendirme (>${MAX_REDIRECTS}).`);
   } finally {
     clearTimeout(timer);
   }

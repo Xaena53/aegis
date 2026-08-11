@@ -23,6 +23,10 @@ function decodeEntities(s: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#0?39;|&apos;/g, "'")
     .replace(/&nbsp;/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => {
+      const code = parseInt(n, 16);
+      return code > 0 && code < 0x10ffff ? String.fromCodePoint(code) : "";
+    })
     .replace(/&#(\d+);/g, (_, n) => {
       const code = Number(n);
       return code > 0 && code < 0x10ffff ? String.fromCodePoint(code) : "";
@@ -62,8 +66,10 @@ function headings(html: string, tag: string, max: number): string[] {
   return out;
 }
 
-export function extractPageFacts(html: string, opts: { textChars?: number } = {}): PageFacts {
+export function extractPageFacts(rawHtml: string, opts: { textChars?: number } = {}): PageFacts {
   const textChars = opts.textChars ?? 2500;
+  // Yorumlar her çıkarımdan önce sökülür — yorum içi başlık/link/metin sinyal değildir
+  const html = rawHtml.replace(/<!--[\s\S]*?-->/g, " ");
 
   const title = clean(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]);
   const htmlTag = /<html\b[^>]*>/i.exec(html)?.[0];
@@ -76,7 +82,9 @@ export function extractPageFacts(html: string, opts: { textChars?: number } = {}
   while ((ld = ldRe.exec(html)) && jsonLd.length < 5) {
     try {
       const parsed = JSON.parse(ld[1].trim());
-      const items = Array.isArray(parsed) ? parsed : [parsed];
+      // @graph sarmalayıcısı yaygın: {"@context":..., "@graph":[...]}
+      const top = Array.isArray(parsed) ? parsed : [parsed];
+      const items = top.flatMap((p: any) => (Array.isArray(p?.["@graph"]) ? p["@graph"] : [p]));
       for (const it of items) {
         const summary = {
           type: it["@type"],
@@ -94,7 +102,7 @@ export function extractPageFacts(html: string, opts: { textChars?: number } = {}
 
   // nav/menü link metinleri — hizmet/kategori sinyali
   const navTexts: string[] = [];
-  const navBlock = /<nav[\s\S]*?<\/nav>/gi.exec(html)?.[0] ?? html;
+  const navBlock = /<nav\b[\s\S]*?<\/nav>/i.exec(html)?.[0] ?? html;
   const aRe = /<a[^>]*>([\s\S]*?)<\/a>/gi;
   let a: RegExpExecArray | null;
   const seen = new Set<string>();
@@ -129,6 +137,20 @@ export function extractPageFacts(html: string, opts: { textChars?: number } = {}
     navTexts,
     visibleText: (visible ?? "").slice(0, textChars),
   };
+}
+
+/**
+ * Charset tespiti: önce Content-Type başlığı, sonra gövde başındaki <meta charset>
+ * / http-equiv. Bulunamazsa utf-8. (Türkçe legacy siteler windows-1254/iso-8859-9 kullanır.)
+ */
+export function sniffCharset(contentTypeHeader: string | null, bodyPrefix: string): string {
+  const fromHeader = /charset=["']?([\w-]+)/i.exec(contentTypeHeader ?? "")?.[1];
+  if (fromHeader) return fromHeader.toLowerCase();
+  const metaCharset = /<meta\s+charset=["']?([\w-]+)/i.exec(bodyPrefix)?.[1];
+  if (metaCharset) return metaCharset.toLowerCase();
+  const httpEquiv = /<meta[^>]+http-equiv=["']?content-type["']?[^>]*charset=([\w-]+)/i.exec(bodyPrefix)?.[1];
+  if (httpEquiv) return httpEquiv.toLowerCase();
+  return "utf-8";
 }
 
 /** SSRF koruması: localhost / özel IP / iç ağ isimlerini reddet (hostname bazlı). */

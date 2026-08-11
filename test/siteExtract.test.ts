@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractPageFacts, isPrivateHostname, validateAnalyzeUrl } from "../src/siteExtract.js";
+import { extractPageFacts, isPrivateHostname, validateAnalyzeUrl, sniffCharset } from "../src/siteExtract.js";
 
 const SAMPLE = `<!doctype html>
 <html lang="tr">
@@ -64,6 +64,49 @@ test("isPrivateHostname özel ağları yakalar", () => {
   for (const h of ["example.com", "8.8.8.8", "172.15.0.1", "172.32.0.1", "animerank.com.tr", "2606:4700::1"]) {
     assert.equal(isPrivateHostname(h), false, h);
   }
+});
+
+test("HTML yorumları hiçbir çıkarıma sızmaz", () => {
+  const html = `<html><body>
+    <!-- <h1>Eski Başlık</h1> yorumda > kalsın -->
+    <h1>Gerçek Başlık</h1>
+    <p>görünür <!-- gizli yorum --> devam</p>
+  </body></html>`;
+  const f = extractPageFacts(html);
+  assert.deepEqual(f.h1, ["Gerçek Başlık"]);
+  assert.doesNotMatch(f.visibleText, /Eski Başlık|gizli yorum/);
+  assert.match(f.visibleText, /görünür devam/);
+});
+
+test("hex entity çözümü", () => {
+  const f = extractPageFacts(`<html><title>&#x130;stanbul &#x26; Ankara</title></html>`);
+  assert.equal(f.title, "İstanbul & Ankara");
+});
+
+test("JSON-LD @graph sarmalayıcısı açılır", () => {
+  const html = `<script type="application/ld+json">
+    {"@context":"https://schema.org","@graph":[
+      {"@type":"Organization","name":"Firma"},
+      {"@type":"Product","name":"Ürün X","offers":{"price":"99","priceCurrency":"TRY"}}
+    ]}
+  </script>`;
+  const f = extractPageFacts(html);
+  assert.equal(f.jsonLd.length, 2);
+  assert.match(f.jsonLd[1], /Ürün X/);
+  assert.match(f.jsonLd[1], /99/);
+});
+
+test("sniffCharset başlık > meta > utf-8 önceliği", () => {
+  assert.equal(sniffCharset("text/html; charset=windows-1254", ""), "windows-1254");
+  assert.equal(sniffCharset('text/html; charset="ISO-8859-9"', ""), "iso-8859-9");
+  assert.equal(sniffCharset("text/html", `<meta charset="windows-1254">`), "windows-1254");
+  assert.equal(
+    sniffCharset(null, `<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-9">`),
+    "iso-8859-9"
+  );
+  assert.equal(sniffCharset(null, "<html>"), "utf-8");
+  // başlık meta'yı ezer
+  assert.equal(sniffCharset("text/html; charset=utf-8", `<meta charset="windows-1254">`), "utf-8");
 });
 
 test("validateAnalyzeUrl şema ve host kontrolü", () => {
