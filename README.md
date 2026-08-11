@@ -19,7 +19,8 @@ Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: rapor
 | `run_gaql` | okuma | Ham GAQL sorgusu |
 | `create_search_campaign` | yazma | Bütçe + kampanya (PAUSED) + ülke hedefleme (zorunlu) + reklam grubu + kelimeler |
 | `create_responsive_search_ad` | yazma | Reklam grubuna RSA ekler |
-| `add_keywords` | yazma | Anahtar kelime / negatif kelime ekler |
+| `add_keywords` | yazma | Anahtar kelime / negatif kelime ekler (reklam grubu) |
+| `add_campaign_negative_keywords` | yazma | Kampanya seviyesi negatif kelime (tüm reklam gruplarını kapsar) |
 | `update_campaign_budget` | yazma | Günlük bütçe günceller (tavan kelepçeli) |
 | `set_campaign_status` | yazma | Yayına al / duraklat (ENABLED onay kapılı) |
 
@@ -28,7 +29,10 @@ Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: rapor
 ```bash
 npm install
 npm run build
+npm test        # birim testleri (saf yardımcılar: guard'lar, retry, tarih aralığı)
 ```
+
+Geçici API hataları (UNAVAILABLE, kota) okuma yollarında üstel geri çekilmeyle otomatik tekrar denenir; **mutasyonlar bilerek retry'sız** — tekrar deneme çift kayıt oluşturabilir.
 
 ### 1. Faz 0 — Google tarafı (bir kere yapılır)
 

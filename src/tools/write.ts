@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums, toMicros, ResourceNames } from "google-ads-api";
-import { getCustomer, getConfig, formatAdsError, normalizeCustomerId } from "../adsClient.js";
+import { getCustomer, getConfig, formatAdsError, normalizeCustomerId, queryWithRetry } from "../adsClient.js";
+import { dedupe, geoTargetId, invalidId, ISO_NUMERIC, budgetGuard as budgetGuardPure } from "../util.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -22,51 +23,9 @@ function writesDisabled() {
 const WRITE_SAFE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
 const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 
-/**
- * Ülke geo hedef ID'leri: Google'ın ülke geoTargetConstant ID'si = 2000 + ISO 3166 sayısal kod.
- * (Örn. TR=792→2792, US=840→2840 — Google'ın kendi listesiyle birebir doğrulanmış kalıp.)
- */
-const ISO_NUMERIC: Record<string, number> = {
-  TR: 792, US: 840, GB: 826, DE: 276, FR: 250, ES: 724, IT: 380, NL: 528,
-  BE: 56, AT: 40, CH: 756, SE: 752, NO: 578, DK: 208, FI: 246, PL: 616,
-  PT: 620, GR: 300, RO: 642, BG: 100, CZ: 203, HU: 348, UA: 804, RU: 643,
-  CA: 124, MX: 484, BR: 76, AR: 32, AU: 36, NZ: 554, JP: 392, KR: 410,
-  CN: 156, IN: 356, ID: 360, SA: 682, AE: 784, EG: 818, ZA: 710, IL: 376,
-  AZ: 31, KZ: 398, QA: 634, KW: 414, IE: 372, MY: 458, SG: 702, TH: 764,
-};
-
-function geoTargetId(countryCode: string): number | null {
-  const iso = ISO_NUMERIC[countryCode.toUpperCase()];
-  return iso ? 2000 + iso : null;
-}
-
-/** ID alanları sadece rakam olmalı (GAQL'e ham gömüldükleri için). */
-function invalidId(label: string, v: string): string | null {
-  return /^\d+$/.test(v.trim()) ? null : `Geçersiz ${label}: '${v}' — sadece rakamlardan oluşmalı.`;
-}
-
-/** Büyük/küçük harf duyarsız tekilleştirme; sıra korunur. */
-function dedupe(items: string[]): string[] {
-  const seen = new Set<string>();
-  return items.filter((s) => {
-    const k = s.trim().toLowerCase();
-    if (!k || seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-}
-
-/** Bütçe kelepçesi: tavanı aşan istekleri reddeder. */
+/** Bütçe kelepçesi — tavan .env'den. */
 function budgetGuard(amount: number): string | null {
-  const cap = getConfig().maxDailyBudget;
-  if (amount > cap) {
-    return (
-      `Reddedildi: istenen günlük bütçe (${amount}) güvenlik tavanının (${cap}) üzerinde. ` +
-      `Tavan .env'de ADSPILOT_MAX_DAILY_BUDGET ile yönetilir; kullanıcı onayı olmadan yükseltme.`
-    );
-  }
-  if (amount <= 0) return "Reddedildi: bütçe 0'dan büyük olmalı.";
-  return null;
+  return budgetGuardPure(amount, getConfig().maxDailyBudget);
 }
 
 export function registerWriteTools(server: McpServer) {
@@ -269,7 +228,8 @@ export function registerWriteTools(server: McpServer) {
       if (guardMsg) return text(guardMsg);
       try {
         const customer = getCustomer(customerId);
-        const [row]: any[] = await customer.query(
+        const [row]: any[] = await queryWithRetry(
+          customerId,
           `SELECT campaign.id, campaign.name, campaign_budget.resource_name,
                   campaign_budget.amount_micros, campaign_budget.explicitly_shared
            FROM campaign WHERE campaign.id = ${Number(campaignId)} LIMIT 1`
@@ -333,6 +293,51 @@ export function registerWriteTools(server: McpServer) {
         const skipped = keywords.length - unique.length;
         return text(
           `${unique.length} ${negative ? "negatif " : ""}anahtar kelime eklendi [${matchType ?? "PHRASE"}]` +
+            (skipped ? ` (${skipped} tekrar/boş atlandı)` : "") +
+            "."
+        );
+      } catch (e) {
+        return err(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    "add_campaign_negative_keywords",
+    {
+      description:
+        "KAMPANYA seviyesinde negatif anahtar kelime ekler (kampanyadaki tüm reklam gruplarını kapsar). Boşa harcamayı kesmenin ana aracı — reklam-grubu seviyesi için add_keywords(negative=true).",
+      annotations: WRITE_SAFE,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        campaignId: z.string().describe("Kampanya ID"),
+        keywords: z.array(z.string().min(1)).min(1).max(100).describe("Negatif anahtar kelimeler"),
+        matchType: z
+          .enum(["EXACT", "PHRASE", "BROAD"])
+          .optional()
+          .describe("Eşleme türü (varsayılan PHRASE)"),
+      },
+    },
+    async ({ customerId, campaignId, keywords, matchType }) => {
+      if (!getConfig().writeEnabled) return writesDisabled();
+      const idErr = invalidId("kampanya ID", campaignId);
+      if (idErr) return text(idErr);
+      const unique = dedupe(keywords);
+      if (!unique.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
+      try {
+        const customer = getCustomer(customerId);
+        const cid = normalizeCustomerId(customerId);
+        const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
+        await customer.campaignCriteria.create(
+          unique.map((kw) => ({
+            campaign: ResourceNames.campaign(cid, campaignId),
+            negative: true,
+            keyword: { text: kw, match_type: mt },
+          }))
+        );
+        const skipped = keywords.length - unique.length;
+        return text(
+          `${unique.length} negatif anahtar kelime KAMPANYA seviyesinde eklendi [${matchType ?? "PHRASE"}]` +
             (skipped ? ` (${skipped} tekrar/boş atlandı)` : "") +
             "."
         );

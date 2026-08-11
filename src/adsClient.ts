@@ -1,5 +1,8 @@
 import { GoogleAdsApi, Customer } from "google-ads-api";
 import { loadConfig, AdsPilotConfig } from "./config.js";
+import { normalizeCustomerId, withRetry } from "./util.js";
+
+export { normalizeCustomerId, formatAdsError } from "./util.js";
 
 let api: GoogleAdsApi | undefined;
 let cfg: AdsPilotConfig | undefined;
@@ -21,11 +24,6 @@ function getApi(): GoogleAdsApi {
   return api;
 }
 
-/** customerId: tireli/tiresiz kabul eder ("123-456-7890" → "1234567890") */
-export function normalizeCustomerId(id: string): string {
-  return id.replace(/[^0-9]/g, "");
-}
-
 export function getCustomer(customerId: string): Customer {
   const c = getConfig();
   return getApi().Customer({
@@ -39,20 +37,14 @@ export function getCustomer(customerId: string): Customer {
 
 export async function listAccessibleCustomers(): Promise<string[]> {
   const c = getConfig();
-  const res = await getApi().listAccessibleCustomers(c.refreshToken);
+  const res = await withRetry(() => getApi().listAccessibleCustomers(c.refreshToken));
   return res.resource_names.map((rn: string) => rn.replace("customers/", ""));
 }
 
-/** Google Ads API hatalarını okunur tek satıra indirger (hata kodu adı + mesaj). */
-export function formatAdsError(err: unknown): string {
-  const e = err as any;
-  const fromList = e?.errors
-    ?.map((x: any) => {
-      const code = x?.error_code ? Object.keys(x.error_code).filter((k) => x.error_code[k])[0] : null;
-      const codeVal = code ? `${code}=${x.error_code[code]}` : null;
-      return [codeVal, x?.message].filter(Boolean).join(": ");
-    })
-    .filter(Boolean)
-    .join("; ");
-  return `Google Ads API hatası: ${fromList || e?.message || String(err)}`;
+/**
+ * Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı.
+ * (Mutasyonlar bilerek retry'sız: tekrar deneme çift kayıt oluşturabilir.)
+ */
+export async function queryWithRetry(customerId: string, gaql: string): Promise<any[]> {
+  return withRetry(() => getCustomer(customerId).query(gaql));
 }

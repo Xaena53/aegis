@@ -1,10 +1,11 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
-  getCustomer,
+  queryWithRetry,
   listAccessibleCustomers,
   formatAdsError,
 } from "../adsClient.js";
+import { dateRange } from "../util.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -15,21 +16,6 @@ function err(e: unknown) {
 }
 
 const READ_ANNOTATIONS = { readOnlyHint: true, openWorldHint: true };
-
-/**
- * Son N günü kapsayan GAQL tarih koşulu (bugün hariç dünden geriye).
- * Yerel saat kullanılır — UTC gece yarısı kaymasıyla gün-kayması yaşanmasın.
- * (Hesabın kendi saat dilimi farklıysa ±1 gün sapabilir; raporlama için kabul edilebilir.)
- */
-function dateRange(days: number): string {
-  const fmt = (t: Date) =>
-    `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-  const end = new Date();
-  end.setDate(end.getDate() - 1);
-  const start = new Date(end);
-  start.setDate(start.getDate() - (days - 1));
-  return `segments.date BETWEEN '${fmt(start)}' AND '${fmt(end)}'`;
-}
 
 export function registerReadTools(server: McpServer) {
   server.registerTool(
@@ -46,14 +32,16 @@ export function registerReadTools(server: McpServer) {
         const rows = await Promise.all(
           ids.slice(0, 30).map(async (id) => {
             try {
-              const [row] = await getCustomer(id).query(
+              const [row] = await queryWithRetry(
+                id,
                 `SELECT customer.descriptive_name, customer.currency_code, customer.manager FROM customer LIMIT 1`
               );
               const c: any = row?.customer ?? {};
               let line = `${id}\t${c.descriptive_name ?? "(isimsiz)"}\t${c.currency_code ?? "?"}${c.manager ? "\t[MCC]" : ""}`;
               // MCC ise alt hesapları da göster — listAccessibleCustomers alt hesapları DÖNDÜRMEZ
               if (c.manager) {
-                const children: any[] = await getCustomer(id).query(
+                const children: any[] = await queryWithRetry(
+                  id,
                   `SELECT customer_client.id, customer_client.descriptive_name,
                           customer_client.currency_code, customer_client.manager, customer_client.status
                    FROM customer_client
@@ -93,7 +81,7 @@ export function registerReadTools(server: McpServer) {
     },
     async ({ customerId, query, limit }) => {
       try {
-        const rows = await getCustomer(customerId).query(query);
+        const rows = await queryWithRetry(customerId, query);
         const capped = rows.slice(0, limit ?? 100);
         // Kompakt JSON + karakter tavanı: dev hesaplarda bağlamı şişirmesin
         let body = JSON.stringify(capped);
@@ -127,7 +115,7 @@ export function registerReadTools(server: McpServer) {
         const d = days ?? 30;
         const statusFilter =
           includePaused === false ? `AND campaign.status = 'ENABLED'` : `AND campaign.status != 'REMOVED'`;
-        const rows = await getCustomer(customerId).query(`
+        const rows = await queryWithRetry(customerId, `
           SELECT
             campaign.id, campaign.name, campaign.status,
             campaign.advertising_channel_type,
@@ -176,7 +164,7 @@ export function registerReadTools(server: McpServer) {
         if (campaignId && !/^\d+$/.test(campaignId.trim()))
           return text(`Geçersiz kampanya ID: '${campaignId}' — sadece rakam olmalı.`);
         const filter = campaignId ? `AND campaign.id = ${Number(campaignId.trim())}` : "";
-        const rows = await getCustomer(customerId).query(`
+        const rows = await queryWithRetry(customerId, `
           SELECT
             campaign.name, ad_group.name,
             ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
