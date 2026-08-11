@@ -13,6 +13,7 @@ Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: rapor
 
 | Araç | Tür | Ne yapar |
 |---|---|---|
+| `analyze_site` | okuma | **"Siteni bağla":** URL → başlık/meta/H1-H3/JSON-LD/menü/metin çıkarımı → kelime+RSA üretimi için hammadde (kimlik bilgisi gerektirmez, SSRF korumalı) |
 | `list_accounts` | okuma | Erişilebilir müşteri hesaplarını listeler |
 | `campaign_performance` | okuma | Son N gün kampanya özeti (maliyet, tıklama, dönüşüm, CTR) |
 | `keyword_performance` | okuma | Anahtar kelime bazlı performans |
@@ -61,7 +62,17 @@ taslak oluştur (PAUSED) → reklam metni ekle → kullanıcıya özet göster �
 
 Ajan `set_campaign_status(status=ENABLED)` çağrısını `confirm=true` olmadan yapamaz; araç reddeder ve önce kullanıcıya bütçe/kelime/metin özetini göstermesini söyler.
 
+## "Siteni bağla" akışı (Faz 2)
+
+```
+analyze_site(url) → Claude ürün/hizmeti anlar → kelime + RSA metni üretir
+  → kullanıcı onayı → create_search_campaign (PAUSED) → create_responsive_search_ad
+  → son onay → set_campaign_status(ENABLED)
+```
+
+Tasarım ilkesi: MCP sunucusu *gerçek çıkarır*, yaratıcı işi (kelime seçimi, metin yazımı)
+istemci taraftaki model yapar — böylece sunucu deterministik ve test edilebilir kalır.
+
 ## Yol haritası
 
-- **Faz 2 — "Siteni bağla":** URL → site analizi → anahtar kelime + RSA üretimi → tek komutla taslak kampanya.
 - **Faz 3 — Hosted:** remote MCP (OAuth ile tek tık bağlantı), abonelik, Anthropic connectors dizini, Meta/TikTok genişlemesi.

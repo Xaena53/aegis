@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerReadTools } from "./tools/read.js";
 import { registerWriteTools } from "./tools/write.js";
+import { registerSiteTools } from "./tools/site.js";
 import { missingCredentials } from "./config.js";
 
 const server = new McpServer({
@@ -12,6 +13,7 @@ const server = new McpServer({
 
 registerReadTools(server);
 registerWriteTools(server);
+registerSiteTools(server);
 
 const missing = missingCredentials();
 if (missing.length) {
