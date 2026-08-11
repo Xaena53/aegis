@@ -17,6 +17,7 @@ Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: rapor
 | `list_accounts` | okuma | Erişilebilir müşteri hesaplarını listeler |
 | `campaign_performance` | okuma | Son N gün kampanya özeti (maliyet, tıklama, dönüşüm, CTR) |
 | `keyword_performance` | okuma | Anahtar kelime bazlı performans |
+| `search_terms_report` | okuma | Gerçek arama terimleri + boşa-harcama işaretleme (negatif önerisi akışı) |
 | `run_gaql` | okuma | Ham GAQL sorgusu |
 | `create_search_campaign` | yazma | Bütçe + kampanya (PAUSED) + ülke hedefleme (zorunlu) + reklam grubu + kelimeler |
 | `create_responsive_search_ad` | yazma | Reklam grubuna RSA ekler |

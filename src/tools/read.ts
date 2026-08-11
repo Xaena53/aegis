@@ -148,6 +148,77 @@ export function registerReadTools(server: McpServer) {
   );
 
   server.registerTool(
+    "search_terms_report",
+    {
+      description:
+        "Reklamları GERÇEKTE tetikleyen arama terimlerini listeler (kullanıcıların yazdığı sorgular — anahtar kelimelerden farklıdır). Tıklama alıp dönüşüm getirmeyen terimleri 'boşa harcama adayı' olarak işaretler. Optimizasyon döngüsü: bu raporu incele → kullanıcıya negatif kelime önerilerini onaylat → add_campaign_negative_keywords ile uygula.",
+      annotations: READ_ANNOTATIONS,
+      inputSchema: {
+        customerId: z.string().describe("Google Ads müşteri ID"),
+        campaignId: z.string().optional().describe("Tek kampanyaya filtrelemek için kampanya ID"),
+        days: z.number().int().min(1).max(365).optional().describe("Kaç günlük pencere (varsayılan 30)"),
+        minClicks: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("En az bu kadar tıklama almış terimler (varsayılan 1 — gösterim-salt gürültüyü eler)"),
+      },
+    },
+    async ({ customerId, campaignId, days, minClicks }) => {
+      try {
+        const d = days ?? 30;
+        const mc = minClicks ?? 1;
+        if (campaignId && !/^\d+$/.test(campaignId.trim()))
+          return text(`Geçersiz kampanya ID: '${campaignId}' — sadece rakam olmalı.`);
+        const filter = campaignId ? `AND campaign.id = ${Number(campaignId.trim())}` : "";
+        const rows = await queryWithRetry(
+          customerId,
+          `SELECT
+             campaign.name, ad_group.id, ad_group.name,
+             search_term_view.search_term, search_term_view.status,
+             metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions
+           FROM search_term_view
+           WHERE ${dateRange(d)} AND metrics.clicks >= ${mc}
+           ${filter}
+           ORDER BY metrics.cost_micros DESC
+           LIMIT 200`
+        );
+        if (!rows.length)
+          return text(`Son ${d} günde (≥${mc} tıklama) arama terimi verisi yok. minClicks=0 ile genişletebilirsin.`);
+
+        let totalCost = 0;
+        let wastedCost = 0;
+        const lines = rows.map((r: any) => {
+          const m = r.metrics ?? {};
+          const cost = Number(m.cost_micros ?? 0) / 1e6;
+          const conv = Number(m.conversions ?? 0);
+          totalCost += cost;
+          const wasteful = conv === 0 && cost > 0;
+          if (wasteful) wastedCost += cost;
+          const flag = wasteful ? " 🔥 boşa-harcama-adayı" : "";
+          const excluded = r.search_term_view?.status === "EXCLUDED" ? " [zaten dışlanmış]" : "";
+          return (
+            `"${r.search_term_view.search_term}" — maliyet: ${cost.toFixed(2)}, tıklama: ${m.clicks ?? 0}, ` +
+            `dönüşüm: ${conv} (${r.campaign.name} / ${r.ad_group.name}, ag:${r.ad_group.id})${flag}${excluded}`
+          );
+        });
+        const pct = totalCost > 0 ? ((wastedCost / totalCost) * 100).toFixed(0) : "0";
+        return text(
+          `Son ${d} gün, ${rows.length} arama terimi. Toplam maliyet: ${totalCost.toFixed(2)}, ` +
+            `dönüşümsüz terim maliyeti: ${wastedCost.toFixed(2)} (%${pct}).\n\n` +
+            lines.join("\n") +
+            `\n\nSONRAKİ ADIM: 🔥 işaretli terimlerden alakasız olanları belirle, kullanıcıya negatif kelime ` +
+            `listesi olarak öner (hangi eşleme türüyle ekleneceğini söyle), ONAY SONRASI add_campaign_negative_keywords ile uygula. ` +
+            `Dikkat: dönüşümsüz ≠ mutlaka alakasız — düşük hacimli ya da satış hunisinin başındaki terimleri aceleyle dışlama.`
+        );
+      } catch (e) {
+        return err(e);
+      }
+    }
+  );
+
+  server.registerTool(
     "keyword_performance",
     {
       description:
