@@ -1,0 +1,159 @@
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  getCustomer,
+  listAccessibleCustomers,
+  formatAdsError,
+} from "../adsClient.js";
+
+function text(s: string) {
+  return { content: [{ type: "text" as const, text: s }] };
+}
+
+function err(e: unknown) {
+  return { content: [{ type: "text" as const, text: formatAdsError(e) }], isError: true };
+}
+
+/** Son N günü kapsayan GAQL tarih koşulu (bugün hariç dünden geriye). */
+function dateRange(days: number): string {
+  const fmt = (t: Date) => t.toISOString().slice(0, 10);
+  const end = new Date();
+  end.setDate(end.getDate() - 1);
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+  return `segments.date BETWEEN '${fmt(start)}' AND '${fmt(end)}'`;
+}
+
+export function registerReadTools(server: McpServer) {
+  server.tool(
+    "list_accounts",
+    "Bağlı Google hesabının erişebildiği tüm Google Ads müşteri hesaplarını (customer ID) listeler. Diğer araçlara vereceğin customerId'yi buradan seç.",
+    {},
+    async () => {
+      try {
+        const ids = await listAccessibleCustomers();
+        if (!ids.length) return text("Erişilebilir Google Ads hesabı bulunamadı.");
+        const rows = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const [row] = await getCustomer(id).query(
+                `SELECT customer.descriptive_name, customer.currency_code, customer.manager FROM customer LIMIT 1`
+              );
+              const c: any = row?.customer ?? {};
+              return `${id}\t${c.descriptive_name ?? "(isimsiz)"}\t${c.currency_code ?? "?"}${c.manager ? "\t[MCC]" : ""}`;
+            } catch {
+              return `${id}\t(detay okunamadı — login_customer_id gerekebilir)`;
+            }
+          })
+        );
+        return text("customerId\tisim\tpara birimi\n" + rows.join("\n"));
+      } catch (e) {
+        return err(e);
+      }
+    }
+  );
+
+  server.tool(
+    "run_gaql",
+    "Bir hesapta ham GAQL (Google Ads Query Language) sorgusu çalıştırır ve JSON satırları döner. Esnek raporlama için kullan; hazır özet için campaign_performance aracını tercih et.",
+    {
+      customerId: z.string().describe("Google Ads müşteri ID (örn. 1234567890)"),
+      query: z.string().describe("GAQL sorgusu, örn: SELECT campaign.name, metrics.clicks FROM campaign WHERE segments.date DURING LAST_30_DAYS"),
+      limit: z.number().int().min(1).max(1000).optional().describe("Maks satır (varsayılan 100)"),
+    },
+    async ({ customerId, query, limit }) => {
+      try {
+        const rows = await getCustomer(customerId).query(query);
+        const capped = rows.slice(0, limit ?? 100);
+        return text(
+          `${rows.length} satır (${capped.length} gösteriliyor):\n` +
+            JSON.stringify(capped, null, 2)
+        );
+      } catch (e) {
+        return err(e);
+      }
+    }
+  );
+
+  server.tool(
+    "campaign_performance",
+    "Hesaptaki kampanyaların son N gündeki performans özetini verir: maliyet, tıklama, gösterim, dönüşüm, CTR, ort. TBM. Hızlı durum fotoğrafı için ilk başvurulacak araç.",
+    {
+      customerId: z.string().describe("Google Ads müşteri ID"),
+      days: z.number().int().min(1).max(365).optional().describe("Kaç günlük pencere (varsayılan 30)"),
+      includePaused: z.boolean().optional().describe("Duraklatılmış kampanyalar da dahil edilsin mi (varsayılan true)"),
+    },
+    async ({ customerId, days, includePaused }) => {
+      try {
+        const d = days ?? 30;
+        const statusFilter =
+          includePaused === false ? `AND campaign.status = 'ENABLED'` : `AND campaign.status != 'REMOVED'`;
+        const rows = await getCustomer(customerId).query(`
+          SELECT
+            campaign.id, campaign.name, campaign.status,
+            campaign.advertising_channel_type,
+            campaign_budget.amount_micros,
+            metrics.cost_micros, metrics.clicks, metrics.impressions,
+            metrics.conversions, metrics.ctr, metrics.average_cpc
+          FROM campaign
+          WHERE ${dateRange(d)}
+          ${statusFilter}
+          ORDER BY metrics.cost_micros DESC
+        `);
+        if (!rows.length) return text(`Son ${d} günde veri bulunan kampanya yok.`);
+        const lines = rows.map((r: any) => {
+          const m = r.metrics ?? {};
+          const cost = (Number(m.cost_micros ?? 0) / 1e6).toFixed(2);
+          const budget = (Number(r.campaign_budget?.amount_micros ?? 0) / 1e6).toFixed(2);
+          const cpc = (Number(m.average_cpc ?? 0) / 1e6).toFixed(2);
+          const ctr = (Number(m.ctr ?? 0) * 100).toFixed(2);
+          return (
+            `#${r.campaign.id} ${r.campaign.name} [${r.campaign.status}] (${r.campaign.advertising_channel_type})\n` +
+            `  günlük bütçe: ${budget} | maliyet: ${cost} | tıklama: ${m.clicks ?? 0} | gösterim: ${m.impressions ?? 0} | dönüşüm: ${m.conversions ?? 0} | CTR: %${ctr} | ort.TBM: ${cpc}`
+          );
+        });
+        return text(`Son ${d} gün, ${rows.length} kampanya:\n\n` + lines.join("\n"));
+      } catch (e) {
+        return err(e);
+      }
+    }
+  );
+
+  server.tool(
+    "keyword_performance",
+    "Bir kampanyanın (veya tüm hesabın) anahtar kelime bazlı performansını listeler. Boşa harcanan kelimeleri ve kazananları tespit etmek için kullan.",
+    {
+      customerId: z.string().describe("Google Ads müşteri ID"),
+      campaignId: z.string().optional().describe("Tek kampanyaya filtrelemek için kampanya ID"),
+      days: z.number().int().min(1).max(365).optional().describe("Kaç günlük pencere (varsayılan 30)"),
+    },
+    async ({ customerId, campaignId, days }) => {
+      try {
+        const d = days ?? 30;
+        const filter = campaignId ? `AND campaign.id = ${Number(campaignId)}` : "";
+        const rows = await getCustomer(customerId).query(`
+          SELECT
+            campaign.name, ad_group.name,
+            ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
+            ad_group_criterion.status,
+            metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions
+          FROM keyword_view
+          WHERE ${dateRange(d)}
+          ${filter}
+          ORDER BY metrics.cost_micros DESC
+          LIMIT 200
+        `);
+        if (!rows.length) return text("Anahtar kelime verisi bulunamadı.");
+        const lines = rows.map((r: any) => {
+          const kw = r.ad_group_criterion?.keyword ?? {};
+          const m = r.metrics ?? {};
+          const cost = (Number(m.cost_micros ?? 0) / 1e6).toFixed(2);
+          return `"${kw.text}" [${kw.match_type}] (${r.campaign.name} / ${r.ad_group.name}) — maliyet: ${cost}, tıklama: ${m.clicks ?? 0}, dönüşüm: ${m.conversions ?? 0}`;
+        });
+        return text(`Son ${d} gün, ${rows.length} anahtar kelime:\n` + lines.join("\n"));
+      } catch (e) {
+        return err(e);
+      }
+    }
+  );
+}
