@@ -106,7 +106,11 @@ export function formatAdsError(err: unknown): string {
     ?.map((x: any) => {
       const code = x?.error_code ? Object.keys(x.error_code).filter((k) => x.error_code[k])[0] : null;
       const codeVal = code ? `${code}=${x.error_code[code]}` : null;
-      return [codeVal, x?.message].filter(Boolean).join(": ");
+      // Hangi alan? (örn. REQUIRED hatasında suçlu alanın yolu)
+      const path = x?.location?.field_path_elements
+        ?.map((p: any) => (p.index != null ? `${p.field_name}[${p.index}]` : p.field_name))
+        .join(".");
+      return [codeVal, x?.message, path && `alan: ${path}`].filter(Boolean).join(" | ");
     })
     .filter(Boolean)
     .join("; ");

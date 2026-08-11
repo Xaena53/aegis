@@ -95,6 +95,10 @@ export function registerWriteTools(server: McpServer) {
               name,
               advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
               status: enums.CampaignStatus.PAUSED, // güvenlik: asla ENABLED oluşturma
+              // AB DSA gereği zorunlu beyan (canlı testte REQUIRED döndü). Bu araç
+              // ticari kampanya kurar; siyasi reklam bu araçla OLUŞTURULMAZ.
+              contains_eu_political_advertising:
+                enums.EuPoliticalAdvertisingStatus.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING,
               campaign_budget: budgetResourceName,
               // eCPC API v17+'da kaldırıldı; sade Manual CPC ile başla
               manual_cpc: {},

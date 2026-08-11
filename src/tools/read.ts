@@ -5,6 +5,7 @@ import {
   listAccessibleCustomers,
   formatAdsError,
 } from "../adsClient.js";
+import { enums } from "google-ads-api";
 import { dateRange, ensureGaqlLimit } from "../util.js";
 
 function text(s: string) {
@@ -40,17 +41,21 @@ export function registerReadTools(server: McpServer) {
               let line = `${id}\t${c.descriptive_name ?? "(isimsiz)"}\t${c.currency_code ?? "?"}${c.manager ? "\t[MCC]" : ""}`;
               // MCC ise alt hesapları da göster — listAccessibleCustomers alt hesapları DÖNDÜRMEZ
               if (c.manager) {
+                // Not: status filtresi bilerek yok — test hesapları ENABLED dışı status
+                // dönebiliyor ve filtre onları gizliyordu (canlıda görüldü). Status gösterilir.
                 const children: any[] = await queryWithRetry(
                   id,
                   `SELECT customer_client.id, customer_client.descriptive_name,
-                          customer_client.currency_code, customer_client.manager, customer_client.status
+                          customer_client.currency_code, customer_client.manager,
+                          customer_client.status, customer_client.test_account
                    FROM customer_client
-                   WHERE customer_client.level = 1 AND customer_client.status = 'ENABLED'
+                   WHERE customer_client.level = 1
                    LIMIT 50`
                 );
                 for (const ch of children) {
                   const cc = ch.customer_client ?? {};
-                  line += `\n  └ ${cc.id}\t${cc.descriptive_name ?? "(isimsiz)"}\t${cc.currency_code ?? "?"}${cc.manager ? "\t[MCC]" : ""}`;
+                  const st = (enums.CustomerStatus as any)[cc.status] ?? cc.status;
+                  line += `\n  └ ${cc.id}\t${cc.descriptive_name ?? "(isimsiz)"}\t${cc.currency_code ?? "?"}\t[${st}]${cc.manager ? " [MCC]" : ""}${cc.test_account ? " [TEST]" : ""}`;
                 }
               }
               return line;
@@ -135,8 +140,10 @@ export function registerReadTools(server: McpServer) {
           const budget = (Number(r.campaign_budget?.amount_micros ?? 0) / 1e6).toFixed(2);
           const cpc = (Number(m.average_cpc ?? 0) / 1e6).toFixed(2);
           const ctr = (Number(m.ctr ?? 0) * 100).toFixed(2);
+          const st = (enums.CampaignStatus as any)[r.campaign.status] ?? r.campaign.status;
+          const ch = (enums.AdvertisingChannelType as any)[r.campaign.advertising_channel_type] ?? r.campaign.advertising_channel_type;
           return (
-            `#${r.campaign.id} ${r.campaign.name} [${r.campaign.status}] (${r.campaign.advertising_channel_type})\n` +
+            `#${r.campaign.id} ${r.campaign.name} [${st}] (${ch})\n` +
             `  günlük bütçe: ${budget} | maliyet: ${cost} | tıklama: ${m.clicks ?? 0} | gösterim: ${m.impressions ?? 0} | dönüşüm: ${m.conversions ?? 0} | CTR: %${ctr} | ort.TBM: ${cpc}`
           );
         });
@@ -197,7 +204,8 @@ export function registerReadTools(server: McpServer) {
           const wasteful = conv === 0 && cost > 0;
           if (wasteful) wastedCost += cost;
           const flag = wasteful ? " 🔥 boşa-harcama-adayı" : "";
-          const excluded = r.search_term_view?.status === "EXCLUDED" ? " [zaten dışlanmış]" : "";
+          const stName = (enums.SearchTermTargetingStatus as any)[r.search_term_view?.status] ?? r.search_term_view?.status;
+          const excluded = stName === "EXCLUDED" || stName === "EXCLUDED_AND_ADDED" ? " [zaten dışlanmış]" : "";
           return (
             `"${r.search_term_view.search_term}" — maliyet: ${cost.toFixed(2)}, tıklama: ${m.clicks ?? 0}, ` +
             `dönüşüm: ${conv} (${r.campaign.name} / ${r.ad_group.name}, ag:${r.ad_group.id})${flag}${excluded}`
@@ -253,7 +261,8 @@ export function registerReadTools(server: McpServer) {
           const kw = r.ad_group_criterion?.keyword ?? {};
           const m = r.metrics ?? {};
           const cost = (Number(m.cost_micros ?? 0) / 1e6).toFixed(2);
-          return `"${kw.text}" [${kw.match_type}] (${r.campaign.name} / ${r.ad_group.name}) — maliyet: ${cost}, tıklama: ${m.clicks ?? 0}, dönüşüm: ${m.conversions ?? 0}`;
+          const mt = (enums.KeywordMatchType as any)[kw.match_type] ?? kw.match_type;
+          return `"${kw.text}" [${mt}] (${r.campaign.name} / ${r.ad_group.name}) — maliyet: ${cost}, tıklama: ${m.clicks ?? 0}, dönüşüm: ${m.conversions ?? 0}`;
         });
         return text(`Son ${d} gün, ${rows.length} anahtar kelime:\n` + lines.join("\n"));
       } catch (e) {

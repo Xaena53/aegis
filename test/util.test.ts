@@ -109,8 +109,14 @@ test("formatAdsError kod adı + mesaj birleştirir", () => {
     ],
   };
   const s = formatAdsError(e);
-  assert.match(s, /query_error=UNRECOGNIZED_FIELD: alan yok/);
+  assert.match(s, /query_error=UNRECOGNIZED_FIELD \| alan yok/);
   assert.match(s, /ikinci/);
+  // field_path varsa suçlu alan gösterilir
+  const withPath = formatAdsError({
+    errors: [{ error_code: { field_error: "REQUIRED" }, message: "eksik",
+      location: { field_path_elements: [{ field_name: "mutate_operations", index: 1 }, { field_name: "create" }] } }],
+  });
+  assert.match(withPath, /alan: mutate_operations\[1\]\.create/);
   assert.match(formatAdsError(new Error("düz hata")), /düz hata/);
   assert.match(formatAdsError("string"), /string/);
 });
