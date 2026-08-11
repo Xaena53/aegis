@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums, ResourceNames } from "google-ads-api";
-import { getCustomer, getConfig, formatAdsError, normalizeCustomerId, queryWithRetry } from "../adsClient.js";
+import { getCustomer, getConfig, formatAdsError, normalizeCustomerId, queryWithRetry, mutateWithRetry } from "../adsClient.js";
 import { dedupe, geoTargetId, invalidId, ISO_NUMERIC, toMicrosInt, budgetGuard as budgetGuardPure } from "../util.js";
 
 function text(s: string) {
@@ -140,7 +140,7 @@ export function registerWriteTools(server: McpServer) {
           })),
         ];
 
-        const res: any = await customer.mutateResources(operations);
+        const res: any = await mutateWithRetry(() => customer.mutateResources(operations));
         const created =
           res?.mutate_operation_responses
             ?.map((r: any) => Object.values(r)[0])
@@ -189,7 +189,7 @@ export function registerWriteTools(server: McpServer) {
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
-        const res: any = await customer.adGroupAds.create([
+        const res: any = await mutateWithRetry(() => customer.adGroupAds.create([
           {
             ad_group: ResourceNames.adGroup(cid, adGroupId),
             status: enums.AdGroupAdStatus.ENABLED,
@@ -201,7 +201,7 @@ export function registerWriteTools(server: McpServer) {
               },
             },
           },
-        ]);
+        ]));
         const rn = res?.results?.[0]?.resource_name ?? "(resource_name okunamadı)";
         return text(
           `RSA oluşturuldu: ${rn}\nNot: Kampanya PAUSED ise reklam yayınlanmaz; onay sonrası set_campaign_status ile açılır.`
@@ -245,12 +245,12 @@ export function registerWriteTools(server: McpServer) {
           );
         }
         const oldBudget = Number(row.campaign_budget.amount_micros) / 1e6;
-        await customer.campaignBudgets.update([
+        await mutateWithRetry(() => customer.campaignBudgets.update([
           {
             resource_name: row.campaign_budget.resource_name,
             amount_micros: toMicrosInt(newDailyBudget),
           },
-        ]);
+        ]));
         return text(
           `"${row.campaign.name}" bütçesi güncellendi: ${oldBudget} → ${newDailyBudget} (günlük).`
         );
@@ -286,14 +286,14 @@ export function registerWriteTools(server: McpServer) {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
-        await customer.adGroupCriteria.create(
+        await mutateWithRetry(() => customer.adGroupCriteria.create(
           unique.map((kw) => ({
             ad_group: ResourceNames.adGroup(cid, adGroupId),
             // negatif kriterlerde status gönderilmez
             ...(negative ? { negative: true } : { status: enums.AdGroupCriterionStatus.ENABLED }),
             keyword: { text: kw, match_type: mt },
           }))
-        );
+        ));
         const skipped = keywords.length - unique.length;
         return text(
           `${unique.length} ${negative ? "negatif " : ""}anahtar kelime eklendi [${matchType ?? "PHRASE"}]` +
@@ -332,13 +332,13 @@ export function registerWriteTools(server: McpServer) {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
-        await customer.campaignCriteria.create(
+        await mutateWithRetry(() => customer.campaignCriteria.create(
           unique.map((kw) => ({
             campaign: ResourceNames.campaign(cid, campaignId),
             negative: true,
             keyword: { text: kw, match_type: mt },
           }))
-        );
+        ));
         const skipped = keywords.length - unique.length;
         return text(
           `${unique.length} negatif anahtar kelime KAMPANYA seviyesinde eklendi [${matchType ?? "PHRASE"}]` +
@@ -392,12 +392,12 @@ export function registerWriteTools(server: McpServer) {
             );
           }
         }
-        await customer.campaigns.update([
+        await mutateWithRetry(() => customer.campaigns.update([
           {
             resource_name: ResourceNames.campaign(cid, campaignId),
             status: enums.CampaignStatus[status],
           },
-        ]);
+        ]));
         return text(
           status === "ENABLED"
             ? `Kampanya ${campaignId} YAYINDA (ENABLED). Harcama başladı — performansı campaign_performance ile izle.`

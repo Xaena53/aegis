@@ -127,6 +127,20 @@ export function isTransientAdsError(e: unknown): boolean {
   return /UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|QuotaError|INTERNAL_ERROR|too many requests/i.test(msg);
 }
 
+/**
+ * CONCURRENT_MODIFICATION tespiti: Google bu hatada isteği AÇIKÇA reddeder
+ * (yazma uygulanmaz) ve resmen "retry the request" der — mutasyonlar için
+ * güvenle tekrar denenebilen TEK hata sınıfı budur.
+ */
+export function isConcurrentModificationError(e: unknown): boolean {
+  const err = e as any;
+  if (err?.errors?.some((x: any) => {
+    const de = x?.error_code?.database_error;
+    return de === 2 || de === "CONCURRENT_MODIFICATION";
+  })) return true;
+  return /CONCURRENT_MODIFICATION|modify the same resource/i.test(String(err?.message ?? ""));
+}
+
 export interface RetryOptions {
   tries?: number;
   baseMs?: number;

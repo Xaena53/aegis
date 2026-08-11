@@ -1,6 +1,6 @@
 import { GoogleAdsApi, Customer } from "google-ads-api";
 import { loadConfig, AdsPilotConfig } from "./config.js";
-import { normalizeCustomerId, withRetry } from "./util.js";
+import { normalizeCustomerId, withRetry, isConcurrentModificationError } from "./util.js";
 
 export { normalizeCustomerId, formatAdsError } from "./util.js";
 
@@ -53,4 +53,13 @@ export async function listAccessibleCustomers(): Promise<string[]> {
  */
 export async function queryWithRetry(customerId: string, gaql: string): Promise<any[]> {
   return withRetry(() => getCustomer(customerId).query(gaql));
+}
+
+/**
+ * Mutasyon sarmalayıcısı: genel ağ hatalarında RETRY YOK (çift kayıt riski),
+ * yalnız CONCURRENT_MODIFICATION'da tekrar dener — o hatada istek açıkça
+ * reddedilmiştir, yazma uygulanmamıştır (canlıda ardışık mutasyonlarda görüldü).
+ */
+export async function mutateWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+  return withRetry(fn, { tries: 4, baseMs: 600, isTransient: isConcurrentModificationError });
 }

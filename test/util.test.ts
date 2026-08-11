@@ -12,6 +12,7 @@ import {
   withRetry,
   toMicrosInt,
   ensureGaqlLimit,
+  isConcurrentModificationError,
 } from "../src/util.js";
 
 test("normalizeCustomerId tireleri ve harfleri temizler", () => {
@@ -139,6 +140,17 @@ test("isTransientAdsError gRPC kodları ve mesaj kalıpları", () => {
   assert.equal(isTransientAdsError({ message: "QuotaError.RESOURCE_EXHAUSTED" }), true);
   assert.equal(isTransientAdsError({ code: 3, message: "INVALID_ARGUMENT" }), false);
   assert.equal(isTransientAdsError(new Error("kimlik hatası")), false);
+});
+
+test("isConcurrentModificationError yalnız o hata sınıfını yakalar", () => {
+  assert.equal(isConcurrentModificationError({ errors: [{ error_code: { database_error: 2 } }] }), true);
+  assert.equal(isConcurrentModificationError({ errors: [{ error_code: { database_error: "CONCURRENT_MODIFICATION" } }] }), true);
+  assert.equal(
+    isConcurrentModificationError(new Error("Multiple requests were attempting to modify the same resource at once.")),
+    true
+  );
+  assert.equal(isConcurrentModificationError({ errors: [{ error_code: { field_error: 2 } }] }), false);
+  assert.equal(isConcurrentModificationError(new Error("UNAVAILABLE")), false); // ağ hatası mutasyonda retry EDİLMEZ
 });
 
 test("withRetry geçici hatada tekrar dener, kalıcıda denemez", async () => {
