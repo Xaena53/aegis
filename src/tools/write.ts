@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { enums, resources, toMicros, ResourceNames } from "google-ads-api";
+import { enums, toMicros, ResourceNames } from "google-ads-api";
 import { getCustomer, getConfig, formatAdsError, normalizeCustomerId } from "../adsClient.js";
 
 function text(s: string) {
@@ -77,7 +77,8 @@ export function registerWriteTools(server: McpServer) {
               advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
               status: enums.CampaignStatus.PAUSED, // güvenlik: asla ENABLED oluşturma
               campaign_budget: budgetResourceName,
-              manual_cpc: { enhanced_cpc_enabled: false },
+              // eCPC API v17+'da kaldırıldı; sade Manual CPC ile başla
+              manual_cpc: {},
               network_settings: {
                 target_google_search: true,
                 target_search_network: true,
@@ -177,10 +178,16 @@ export function registerWriteTools(server: McpServer) {
       try {
         const customer = getCustomer(customerId);
         const [row]: any[] = await customer.query(
-          `SELECT campaign.id, campaign.name, campaign_budget.resource_name, campaign_budget.amount_micros
+          `SELECT campaign.id, campaign.name, campaign_budget.resource_name,
+                  campaign_budget.amount_micros, campaign_budget.explicitly_shared
            FROM campaign WHERE campaign.id = ${Number(campaignId)} LIMIT 1`
         );
         if (!row) return text(`Kampanya bulunamadı: ${campaignId}`);
+        if (row.campaign_budget?.explicitly_shared) {
+          return text(
+            `Reddedildi: "${row.campaign.name}" PAYLAŞIMLI bir bütçe kullanıyor — değişiklik bu bütçeyi kullanan TÜM kampanyaları etkiler. Kullanıcıya durumu bildir; isterse Google Ads arayüzünden kampanyaya özel bütçe atansın.`
+          );
+        }
         const oldBudget = Number(row.campaign_budget.amount_micros) / 1e6;
         await customer.campaignBudgets.update([
           {
@@ -219,8 +226,8 @@ export function registerWriteTools(server: McpServer) {
         await customer.adGroupCriteria.create(
           keywords.map((kw) => ({
             ad_group: ResourceNames.adGroup(cid, adGroupId),
-            status: enums.AdGroupCriterionStatus.ENABLED,
-            negative: negative ?? false,
+            // negatif kriterlerde status gönderilmez
+            ...(negative ? { negative: true } : { status: enums.AdGroupCriterionStatus.ENABLED }),
             keyword: { text: kw, match_type: mt },
           }))
         );
