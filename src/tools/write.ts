@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { enums, toMicros, ResourceNames } from "google-ads-api";
+import { enums, ResourceNames } from "google-ads-api";
 import { getCustomer, getConfig, formatAdsError, normalizeCustomerId, queryWithRetry } from "../adsClient.js";
-import { dedupe, geoTargetId, invalidId, ISO_NUMERIC, budgetGuard as budgetGuardPure } from "../util.js";
+import { dedupe, geoTargetId, invalidId, ISO_NUMERIC, toMicrosInt, budgetGuard as budgetGuardPure } from "../util.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -82,7 +82,7 @@ export function registerWriteTools(server: McpServer) {
             resource: {
               resource_name: budgetResourceName,
               name: `${name} — bütçe`,
-              amount_micros: toMicros(dailyBudget),
+              amount_micros: toMicrosInt(dailyBudget),
               delivery_method: enums.BudgetDeliveryMethod.STANDARD,
               explicitly_shared: false,
             },
@@ -244,7 +244,7 @@ export function registerWriteTools(server: McpServer) {
         await customer.campaignBudgets.update([
           {
             resource_name: row.campaign_budget.resource_name,
-            amount_micros: toMicros(newDailyBudget),
+            amount_micros: toMicrosInt(newDailyBudget),
           },
         ]);
         return text(

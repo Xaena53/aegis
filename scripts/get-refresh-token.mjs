@@ -5,7 +5,7 @@
 import http from "node:http";
 import { exec } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 // .env'i sade biçimde oku (bağımlılıksız)
 if (existsSync(".env")) {
@@ -77,10 +77,24 @@ const server = http.createServer(async (req, res) => {
     }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end("<h2>Tamam! Terminale dönebilirsin, bu sekmeyi kapat.</h2>");
-    console.log("\n─────────────────────────────────────────────");
-    console.log("Refresh token alındı. .env dosyana ekle:\n");
-    console.log(`GOOGLE_ADS_REFRESH_TOKEN=${tokens.refresh_token}`);
-    console.log("─────────────────────────────────────────────\n");
+    // .env'e otomatik yaz (varsa satırı güncelle, yoksa ekle; dosya yoksa .env.example'dan başlat)
+    try {
+      let envText = existsSync(".env")
+        ? readFileSync(".env", "utf8")
+        : existsSync(".env.example")
+          ? readFileSync(".env.example", "utf8")
+          : "";
+      if (/^GOOGLE_ADS_REFRESH_TOKEN=.*$/m.test(envText)) {
+        envText = envText.replace(/^GOOGLE_ADS_REFRESH_TOKEN=.*$/m, `GOOGLE_ADS_REFRESH_TOKEN=${tokens.refresh_token}`);
+      } else {
+        envText += `${envText.endsWith("\n") || !envText ? "" : "\n"}GOOGLE_ADS_REFRESH_TOKEN=${tokens.refresh_token}\n`;
+      }
+      writeFileSync(".env", envText);
+      console.log("\n✔ Refresh token alındı ve .env dosyasına YAZILDI. Sunucuyu yeniden başlatman yeterli.");
+    } catch (we) {
+      console.log("\n.env yazılamadı (" + we.message + ") — satırı elle ekle:");
+      console.log(`GOOGLE_ADS_REFRESH_TOKEN=${tokens.refresh_token}`);
+    }
   } catch (e) {
     res.end("Token alınamadı, terminale bakın.");
     console.error("Token hatası:", e.message);

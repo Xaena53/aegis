@@ -26,8 +26,14 @@ function getApi(): GoogleAdsApi {
 
 export function getCustomer(customerId: string): Customer {
   const c = getConfig();
+  const nid = normalizeCustomerId(customerId);
+  if (nid.length !== 10) {
+    throw new Error(
+      `Geçersiz müşteri ID: '${customerId}' — Google Ads müşteri ID'si 10 hanelidir (örn. 1234567890). list_accounts ile doğru ID'yi bul.`
+    );
+  }
   return getApi().Customer({
-    customer_id: normalizeCustomerId(customerId),
+    customer_id: nid,
     refresh_token: c.refreshToken,
     login_customer_id: c.loginCustomerId
       ? normalizeCustomerId(c.loginCustomerId)

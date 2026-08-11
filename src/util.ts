@@ -39,8 +39,22 @@ export function geoTargetId(countryCode: string): number | null {
   return iso ? 2000 + iso : null;
 }
 
+/** Para birimi → micros: float çarpım artıkları olmadan (Google int64 bekler). */
+export function toMicrosInt(amount: number): number {
+  return Math.round(amount * 1_000_000);
+}
+
+/** LIMIT'siz GAQL tüm sayfaları belleğe çeker — yoksa sona LIMIT ekle. */
+export function ensureGaqlLimit(query: string, limit: number): string {
+  return /\bLIMIT\s+\d+/i.test(query) ? query : `${query.trim()} LIMIT ${limit}`;
+}
+
 /** Bütçe kelepçesi: tavanı aşan/geçersiz istekler için ret mesajı, geçerliyse null. */
 export function budgetGuard(amount: number, cap: number): string | null {
+  // Kemer-pantolon askısı: tavan bozuksa (NaN/<=0) sessiz geçirme, reddet
+  if (!Number.isFinite(cap) || cap <= 0) {
+    return "Reddedildi: bütçe tavanı yapılandırması geçersiz (ADSPILOT_MAX_DAILY_BUDGET) — düzeltilmeden bütçe işlemi yapılmaz.";
+  }
   if (amount > cap) {
     return (
       `Reddedildi: istenen günlük bütçe (${amount}) güvenlik tavanının (${cap}) üzerinde. ` +

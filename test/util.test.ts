@@ -10,6 +10,8 @@ import {
   formatAdsError,
   isTransientAdsError,
   withRetry,
+  toMicrosInt,
+  ensureGaqlLimit,
 } from "../src/util.js";
 
 test("normalizeCustomerId tireleri ve harfleri temizler", () => {
@@ -45,6 +47,34 @@ test("budgetGuard tavan ve geçersiz değerler", () => {
   assert.notEqual(budgetGuard(0, 500), null);
   assert.notEqual(budgetGuard(-5, 500), null);
   assert.notEqual(budgetGuard(NaN, 500), null);
+});
+
+test("budgetGuard bozuk tavanda sessizce geçirmez", () => {
+  assert.match(budgetGuard(10, NaN)!, /tavanı yapılandırması geçersiz/);
+  assert.match(budgetGuard(10, 0)!, /tavanı yapılandırması geçersiz/);
+  assert.match(budgetGuard(10, -1)!, /tavanı yapılandırması geçersiz/);
+});
+
+test("toMicrosInt float artığı bırakmaz", () => {
+  assert.equal(toMicrosInt(0.07), 70000); // 0.07*1e6 = 70000.00000000001 olurdu
+  assert.equal(toMicrosInt(50), 50_000_000);
+  assert.equal(toMicrosInt(10.5555555), 10_555_556);
+  assert.ok(Number.isInteger(toMicrosInt(123.456789)));
+});
+
+test("ensureGaqlLimit yoksa ekler, varsa dokunmaz", () => {
+  assert.equal(
+    ensureGaqlLimit("SELECT campaign.name FROM campaign", 100),
+    "SELECT campaign.name FROM campaign LIMIT 100"
+  );
+  assert.equal(
+    ensureGaqlLimit("SELECT x FROM y LIMIT 5", 100),
+    "SELECT x FROM y LIMIT 5"
+  );
+  assert.equal(
+    ensureGaqlLimit("SELECT x FROM y ORDER BY x LIMIT 250\n", 100),
+    "SELECT x FROM y ORDER BY x LIMIT 250\n"
+  );
 });
 
 test("dateRange bugünü dışlar, N gün kapsar", () => {

@@ -44,6 +44,23 @@ export function loadConfig(): AdsPilotConfig {
     refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN!.trim(),
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.trim() || undefined,
     writeEnabled: process.env.ADSPILOT_WRITE_ENABLED !== "0",
-    maxDailyBudget: Number(process.env.ADSPILOT_MAX_DAILY_BUDGET || 500),
+    maxDailyBudget: parseBudgetCap(process.env.ADSPILOT_MAX_DAILY_BUDGET),
   };
+}
+
+/**
+ * Tavan değeri doğrulanır: NaN/negatif/sıfır girilirse guard SESSİZCE devre dışı
+ * kalmasın diye varsayılana (500) düşülür ve stderr'e uyarı yazılır.
+ */
+function parseBudgetCap(raw: string | undefined): number {
+  const DEFAULT = 500;
+  if (!raw?.trim()) return DEFAULT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(
+      `[adspilot] Uyarı: ADSPILOT_MAX_DAILY_BUDGET='${raw}' geçersiz — bütçe tavanı ${DEFAULT} olarak zorlandı.`
+    );
+    return DEFAULT;
+  }
+  return n;
 }

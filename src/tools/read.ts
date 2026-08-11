@@ -5,7 +5,7 @@ import {
   listAccessibleCustomers,
   formatAdsError,
 } from "../adsClient.js";
-import { dateRange } from "../util.js";
+import { dateRange, ensureGaqlLimit } from "../util.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -81,7 +81,8 @@ export function registerReadTools(server: McpServer) {
     },
     async ({ customerId, query, limit }) => {
       try {
-        const rows = await queryWithRetry(customerId, query);
+        // LIMIT'siz sorgu Opteo'da TÜM sayfaları belleğe çeker — yoksa ekle
+        const rows = await queryWithRetry(customerId, ensureGaqlLimit(query, limit ?? 100));
         const capped = rows.slice(0, limit ?? 100);
         // Kompakt JSON + karakter tavanı: dev hesaplarda bağlamı şişirmesin
         let body = JSON.stringify(capped);
