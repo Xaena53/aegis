@@ -116,3 +116,12 @@ test("validateAnalyzeUrl şema ve host kontrolü", () => {
   assert.match(validateAnalyzeUrl("http://169.254.169.254/latest/meta-data")!, /SSRF/);
   assert.match(validateAnalyzeUrl("garbage")!, /Geçersiz URL/);
 });
+
+test("validateAnalyzeUrl port kısıtı: ayrıcalıklı portlar reddedilir", () => {
+  assert.match(validateAnalyzeUrl("http://example.com:25/")!, /25 portu/); // SMTP
+  assert.match(validateAnalyzeUrl("http://example.com:22/")!, /22 portu/); // SSH
+  assert.equal(validateAnalyzeUrl("http://example.com:80/"), null);
+  assert.equal(validateAnalyzeUrl("https://example.com:443/"), null);
+  assert.equal(validateAnalyzeUrl("http://example.com:8000/"), null); // 1024+ serbest
+  assert.equal(validateAnalyzeUrl("http://example.com:3000/"), null);
+});

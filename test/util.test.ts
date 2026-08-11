@@ -33,6 +33,12 @@ test("dedupe harf duyarsız, sıra korur, boşları atar", () => {
   assert.deepEqual(dedupe([]), []);
 });
 
+test("dedupe Türkçe İ/ı varyantlarını yakalar", () => {
+  assert.deepEqual(dedupe(["ÜCRETSİZ", "ücretsiz"]), ["ÜCRETSİZ"]); // düz toLowerCase bunu KAÇIRIYORDU
+  assert.deepEqual(dedupe(["ISPARTA", "ısparta"]), ["ISPARTA"]);
+  assert.deepEqual(dedupe(["İzmir", "izmir"]), ["İzmir"]);
+});
+
 test("geoTargetId bilinen ülkeler ve bilinmeyen", () => {
   assert.equal(geoTargetId("TR"), 2792);
   assert.equal(geoTargetId("tr"), 2792);
@@ -107,6 +113,16 @@ test("formatAdsError kod adı + mesaj birleştirir", () => {
   assert.match(s, /ikinci/);
   assert.match(formatAdsError(new Error("düz hata")), /düz hata/);
   assert.match(formatAdsError("string"), /string/);
+});
+
+test("formatAdsError sık hatalara Türkçe ipucu ekler", () => {
+  assert.match(formatAdsError(new Error("invalid_grant")), /npm run auth/);
+  assert.match(
+    formatAdsError({ errors: [{ error_code: { authorization_error: "USER_PERMISSION_DENIED" }, message: "x" }] }),
+    /GOOGLE_ADS_LOGIN_CUSTOMER_ID/
+  );
+  assert.match(formatAdsError(new Error("DEVELOPER_TOKEN_NOT_APPROVED")), /Basic Access/);
+  assert.doesNotMatch(formatAdsError(new Error("alakasız hata")), /İpucu/);
 });
 
 test("isTransientAdsError gRPC kodları ve mesaj kalıpları", () => {

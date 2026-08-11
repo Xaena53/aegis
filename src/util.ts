@@ -10,13 +10,19 @@ export function invalidId(label: string, v: string): string | null {
   return /^\d+$/.test(v.trim()) ? null : `Geçersiz ${label}: '${v}' — sadece rakamlardan oluşmalı.`;
 }
 
-/** Büyük/küçük harf duyarsız tekilleştirme; sıra korunur, boşlar atılır. */
+/**
+ * Büyük/küçük harf duyarsız tekilleştirme; sıra korunur, boşlar atılır.
+ * Türkçe İ/i sorunu: "ÜCRETSİZ".toLowerCase() → "ücretsi̇z" (birleşik nokta) olduğundan
+ * "ücretsiz" ile eşleşmez — iki lowercase varyantı (genel + tr-TR) birden anahtarlanır.
+ */
 export function dedupe(items: string[]): string[] {
   const seen = new Set<string>();
   return items.filter((s) => {
-    const k = s.trim().toLowerCase();
-    if (!k || seen.has(k)) return false;
-    seen.add(k);
+    const t = s.trim();
+    if (!t) return false;
+    const keys = [t.toLowerCase(), t.toLocaleLowerCase("tr-TR")];
+    if (keys.some((k) => seen.has(k))) return false;
+    for (const k of keys) seen.add(k);
     return true;
   });
 }
@@ -79,7 +85,21 @@ export function dateRange(days: number, now: Date = new Date()): string {
   return `segments.date BETWEEN '${fmt(start)}' AND '${fmt(end)}'`;
 }
 
-/** Google Ads API hatalarını okunur tek satıra indirger (hata kodu adı + mesaj). */
+/** Sık onboarding hatalarına Türkçe çözüm ipuçları. */
+const ERROR_HINTS: Array<[RegExp, string]> = [
+  [/DEVELOPER_TOKEN_NOT_APPROVED|DEVELOPER_TOKEN_PROHIBITED/i,
+    "İpucu: developer token henüz Test Access'te — gerçek hesaplar için MCC > API Center'dan Basic Access başvurusu gerekiyor."],
+  [/USER_PERMISSION_DENIED|login.customer.id/i,
+    "İpucu: MCC (yönetici) üzerinden erişiyorsan .env'de GOOGLE_ADS_LOGIN_CUSTOMER_ID (MCC'nin 10 haneli ID'si) dolu olmalı."],
+  [/invalid_grant/i,
+    "İpucu: refresh token geçersiz ya da iptal edilmiş — `npm run auth` ile yeniden üret."],
+  [/invalid_client|unauthorized_client/i,
+    "İpucu: GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_CLIENT_SECRET hatalı ya da OAuth istemcisi silinmiş."],
+  [/CUSTOMER_NOT_FOUND|CUSTOMER_NOT_ENABLED/i,
+    "İpucu: müşteri ID yanlış ya da hesap etkin değil — list_accounts ile doğrula."],
+];
+
+/** Google Ads API hatalarını okunur tek satıra indirger (hata kodu adı + mesaj + ipucu). */
 export function formatAdsError(err: unknown): string {
   const e = err as any;
   const fromList = e?.errors
@@ -90,7 +110,9 @@ export function formatAdsError(err: unknown): string {
     })
     .filter(Boolean)
     .join("; ");
-  return `Google Ads API hatası: ${fromList || e?.message || String(err)}`;
+  const base = `Google Ads API hatası: ${fromList || e?.message || String(err)}`;
+  const hint = ERROR_HINTS.find(([re]) => re.test(base))?.[1];
+  return hint ? `${base}\n${hint}` : base;
 }
 
 /** Geçici (retry edilebilir) hata mı? gRPC 4/8/14 veya kota/uygunluk mesajları. */

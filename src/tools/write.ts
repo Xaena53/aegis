@@ -37,20 +37,20 @@ export function registerWriteTools(server: McpServer) {
       annotations: WRITE_SAFE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
-        name: z.string().min(1).describe("Kampanya adı"),
+        name: z.string().min(1).max(255).describe("Kampanya adı (maks 255)"),
         dailyBudget: z.number().positive().describe("Günlük bütçe (hesap para biriminde, örn. 50)"),
         keywords: z
-          .array(z.string().min(1))
+          .array(z.string().min(1).max(80))
           .min(1)
           .max(50)
-          .describe("Anahtar kelimeler (PHRASE eşleme ile eklenir)"),
+          .describe("Anahtar kelimeler (PHRASE eşleme ile eklenir; Google sınırı: 80 karakter)"),
         countryCodes: z
           .array(z.string().length(2))
           .min(1)
           .describe(
             "Hedef ülkeler, ISO alpha-2 (örn. ['TR']). ZORUNLU — verilmezse Google kampanyayı DÜNYA GENELİ yayınlar ve bütçe çöpe gider."
           ),
-        adGroupName: z.string().optional().describe("Reklam grubu adı (varsayılan: 'Reklam Grubu 1')"),
+        adGroupName: z.string().max(255).optional().describe("Reklam grubu adı (varsayılan: 'Reklam Grubu 1')"),
       },
     },
     async ({ customerId, name, dailyBudget, keywords, countryCodes, adGroupName }) => {
@@ -162,7 +162,7 @@ export function registerWriteTools(server: McpServer) {
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
         adGroupId: z.string().describe("Reklam grubu ID"),
-        finalUrl: z.string().url().describe("Reklamın gideceği sayfa URL'i"),
+        finalUrl: z.string().url().max(2048).describe("Reklamın gideceği sayfa URL'i"),
         headlines: z.array(z.string().min(1).max(30)).min(3).max(15).describe("Başlıklar (maks 30 karakter)"),
         descriptions: z.array(z.string().min(1).max(90)).min(2).max(4).describe("Açıklamalar (maks 90 karakter)"),
       },
@@ -232,7 +232,7 @@ export function registerWriteTools(server: McpServer) {
           customerId,
           `SELECT campaign.id, campaign.name, campaign_budget.resource_name,
                   campaign_budget.amount_micros, campaign_budget.explicitly_shared
-           FROM campaign WHERE campaign.id = ${Number(campaignId)} LIMIT 1`
+           FROM campaign WHERE campaign.id = ${Number(campaignId)} AND campaign.status != 'REMOVED' LIMIT 1`
         );
         if (!row) return text(`Kampanya bulunamadı: ${campaignId}`);
         if (row.campaign_budget?.explicitly_shared) {
@@ -264,7 +264,7 @@ export function registerWriteTools(server: McpServer) {
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
         adGroupId: z.string().describe("Reklam grubu ID"),
-        keywords: z.array(z.string().min(1)).min(1).max(100).describe("Eklenecek anahtar kelimeler"),
+        keywords: z.array(z.string().min(1).max(80)).min(1).max(100).describe("Eklenecek anahtar kelimeler (maks 80 karakter)"),
         matchType: z
           .enum(["EXACT", "PHRASE", "BROAD"])
           .optional()
@@ -311,7 +311,7 @@ export function registerWriteTools(server: McpServer) {
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
         campaignId: z.string().describe("Kampanya ID"),
-        keywords: z.array(z.string().min(1)).min(1).max(100).describe("Negatif anahtar kelimeler"),
+        keywords: z.array(z.string().min(1).max(80)).min(1).max(100).describe("Negatif anahtar kelimeler (maks 80 karakter)"),
         matchType: z
           .enum(["EXACT", "PHRASE", "BROAD"])
           .optional()
@@ -375,6 +375,19 @@ export function registerWriteTools(server: McpServer) {
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
+        if (status === "ENABLED") {
+          // Reklamı olmayan kampanyayı yayına almak anlamsız — büyük ihtimalle akış hatası
+          const ads = await queryWithRetry(
+            customerId,
+            `SELECT ad_group_ad.ad.id FROM ad_group_ad
+             WHERE campaign.id = ${Number(campaignId)} AND ad_group_ad.status != 'REMOVED' LIMIT 1`
+          );
+          if (!ads.length) {
+            return text(
+              `Reddedildi: kampanya ${campaignId} içinde hiç reklam yok — yayına alınsa da gösterim yapamaz. Önce create_responsive_search_ad ile reklam ekle.`
+            );
+          }
+        }
         await customer.campaigns.update([
           {
             resource_name: ResourceNames.campaign(cid, campaignId),

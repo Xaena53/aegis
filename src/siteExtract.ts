@@ -196,5 +196,12 @@ export function validateAnalyzeUrl(raw: string): string | null {
   if (isPrivateHostname(u.hostname)) {
     return `Reddedildi: '${u.hostname}' yerel/özel ağ adresi — SSRF koruması.`;
   }
+  // Ayrıcalıklı portlara (SMTP/SSH vb.) çapraz-protokol isteği engelle
+  if (u.port) {
+    const p = Number(u.port);
+    if (p < 1024 && p !== 80 && p !== 443) {
+      return `Reddedildi: ${p} portu — yalnız 80/443 ya da 1024+ portlar desteklenir.`;
+    }
+  }
   return null;
 }
