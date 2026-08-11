@@ -1,10 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  queryWithRetry,
-  listAccessibleCustomers,
-  formatAdsError,
-} from "../adsClient.js";
+import { formatAdsError, type ContextProvider } from "../adsClient.js";
 import { enums } from "google-ads-api";
 import { dateRange, ensureGaqlLimit } from "../util.js";
 
@@ -18,7 +14,7 @@ function err(e: unknown) {
 
 const READ_ANNOTATIONS = { readOnlyHint: true, openWorldHint: true };
 
-export function registerReadTools(server: McpServer) {
+export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "list_accounts",
     {
@@ -28,12 +24,13 @@ export function registerReadTools(server: McpServer) {
     },
     async () => {
       try {
-        const ids = await listAccessibleCustomers();
+        const ctx = getCtx();
+        const ids = await ctx.listAccessibleCustomers();
         if (!ids.length) return text("Erişilebilir Google Ads hesabı bulunamadı.");
         const rows = await Promise.all(
           ids.slice(0, 30).map(async (id) => {
             try {
-              const [row] = await queryWithRetry(
+              const [row] = await ctx.queryWithRetry(
                 id,
                 `SELECT customer.descriptive_name, customer.currency_code, customer.manager FROM customer LIMIT 1`
               );
@@ -43,7 +40,7 @@ export function registerReadTools(server: McpServer) {
               if (c.manager) {
                 // Not: status filtresi bilerek yok — test hesapları ENABLED dışı status
                 // dönebiliyor ve filtre onları gizliyordu (canlıda görüldü). Status gösterilir.
-                const children: any[] = await queryWithRetry(
+                const children: any[] = await ctx.queryWithRetry(
                   id,
                   `SELECT customer_client.id, customer_client.descriptive_name,
                           customer_client.currency_code, customer_client.manager,
@@ -87,7 +84,7 @@ export function registerReadTools(server: McpServer) {
     async ({ customerId, query, limit }) => {
       try {
         // LIMIT'siz sorgu Opteo'da TÜM sayfaları belleğe çeker — yoksa ekle
-        const rows = await queryWithRetry(customerId, ensureGaqlLimit(query, limit ?? 100));
+        const rows = await getCtx().queryWithRetry(customerId, ensureGaqlLimit(query, limit ?? 100));
         const capped = rows.slice(0, limit ?? 100);
         // Kompakt JSON + karakter tavanı: dev hesaplarda bağlamı şişirmesin
         let body = JSON.stringify(capped);
@@ -121,7 +118,7 @@ export function registerReadTools(server: McpServer) {
         const d = days ?? 30;
         const statusFilter =
           includePaused === false ? `AND campaign.status = 'ENABLED'` : `AND campaign.status != 'REMOVED'`;
-        const rows = await queryWithRetry(customerId, `
+        const rows = await getCtx().queryWithRetry(customerId, `
           SELECT
             campaign.id, campaign.name, campaign.status,
             campaign.advertising_channel_type,
@@ -179,7 +176,7 @@ export function registerReadTools(server: McpServer) {
         if (campaignId && !/^\d+$/.test(campaignId.trim()))
           return text(`Geçersiz kampanya ID: '${campaignId}' — sadece rakam olmalı.`);
         const filter = campaignId ? `AND campaign.id = ${Number(campaignId.trim())}` : "";
-        const rows = await queryWithRetry(
+        const rows = await getCtx().queryWithRetry(
           customerId,
           `SELECT
              campaign.name, ad_group.id, ad_group.name,
@@ -244,7 +241,7 @@ export function registerReadTools(server: McpServer) {
         if (campaignId && !/^\d+$/.test(campaignId.trim()))
           return text(`Geçersiz kampanya ID: '${campaignId}' — sadece rakam olmalı.`);
         const filter = campaignId ? `AND campaign.id = ${Number(campaignId.trim())}` : "";
-        const rows = await queryWithRetry(customerId, `
+        const rows = await getCtx().queryWithRetry(customerId, `
           SELECT
             campaign.name, ad_group.name,
             ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,

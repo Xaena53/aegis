@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums, ResourceNames } from "google-ads-api";
-import { getCustomer, getConfig, formatAdsError, normalizeCustomerId, queryWithRetry, mutateWithRetry } from "../adsClient.js";
+import { formatAdsError, normalizeCustomerId, type ContextProvider } from "../adsClient.js";
 import { dedupe, geoTargetId, invalidId, ISO_NUMERIC, toMicrosInt, budgetGuard as budgetGuardPure } from "../util.js";
 
 function text(s: string) {
@@ -18,17 +18,17 @@ function writesDisabled() {
   );
 }
 
+/** Bütçe kelepçesi — tavan çağıran kullanıcının context'inden. */
+function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: number): string | null {
+  return budgetGuardPure(amount, ctx.config.maxDailyBudget);
+}
+
 // Yazma araçları: openWorld (dış API), idempotent değil.
 // destructiveHint: para harcamasını/mevcut durumu değiştirenlerde true.
 const WRITE_SAFE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
 const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 
-/** Bütçe kelepçesi — tavan .env'den. */
-function budgetGuard(amount: number): string | null {
-  return budgetGuardPure(amount, getConfig().maxDailyBudget);
-}
-
-export function registerWriteTools(server: McpServer) {
+export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "create_search_campaign",
     {
@@ -54,8 +54,9 @@ export function registerWriteTools(server: McpServer) {
       },
     },
     async ({ customerId, name, dailyBudget, keywords, countryCodes, adGroupName }) => {
-      if (!getConfig().writeEnabled) return writesDisabled();
-      const guardMsg = budgetGuard(dailyBudget);
+      const ctx = getCtx();
+      if (!ctx.config.writeEnabled) return writesDisabled();
+      const guardMsg = budgetGuardFor(ctx, dailyBudget);
       if (guardMsg) return text(guardMsg);
       const geoIds: number[] = [];
       for (const cc of countryCodes) {
@@ -69,7 +70,7 @@ export function registerWriteTools(server: McpServer) {
       const uniqueKeywords = dedupe(keywords);
       if (!uniqueKeywords.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
       try {
-        const customer = getCustomer(customerId);
+        const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const budgetResourceName = ResourceNames.campaignBudget(cid, "-1");
         const campaignResourceName = ResourceNames.campaign(cid, "-2");
@@ -140,7 +141,7 @@ export function registerWriteTools(server: McpServer) {
           })),
         ];
 
-        const res: any = await mutateWithRetry(() => customer.mutateResources(operations));
+        const res: any = await ctx.mutateWithRetry(() => customer.mutateResources(operations));
         const created =
           res?.mutate_operation_responses
             ?.map((r: any) => Object.values(r)[0])
@@ -172,7 +173,8 @@ export function registerWriteTools(server: McpServer) {
       },
     },
     async ({ customerId, adGroupId, finalUrl, headlines, descriptions }) => {
-      if (!getConfig().writeEnabled) return writesDisabled();
+      const ctx = getCtx();
+      if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("reklam grubu ID", adGroupId);
       if (idErr) return text(idErr);
       // Google tekrar eden varlıkları reddeder — burada anlaşılır mesajla yakala
@@ -187,9 +189,9 @@ export function registerWriteTools(server: McpServer) {
           `Reddedildi: tekrarlar ayıklanınca ${ud.length} benzersiz açıklama kaldı — en az 2 FARKLI açıklama gerekli.`
         );
       try {
-        const customer = getCustomer(customerId);
+        const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
-        const res: any = await mutateWithRetry(() => customer.adGroupAds.create([
+        const res: any = await ctx.mutateWithRetry(() => customer.adGroupAds.create([
           {
             ad_group: ResourceNames.adGroup(cid, adGroupId),
             status: enums.AdGroupAdStatus.ENABLED,
@@ -225,14 +227,15 @@ export function registerWriteTools(server: McpServer) {
       },
     },
     async ({ customerId, campaignId, newDailyBudget }) => {
-      if (!getConfig().writeEnabled) return writesDisabled();
+      const ctx = getCtx();
+      if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("kampanya ID", campaignId);
       if (idErr) return text(idErr);
-      const guardMsg = budgetGuard(newDailyBudget);
+      const guardMsg = budgetGuardFor(ctx, newDailyBudget);
       if (guardMsg) return text(guardMsg);
       try {
-        const customer = getCustomer(customerId);
-        const [row]: any[] = await queryWithRetry(
+        const customer = ctx.getCustomer(customerId);
+        const [row]: any[] = await ctx.queryWithRetry(
           customerId,
           `SELECT campaign.id, campaign.name, campaign_budget.resource_name,
                   campaign_budget.amount_micros, campaign_budget.explicitly_shared
@@ -245,7 +248,7 @@ export function registerWriteTools(server: McpServer) {
           );
         }
         const oldBudget = Number(row.campaign_budget.amount_micros) / 1e6;
-        await mutateWithRetry(() => customer.campaignBudgets.update([
+        await ctx.mutateWithRetry(() => customer.campaignBudgets.update([
           {
             resource_name: row.campaign_budget.resource_name,
             amount_micros: toMicrosInt(newDailyBudget),
@@ -277,16 +280,17 @@ export function registerWriteTools(server: McpServer) {
       },
     },
     async ({ customerId, adGroupId, keywords, matchType, negative }) => {
-      if (!getConfig().writeEnabled) return writesDisabled();
+      const ctx = getCtx();
+      if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("reklam grubu ID", adGroupId);
       if (idErr) return text(idErr);
       const unique = dedupe(keywords);
       if (!unique.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
       try {
-        const customer = getCustomer(customerId);
+        const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
-        await mutateWithRetry(() => customer.adGroupCriteria.create(
+        await ctx.mutateWithRetry(() => customer.adGroupCriteria.create(
           unique.map((kw) => ({
             ad_group: ResourceNames.adGroup(cid, adGroupId),
             // negatif kriterlerde status gönderilmez
@@ -323,16 +327,17 @@ export function registerWriteTools(server: McpServer) {
       },
     },
     async ({ customerId, campaignId, keywords, matchType }) => {
-      if (!getConfig().writeEnabled) return writesDisabled();
+      const ctx = getCtx();
+      if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("kampanya ID", campaignId);
       if (idErr) return text(idErr);
       const unique = dedupe(keywords);
       if (!unique.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
       try {
-        const customer = getCustomer(customerId);
+        const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
-        await mutateWithRetry(() => customer.campaignCriteria.create(
+        await ctx.mutateWithRetry(() => customer.campaignCriteria.create(
           unique.map((kw) => ({
             campaign: ResourceNames.campaign(cid, campaignId),
             negative: true,
@@ -368,7 +373,8 @@ export function registerWriteTools(server: McpServer) {
       },
     },
     async ({ customerId, campaignId, status, confirm }) => {
-      if (!getConfig().writeEnabled) return writesDisabled();
+      const ctx = getCtx();
+      if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("kampanya ID", campaignId);
       if (idErr) return text(idErr);
       if (status === "ENABLED" && !confirm) {
@@ -377,11 +383,11 @@ export function registerWriteTools(server: McpServer) {
         );
       }
       try {
-        const customer = getCustomer(customerId);
+        const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         if (status === "ENABLED") {
           // Reklamı olmayan kampanyayı yayına almak anlamsız — büyük ihtimalle akış hatası
-          const ads = await queryWithRetry(
+          const ads = await ctx.queryWithRetry(
             customerId,
             `SELECT ad_group_ad.ad.id FROM ad_group_ad
              WHERE campaign.id = ${Number(campaignId)} AND ad_group_ad.status != 'REMOVED' LIMIT 1`
@@ -392,7 +398,7 @@ export function registerWriteTools(server: McpServer) {
             );
           }
         }
-        await mutateWithRetry(() => customer.campaigns.update([
+        await ctx.mutateWithRetry(() => customer.campaigns.update([
           {
             resource_name: ResourceNames.campaign(cid, campaignId),
             status: enums.CampaignStatus[status],

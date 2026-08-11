@@ -63,8 +63,8 @@ export function budgetGuard(amount: number, cap: number): string | null {
   }
   if (amount > cap) {
     return (
-      `Reddedildi: istenen günlük bütçe (${amount}) güvenlik tavanının (${cap}) üzerinde. ` +
-      `Tavan .env'de ADSPILOT_MAX_DAILY_BUDGET ile yönetilir; kullanıcı onayı olmadan yükseltme.`
+      `Reddedildi: istenen günlük bütçe (${amount}) hesabın güvenlik tavanının (${cap}) üzerinde. ` +
+      `Tavanı yalnızca hesap sahibi yükseltebilir; kendi başına aşmaya çalışma, kullanıcıya bildir.`
     );
   }
   if (amount <= 0 || !Number.isFinite(amount)) return "Reddedildi: bütçe 0'dan büyük olmalı.";

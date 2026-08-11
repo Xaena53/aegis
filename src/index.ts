@@ -1,19 +1,10 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { registerReadTools } from "./tools/read.js";
-import { registerWriteTools } from "./tools/write.js";
-import { registerSiteTools } from "./tools/site.js";
+import { buildServer } from "./server.js";
+import { getEnvContext } from "./adsClient.js";
 import { missingCredentials } from "./config.js";
 
-const server = new McpServer({
-  name: "adspilot",
-  version: "0.1.0",
-});
-
-registerReadTools(server);
-registerWriteTools(server);
-registerSiteTools(server);
+const server = buildServer(getEnvContext);
 
 const missing = missingCredentials();
 if (missing.length) {

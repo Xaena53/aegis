@@ -3,63 +3,67 @@ import { loadConfig, AdsPilotConfig } from "./config.js";
 import { normalizeCustomerId, withRetry, isConcurrentModificationError } from "./util.js";
 
 export { normalizeCustomerId, formatAdsError } from "./util.js";
+export type { AdsPilotConfig } from "./config.js";
 
-let api: GoogleAdsApi | undefined;
-let cfg: AdsPilotConfig | undefined;
+/**
+ * Kullanıcıya bağlı Google Ads bağlamı. Çok-kullanıcılı (hosted) modda her
+ * kullanıcının kendi context'i olur; stdio modda env'den tek context üretilir.
+ * Araçlar global config'e DEĞİL, kendilerine verilen context'e konuşur.
+ */
+export class AdsContext {
+  private api: GoogleAdsApi;
 
-export function getConfig(): AdsPilotConfig {
-  if (!cfg) cfg = loadConfig();
-  return cfg;
-}
-
-function getApi(): GoogleAdsApi {
-  if (!api) {
-    const c = getConfig();
-    api = new GoogleAdsApi({
-      client_id: c.clientId,
-      client_secret: c.clientSecret,
-      developer_token: c.developerToken,
+  constructor(public readonly config: AdsPilotConfig) {
+    this.api = new GoogleAdsApi({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      developer_token: config.developerToken,
     });
   }
-  return api;
-}
 
-export function getCustomer(customerId: string): Customer {
-  const c = getConfig();
-  const nid = normalizeCustomerId(customerId);
-  if (nid.length !== 10) {
-    throw new Error(
-      `Geçersiz müşteri ID: '${customerId}' — Google Ads müşteri ID'si 10 hanelidir (örn. 1234567890). list_accounts ile doğru ID'yi bul.`
-    );
+  getCustomer(customerId: string): Customer {
+    const nid = normalizeCustomerId(customerId);
+    if (nid.length !== 10) {
+      throw new Error(
+        `Geçersiz müşteri ID: '${customerId}' — Google Ads müşteri ID'si 10 hanelidir (örn. 1234567890). list_accounts ile doğru ID'yi bul.`
+      );
+    }
+    return this.api.Customer({
+      customer_id: nid,
+      refresh_token: this.config.refreshToken,
+      login_customer_id: this.config.loginCustomerId
+        ? normalizeCustomerId(this.config.loginCustomerId)
+        : undefined,
+    });
   }
-  return getApi().Customer({
-    customer_id: nid,
-    refresh_token: c.refreshToken,
-    login_customer_id: c.loginCustomerId
-      ? normalizeCustomerId(c.loginCustomerId)
-      : undefined,
-  });
+
+  async listAccessibleCustomers(): Promise<string[]> {
+    const res = await withRetry(() => this.api.listAccessibleCustomers(this.config.refreshToken));
+    return res.resource_names.map((rn: string) => rn.replace("customers/", ""));
+  }
+
+  /** Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı. */
+  async queryWithRetry(customerId: string, gaql: string): Promise<any[]> {
+    return withRetry(() => this.getCustomer(customerId).query(gaql));
+  }
+
+  /**
+   * Mutasyon sarmalayıcısı: genel ağ hatalarında RETRY YOK (çift kayıt riski),
+   * yalnız CONCURRENT_MODIFICATION'da tekrar dener — o hatada istek açıkça
+   * reddedilmiştir, yazma uygulanmamıştır.
+   */
+  async mutateWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+    return withRetry(fn, { tries: 4, baseMs: 600, isTransient: isConcurrentModificationError });
+  }
 }
 
-export async function listAccessibleCustomers(): Promise<string[]> {
-  const c = getConfig();
-  const res = await withRetry(() => getApi().listAccessibleCustomers(c.refreshToken));
-  return res.resource_names.map((rn: string) => rn.replace("customers/", ""));
-}
+/** Araç kayıtları çağrı anında context ister — hata mesajları çağrıda üretilsin diye. */
+export type ContextProvider = () => AdsContext;
 
-/**
- * Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı.
- * (Mutasyonlar bilerek retry'sız: tekrar deneme çift kayıt oluşturabilir.)
- */
-export async function queryWithRetry(customerId: string, gaql: string): Promise<any[]> {
-  return withRetry(() => getCustomer(customerId).query(gaql));
-}
+let envCtx: AdsContext | undefined;
 
-/**
- * Mutasyon sarmalayıcısı: genel ağ hatalarında RETRY YOK (çift kayıt riski),
- * yalnız CONCURRENT_MODIFICATION'da tekrar dener — o hatada istek açıkça
- * reddedilmiştir, yazma uygulanmamıştır (canlıda ardışık mutasyonlarda görüldü).
- */
-export async function mutateWithRetry<T>(fn: () => Promise<T>): Promise<T> {
-  return withRetry(fn, { tries: 4, baseMs: 600, isTransient: isConcurrentModificationError });
+/** stdio modu: .env'den tek kullanıcılı context (tembel — sunucu kimliksiz de ayağa kalkar). */
+export function getEnvContext(): AdsContext {
+  if (!envCtx) envCtx = new AdsContext(loadConfig());
+  return envCtx;
 }

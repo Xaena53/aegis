@@ -53,6 +53,30 @@ claude mcp add adspilot -- node C:/AdsPilot/dist/index.js
 
 veya proje kökündeki `.mcp.json` zaten kayıtlı — `C:\AdsPilot` içinde çalışırken otomatik yüklenir.
 
+## İki çalışma modu
+
+**1. Yerel (stdio)** — tek kullanıcı, kimlik `.env`'den:
+```bash
+claude mcp add adspilot -- node C:/AdsPilot/dist/index.js
+```
+
+**2. Hosted (HTTP)** — çok kullanıcılı, her kullanıcı kendi Google hesabını bağlar:
+```bash
+# .env'e ADSPILOT_MASTER_KEY ve ADSPILOT_PUBLIC_URL ekle, sonra:
+npm run serve
+```
+Kullanıcı `<PUBLIC_URL>/connect` sayfasından Google ile bağlanır → kendisine bir API
+anahtarı verilir → onunla bağlanır:
+```bash
+claude mcp add --transport http adspilot <PUBLIC_URL>/mcp \
+  --header "Authorization: Bearer ap_..."
+```
+
+Hosted modda **her oturum tek kullanıcıya bağlıdır**: refresh token'lar AES-256-GCM
+ile şifreli saklanır, API anahtarları yalnız hash olarak tutulur, başka kullanıcının
+oturum kimliğiyle gelen istek `403 session_owner_mismatch` ile reddedilir, bütçe
+tavanı ve yazma izni kullanıcı bazlıdır.
+
 ## Güvenlik modeli
 
 Yazma zinciri her zaman şu sırayla ilerler:
