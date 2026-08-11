@@ -4,6 +4,7 @@
 // Tarayıcı açılır, Google hesabınla izin verirsin, refresh token terminale yazılır.
 import http from "node:http";
 import { exec } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 
 // .env'i sade biçimde oku (bağımlılıksız)
@@ -25,6 +26,8 @@ const PORT = 53682;
 const REDIRECT = `http://127.0.0.1:${PORT}/callback`;
 const SCOPE = "https://www.googleapis.com/auth/adwords";
 
+const STATE = randomBytes(16).toString("hex"); // CSRF koruması
+
 const authUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?" +
   new URLSearchParams({
@@ -34,6 +37,7 @@ const authUrl =
     scope: SCOPE,
     access_type: "offline",
     prompt: "consent",
+    state: STATE,
   }).toString();
 
 const server = http.createServer(async (req, res) => {
@@ -44,6 +48,11 @@ const server = http.createServer(async (req, res) => {
   }
   const code = url.searchParams.get("code");
   const error = url.searchParams.get("error");
+  if (url.searchParams.get("state") !== STATE) {
+    res.writeHead(403).end("state uyusmadi");
+    console.error("HATA: OAuth state eşleşmedi — istek bu scriptten çıkmamış olabilir.");
+    return;
+  }
   if (error || !code) {
     res.end("Yetkilendirme reddedildi. Terminale dönün.");
     console.error("Yetkilendirme başarısız:", error);
@@ -79,6 +88,15 @@ const server = http.createServer(async (req, res) => {
   } finally {
     server.close();
   }
+});
+
+server.on("error", (e) => {
+  if (e.code === "EADDRINUSE") {
+    console.error(`HATA: ${PORT} portu dolu. Eski bir auth denemesi açık kalmış olabilir — kapatıp tekrar dene.`);
+  } else {
+    console.error("Sunucu hatası:", e.message);
+  }
+  process.exit(1);
 });
 
 server.listen(PORT, "127.0.0.1", () => {

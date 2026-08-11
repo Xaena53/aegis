@@ -34,19 +34,35 @@ export function registerReadTools(server: McpServer) {
         const ids = await listAccessibleCustomers();
         if (!ids.length) return text("Erişilebilir Google Ads hesabı bulunamadı.");
         const rows = await Promise.all(
-          ids.map(async (id) => {
+          ids.slice(0, 30).map(async (id) => {
             try {
               const [row] = await getCustomer(id).query(
                 `SELECT customer.descriptive_name, customer.currency_code, customer.manager FROM customer LIMIT 1`
               );
               const c: any = row?.customer ?? {};
-              return `${id}\t${c.descriptive_name ?? "(isimsiz)"}\t${c.currency_code ?? "?"}${c.manager ? "\t[MCC]" : ""}`;
+              let line = `${id}\t${c.descriptive_name ?? "(isimsiz)"}\t${c.currency_code ?? "?"}${c.manager ? "\t[MCC]" : ""}`;
+              // MCC ise alt hesapları da göster — listAccessibleCustomers alt hesapları DÖNDÜRMEZ
+              if (c.manager) {
+                const children: any[] = await getCustomer(id).query(
+                  `SELECT customer_client.id, customer_client.descriptive_name,
+                          customer_client.currency_code, customer_client.manager, customer_client.status
+                   FROM customer_client
+                   WHERE customer_client.level = 1 AND customer_client.status = 'ENABLED'
+                   LIMIT 50`
+                );
+                for (const ch of children) {
+                  const cc = ch.customer_client ?? {};
+                  line += `\n  └ ${cc.id}\t${cc.descriptive_name ?? "(isimsiz)"}\t${cc.currency_code ?? "?"}${cc.manager ? "\t[MCC]" : ""}`;
+                }
+              }
+              return line;
             } catch {
               return `${id}\t(detay okunamadı — login_customer_id gerekebilir)`;
             }
           })
         );
-        return text("customerId\tisim\tpara birimi\n" + rows.join("\n"));
+        const extra = ids.length > 30 ? `\n(… ve ${ids.length - 30} hesap daha — detayları atlandı)` : "";
+        return text("customerId\tisim\tpara birimi\n" + rows.join("\n") + extra);
       } catch (e) {
         return err(e);
       }
@@ -130,7 +146,9 @@ export function registerReadTools(server: McpServer) {
     async ({ customerId, campaignId, days }) => {
       try {
         const d = days ?? 30;
-        const filter = campaignId ? `AND campaign.id = ${Number(campaignId)}` : "";
+        if (campaignId && !/^\d+$/.test(campaignId.trim()))
+          return text(`Geçersiz kampanya ID: '${campaignId}' — sadece rakam olmalı.`);
+        const filter = campaignId ? `AND campaign.id = ${Number(campaignId.trim())}` : "";
         const rows = await getCustomer(customerId).query(`
           SELECT
             campaign.name, ad_group.name,

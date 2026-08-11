@@ -3,6 +3,8 @@
 Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: raporlama **ve** güvenlik kapılı kampanya yönetimi. Google'ın resmi MCP'sinden farkı: **yazma erişimi** var (kampanya oluşturma, bütçe, anahtar kelime, RSA reklam), ama her tehlikeli adım korumalı:
 
 - Kampanyalar **her zaman PAUSED** oluşturulur — asla doğrudan yayına çıkmaz.
+- Ülke hedefleme **zorunlu** (`countryCodes`) — dünya-geneli kazara yayın engellenir.
+- Paylaşımlı bütçeye dokunulmaz (çok kampanyayı birden etkileme koruması).
 - Yayına alma (`ENABLED`) açık kullanıcı onayı ister (`confirm=true` kapısı).
 - Günlük bütçe tavanı: `ADSPILOT_MAX_DAILY_BUDGET` üzerindeki istekler reddedilir.
 - Tüm yazma araçları `ADSPILOT_WRITE_ENABLED=0` ile toptan kapatılabilir.
@@ -15,7 +17,7 @@ Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: rapor
 | `campaign_performance` | okuma | Son N gün kampanya özeti (maliyet, tıklama, dönüşüm, CTR) |
 | `keyword_performance` | okuma | Anahtar kelime bazlı performans |
 | `run_gaql` | okuma | Ham GAQL sorgusu |
-| `create_search_campaign` | yazma | Bütçe + kampanya (PAUSED) + reklam grubu + anahtar kelimeler |
+| `create_search_campaign` | yazma | Bütçe + kampanya (PAUSED) + ülke hedefleme (zorunlu) + reklam grubu + kelimeler |
 | `create_responsive_search_ad` | yazma | Reklam grubuna RSA ekler |
 | `add_keywords` | yazma | Anahtar kelime / negatif kelime ekler |
 | `update_campaign_budget` | yazma | Günlük bütçe günceller (tavan kelepçeli) |

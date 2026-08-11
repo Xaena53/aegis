@@ -1,4 +1,12 @@
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// .env'i CWD'den değil, her zaman proje kökünden (dist/../.env) yükle:
+// MCP istemcileri sunucuyu rastgele bir çalışma dizininden başlatabilir.
+// quiet: dotenv'in stdout'a log basması MCP stdio (JSON-RPC) akışını bozar.
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+loadDotenv({ path: path.join(projectRoot, ".env"), quiet: true });
 
 export interface AdsPilotConfig {
   developerToken: string;

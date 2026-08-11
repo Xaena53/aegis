@@ -17,6 +17,29 @@ function writesDisabled() {
   );
 }
 
+/**
+ * Ülke geo hedef ID'leri: Google'ın ülke geoTargetConstant ID'si = 2000 + ISO 3166 sayısal kod.
+ * (Örn. TR=792→2792, US=840→2840 — Google'ın kendi listesiyle birebir doğrulanmış kalıp.)
+ */
+const ISO_NUMERIC: Record<string, number> = {
+  TR: 792, US: 840, GB: 826, DE: 276, FR: 250, ES: 724, IT: 380, NL: 528,
+  BE: 56, AT: 40, CH: 756, SE: 752, NO: 578, DK: 208, FI: 246, PL: 616,
+  PT: 620, GR: 300, RO: 642, BG: 100, CZ: 203, HU: 348, UA: 804, RU: 643,
+  CA: 124, MX: 484, BR: 76, AR: 32, AU: 36, NZ: 554, JP: 392, KR: 410,
+  CN: 156, IN: 356, ID: 360, SA: 682, AE: 784, EG: 818, ZA: 710, IL: 376,
+  AZ: 31, KZ: 398, QA: 634, KW: 414, IE: 372, MY: 458, SG: 702, TH: 764,
+};
+
+function geoTargetId(countryCode: string): number | null {
+  const iso = ISO_NUMERIC[countryCode.toUpperCase()];
+  return iso ? 2000 + iso : null;
+}
+
+/** ID alanları sadece rakam olmalı (GAQL'e ham gömüldükleri için). */
+function invalidId(label: string, v: string): string | null {
+  return /^\d+$/.test(v.trim()) ? null : `Geçersiz ${label}: '${v}' — sadece rakamlardan oluşmalı.`;
+}
+
 /** Bütçe kelepçesi: tavanı aşan istekleri reddeder. */
 function budgetGuard(amount: number): string | null {
   const cap = getConfig().maxDailyBudget;
@@ -43,12 +66,27 @@ export function registerWriteTools(server: McpServer) {
         .min(1)
         .max(50)
         .describe("Anahtar kelimeler (PHRASE eşleme ile eklenir)"),
+      countryCodes: z
+        .array(z.string().length(2))
+        .min(1)
+        .describe(
+          "Hedef ülkeler, ISO alpha-2 (örn. ['TR']). ZORUNLU — verilmezse Google kampanyayı DÜNYA GENELİ yayınlar ve bütçe çöpe gider."
+        ),
       adGroupName: z.string().optional().describe("Reklam grubu adı (varsayılan: 'Reklam Grubu 1')"),
     },
-    async ({ customerId, name, dailyBudget, keywords, adGroupName }) => {
+    async ({ customerId, name, dailyBudget, keywords, countryCodes, adGroupName }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
       const guardMsg = budgetGuard(dailyBudget);
       if (guardMsg) return text(guardMsg);
+      const geoIds: number[] = [];
+      for (const cc of countryCodes) {
+        const id = geoTargetId(cc);
+        if (!id)
+          return text(
+            `Reddedildi: '${cc}' ülke kodu dahili listede yok. Desteklenenler: ${Object.keys(ISO_NUMERIC).join(", ")}`
+          );
+        geoIds.push(id);
+      }
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
@@ -97,6 +135,15 @@ export function registerWriteTools(server: McpServer) {
               status: enums.AdGroupStatus.ENABLED,
             },
           },
+          // Coğrafi hedefleme: verilen ülkelerle sınırla (yoksa Google dünya geneli yayınlar)
+          ...geoIds.map((gid) => ({
+            entity: "campaign_criterion",
+            operation: "create" as const,
+            resource: {
+              campaign: campaignResourceName,
+              location: { geo_target_constant: `geoTargetConstants/${gid}` },
+            },
+          })),
           ...keywords.map((kw) => ({
             entity: "ad_group_criterion",
             operation: "create" as const,
@@ -115,7 +162,7 @@ export function registerWriteTools(server: McpServer) {
             ?.map((v: any) => v?.resource_name)
             ?.filter(Boolean) ?? [];
         return text(
-          `Kampanya PAUSED olarak oluşturuldu (${keywords.length} anahtar kelime, günlük bütçe ${dailyBudget}).\n` +
+          `Kampanya PAUSED olarak oluşturuldu (${keywords.length} anahtar kelime, günlük bütçe ${dailyBudget}, hedef: ${countryCodes.join(", ").toUpperCase()}).\n` +
             `Oluşan kaynaklar:\n${created.join("\n")}\n\n` +
             `SONRAKİ ADIM: Reklam metni ekle (create_responsive_search_ad), kullanıcı onayını al, sonra set_campaign_status ile yayına al.`
         );
@@ -137,6 +184,8 @@ export function registerWriteTools(server: McpServer) {
     },
     async ({ customerId, adGroupId, finalUrl, headlines, descriptions }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
+      const idErr = invalidId("reklam grubu ID", adGroupId);
+      if (idErr) return text(idErr);
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
@@ -173,6 +222,8 @@ export function registerWriteTools(server: McpServer) {
     },
     async ({ customerId, campaignId, newDailyBudget }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
+      const idErr = invalidId("kampanya ID", campaignId);
+      if (idErr) return text(idErr);
       const guardMsg = budgetGuard(newDailyBudget);
       if (guardMsg) return text(guardMsg);
       try {
@@ -219,6 +270,8 @@ export function registerWriteTools(server: McpServer) {
     },
     async ({ customerId, adGroupId, keywords, matchType, negative }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
+      const idErr = invalidId("reklam grubu ID", adGroupId);
+      if (idErr) return text(idErr);
       try {
         const customer = getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
@@ -254,6 +307,8 @@ export function registerWriteTools(server: McpServer) {
     },
     async ({ customerId, campaignId, status, confirm }) => {
       if (!getConfig().writeEnabled) return writesDisabled();
+      const idErr = invalidId("kampanya ID", campaignId);
+      if (idErr) return text(idErr);
       if (status === "ENABLED" && !confirm) {
         return text(
           "Reddedildi: kampanyayı yayına almak gerçek harcama başlatır. Önce kullanıcıya kampanya özetini (bütçe, anahtar kelimeler, reklam metni) göster ve açık onayını al; onay geldiyse confirm=true ile tekrar çağır."

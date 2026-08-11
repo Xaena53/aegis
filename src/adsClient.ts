@@ -43,12 +43,16 @@ export async function listAccessibleCustomers(): Promise<string[]> {
   return res.resource_names.map((rn: string) => rn.replace("customers/", ""));
 }
 
-/** Google Ads API hatalarını okunur tek satıra indirger. */
+/** Google Ads API hatalarını okunur tek satıra indirger (hata kodu adı + mesaj). */
 export function formatAdsError(err: unknown): string {
   const e = err as any;
-  const details =
-    e?.errors?.map((x: any) => x?.message).filter(Boolean).join("; ") ||
-    e?.message ||
-    String(err);
-  return `Google Ads API hatası: ${details}`;
+  const fromList = e?.errors
+    ?.map((x: any) => {
+      const code = x?.error_code ? Object.keys(x.error_code).filter((k) => x.error_code[k])[0] : null;
+      const codeVal = code ? `${code}=${x.error_code[code]}` : null;
+      return [codeVal, x?.message].filter(Boolean).join(": ");
+    })
+    .filter(Boolean)
+    .join("; ");
+  return `Google Ads API hatası: ${fromList || e?.message || String(err)}`;
 }
