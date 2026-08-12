@@ -212,6 +212,9 @@ function page(title: string, inner: string): string {
  code{padding:.15em .4em} pre{padding:1rem;overflow-x:auto}
  a.btn{display:inline-block;background:#1a73e8;color:#fff;text-decoration:none;padding:.7rem 1.2rem;border-radius:8px;font-weight:600}
  .warn{border-left:4px solid #e8a31a;padding:.6rem 1rem;background:rgba(232,163,26,.12);border-radius:0 6px 6px 0}
+ .ok{border-left:4px solid #1a9e4b;padding:.6rem 1rem;background:rgba(26,158,75,.12);border-radius:0 6px 6px 0}
+ label{display:block;margin:.3rem 0} input[type=number]{padding:.5rem;border-radius:6px;border:1px solid rgba(127,127,127,.4);width:12rem}
+ button{background:#1a73e8;color:#fff;border:0;padding:.7rem 1.4rem;border-radius:8px;font-weight:600;cursor:pointer}
 </style></head><body>${inner}</body></html>`;
 }
 
@@ -241,6 +244,40 @@ function verifyState(value: string | undefined): boolean {
   const a = Buffer.from(expected);
   const b = Buffer.from(value);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Q7 — İNSAN OTURUMU (ayar sayfası için).
+ *
+ * Değişmez kural: AJAN KENDİ KELEPÇESİNİ GEVŞETEMEZ. Bütçe tavanı ve yazma
+ * izni MCP üzerinden yalnız OKUNUR (adspilot://accounts/{id}/limits); değişiklik
+ * yalnız insanın tarayıcısındaki bu oturumla yapılır. API anahtarı bu iş için
+ * kullanılamaz — ajan da o anahtara sahip olduğundan kapı anlamsız kalırdı.
+ */
+const OTURUM_TTL_MS = 2 * 60 * 60_000; // 2 saat
+
+function signSession(userId: number, ts: number): string {
+  const body = `${userId}.${ts}`;
+  const mac = createHmac("sha256", process.env.ADSPILOT_MASTER_KEY ?? "").update(`oturum:${body}`).digest("base64url");
+  return `${body}.${mac}`;
+}
+
+function verifySession(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parts = value.split(".");
+  if (parts.length !== 3) return undefined;
+  const userId = Number(parts[0]);
+  const ts = Number(parts[1]);
+  if (!Number.isInteger(userId) || !Number.isFinite(ts) || Date.now() - ts > OTURUM_TTL_MS) return undefined;
+  const beklenen = Buffer.from(signSession(userId, ts));
+  const gelen = Buffer.from(value);
+  return beklenen.length === gelen.length && timingSafeEqual(beklenen, gelen) ? userId : undefined;
+}
+
+function oturumCerezi(userId: number): string {
+  const secure = PUBLIC_URL.startsWith("https://") ? "; Secure" : "";
+  // SameSite=Strict: ayar değişikliği başka siteden tetiklenemesin
+  return `adspilot_session=${encodeURIComponent(signSession(userId, Date.now()))}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${OTURUM_TTL_MS / 1000}${secure}`;
 }
 
 function readCookie(req: http.IncomingMessage, name: string): string | undefined {
@@ -350,7 +387,7 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
     );
   }
 
-  const { apiKey } = store.upsertUser({ subject, email, refreshToken: tokens.refresh_token });
+  const { apiKey, userId } = store.upsertUser({ subject, email, refreshToken: tokens.refresh_token });
   const mcpUrl = `${PUBLIC_URL}/mcp`;
   html(
     res,
@@ -364,9 +401,93 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
        <h2>Claude Code'a ekle</h2>
        <pre>claude mcp add --transport http adspilot ${mcpUrl} \\
   --header "Authorization: Bearer ${apiKey}"</pre>
-       <p>Ardından Claude'a “Google Ads hesaplarımı listele” diyebilirsin.</p>`
-    )
+       <p>Ardından Claude'a “Google Ads hesaplarımı listele” diyebilirsin.</p>
+       <h2>Güvenlik kelepçelerin</h2>
+       <p>Yazma iznini ve günlük bütçe tavanını <a href="/settings">ayarlar sayfasından</a> yönetebilirsin.
+       Claude bu değerleri okuyabilir ama <strong>değiştiremez</strong>.</p>`
+    ),
+    // İnsan oturumu: ayar sayfası API anahtarıyla DEĞİL bununla korunur
+    { "Set-Cookie": oturumCerezi(userId) }
   );
+}
+
+// ── Ayarlar (yalnız insan oturumu) ────────────────────────────────────────
+const MUTLAK_BUTCE_TAVANI = 100_000; // yazım hatasına karşı emniyet
+
+function ayarSayfasi(user: StoredUser, mesaj?: { tur: "ok" | "hata"; metin: string }): string {
+  const bildirim = mesaj
+    ? `<p class="${mesaj.tur === "ok" ? "ok" : "warn"}">${esc(mesaj.metin)}</p>`
+    : "";
+  return page(
+    "AdsPilot ayarları",
+    `<h1>Güvenlik ayarların</h1>
+     <p>Hesap: <strong>${esc(user.email)}</strong></p>
+     ${bildirim}
+     <div class="warn"><strong>Bu sayfa yalnız sana açıktır.</strong> Claude (ya da herhangi bir ajan)
+     bu değerleri <em>okuyabilir</em> ama <em>değiştiremez</em> — kelepçeyi gevşetme yetkisi sadece sende.</div>
+     <form method="POST" action="/settings">
+       <p><label><input type="checkbox" name="yazma" value="1" ${user.writeEnabled ? "checked" : ""}>
+       Yazma işlemlerine izin ver (kampanya kurma, bütçe, yayına alma)</label></p>
+       <p><label>Günlük bütçe tavanı (hesap para biriminde)<br>
+       <input type="number" name="tavan" min="1" max="${MUTLAK_BUTCE_TAVANI}" step="1" value="${user.maxDailyBudget}" required></label></p>
+       <p><button type="submit">Kaydet</button></p>
+     </form>
+     <h2>Bu ayarlar ne yapar?</h2>
+     <ul>
+       <li><strong>Yazma kapalıysa</strong> ajan yalnız rapor okuyabilir; hiçbir kampanya değişikliği yapamaz.</li>
+       <li><strong>Bütçe tavanı</strong> tek bir kampanyanın günlük bütçesinin üst sınırıdır. Tavanın üzerinde
+       bütçeyle kampanya kurulamaz ve tavanı aşan bütçeli bir kampanya yayına alınamaz.</li>
+       <li>Değişiklik <strong>anında</strong> geçerli olur — açık bir Claude oturumu varsa o da yeni ayarla çalışır.</li>
+     </ul>`
+  );
+}
+
+async function handleSettings(req: http.IncomingMessage, res: http.ServerResponse) {
+  const userId = verifySession(readCookie(req, "adspilot_session"));
+  if (!userId) {
+    return html(
+      res,
+      401,
+      page(
+        "Giriş gerekli",
+        `<h1>Giriş gerekli</h1><p>Ayarlarını görmek için Google hesabınla giriş yap.</p>
+         <p><a class="btn" href="/connect">Google ile giriş yap</a></p>`
+      )
+    );
+  }
+  const user = store.findById(userId);
+  if (!user) return html(res, 404, page("Bulunamadı", "<h1>Kullanıcı bulunamadı</h1>"));
+
+  if (req.method === "GET") return html(res, 200, ayarSayfasi(user));
+
+  if (req.method === "POST") {
+    const govde = await new Promise<string>((resolve, reject) => {
+      let veri = "";
+      req.on("data", (c) => {
+        veri += c;
+        if (veri.length > 10_000) reject(new Error("gövde çok büyük"));
+      });
+      req.on("end", () => resolve(veri));
+      req.on("error", reject);
+    });
+    const form = new URLSearchParams(govde);
+    const tavan = Number(form.get("tavan"));
+    if (!Number.isFinite(tavan) || tavan <= 0 || tavan > MUTLAK_BUTCE_TAVANI) {
+      return html(res, 400, ayarSayfasi(user, { tur: "hata", metin: `Tavan 1 ile ${MUTLAK_BUTCE_TAVANI} arasında olmalı.` }));
+    }
+    const yazma = form.get("yazma") === "1";
+    store.updateSettings(userId, { writeEnabled: yazma, maxDailyBudget: tavan });
+    const guncel = store.findById(userId)!;
+    return html(
+      res,
+      200,
+      ayarSayfasi(guncel, {
+        tur: "ok",
+        metin: `Kaydedildi: yazma ${yazma ? "AÇIK" : "KAPALI"}, günlük bütçe tavanı ${tavan}. Açık oturumlar bir sonraki istekte bu ayarı kullanır.`,
+      })
+    );
+  }
+  return json(res, 405, { error: "method_not_allowed" });
 }
 
 // ── MCP endpoint ──────────────────────────────────────────────────────────
@@ -492,6 +613,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/health") return json(res, 200, { ok: true, sessions: sessions.size });
     if (url.pathname === "/connect" && req.method === "GET") return handleConnect(res);
     if (url.pathname === "/oauth/callback" && req.method === "GET") return handleCallback(req, res, url);
+    if (url.pathname === "/settings") return await handleSettings(req, res);
     if (url.pathname === "/mcp") return await handleMcp(req, res);
     if (url.pathname === "/")
       return html(res, 200, page("AdsPilot", `<h1>AdsPilot</h1><p>Google Ads MCP sunucusu. <a href="/connect">Hesabını bağla</a>.</p>`));

@@ -189,6 +189,123 @@ test("OAuth CSRF: çerezsiz ya da uydurma state ile callback 403", async () => {
   assert.equal(uydurma.status, 403);
 });
 
+/**
+ * Q7 — KELEPÇE YÖNETİMİ.
+ * Değişmez kural: ajan kendi bütçe tavanını/yazma iznini DEĞİŞTİREMEZ.
+ * Okuma MCP'den (resource), yazma yalnız insan tarayıcı oturumundan.
+ */
+test("ayarlar sayfası oturumsuz erişime KAPALI", async () => {
+  const get = await fetch(`${BASE}/settings`, { redirect: "manual" });
+  assert.equal(get.status, 401);
+
+  const post = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "tavan=99999&yazma=1",
+  });
+  assert.equal(post.status, 401, "oturumsuz POST ayar değiştirememeli");
+});
+
+test("API ANAHTARI ayar sayfasına giriş için KULLANILAMAZ (ajan kelepçeyi gevşetemez)", async () => {
+  const key = await kullaniciEkle("kelepce@ornek.com", "sub-kelepce");
+  // Ajanın elindeki tek kimlik API anahtarıdır; onu her yolla denesin
+  const bearer = await fetch(`${BASE}/settings`, { headers: { Authorization: `Bearer ${key}` } });
+  assert.equal(bearer.status, 401, "bearer ile ayar sayfası açılmamalı");
+
+  const cerezOlarak = await fetch(`${BASE}/settings`, { headers: { Cookie: `adspilot_session=${key}` } });
+  assert.equal(cerezOlarak.status, 401, "API anahtarı oturum çerezi yerine geçmemeli");
+
+  const post = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: "tavan=99999",
+  });
+  assert.equal(post.status, 401);
+});
+
+test("uydurulmuş oturum çerezi imza doğrulamasına takılır", async () => {
+  const sahte = await fetch(`${BASE}/settings`, { headers: { Cookie: "adspilot_session=1.9999999999999.sahteimza" } });
+  assert.equal(sahte.status, 401);
+});
+
+test("MCP tarafında kelepçe değiştiren HİÇBİR araç yok (yalnız okunur)", async () => {
+  const key = await kullaniciEkle("araclar@ornek.com", "sub-araclar");
+  const init = await mcp(key, INIT);
+  const sid = init.headers.get("mcp-session-id")!;
+  await mcp(key, { jsonrpc: "2.0", method: "notifications/initialized" }, sid);
+  const liste = await mcp(key, { jsonrpc: "2.0", id: 2, method: "tools/list" }, sid);
+  const govde = await liste.text();
+
+  // Ayar/limit değiştirmeye benzeyen bir araç adı bulunmamalı
+  assert.doesNotMatch(govde, /"name":"[a-z_]*(settings|limit|cap|tavan)[a-z_]*"/i);
+});
+
+/** Sunucunun ürettiğiyle aynı imzalı oturum çerezi (insan tarayıcısını taklit eder). */
+async function insanOturumu(userId: number): Promise<string> {
+  const { createHmac } = await import("node:crypto");
+  const ts = Date.now();
+  const body = `${userId}.${ts}`;
+  const mac = createHmac("sha256", MASTER).update(`oturum:${body}`).digest("base64url");
+  return `adspilot_session=${encodeURIComponent(`${body}.${mac}`)}`;
+}
+
+test("İNSAN oturumuyla ayar değişir ve MCP tarafına ANINDA yansır", async () => {
+  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  const { UserStore } = await import("../src/store.js");
+  const s = new UserStore(DB);
+  const { apiKey, userId } = s.upsertUser({ subject: "sub-ayar", email: "ayar@ornek.com", refreshToken: "sahte" });
+  s.close();
+
+  const cookie = await insanOturumu(userId);
+
+  // 1) Sayfa açılıyor ve mevcut değerleri gösteriyor
+  const sayfa = await fetch(`${BASE}/settings`, { headers: { Cookie: cookie } });
+  assert.equal(sayfa.status, 200);
+  const html = await sayfa.text();
+  assert.match(html, /ayar@ornek\.com/);
+  assert.match(html, /değiştiremez/, "ajanın değiştiremeyeceği sayfada yazmalı");
+
+  // 2) Tavanı düşür ve yazmayı kapat
+  const kaydet = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
+    body: "tavan=25", // 'yazma' gönderilmiyor → kapalı
+  });
+  assert.equal(kaydet.status, 200);
+  assert.match(await kaydet.text(), /yazma KAPALI/);
+
+  // 3) MCP tarafı yeni ayarı görüyor mu? (bayat context olmamalı)
+  const init = await mcp(apiKey, INIT);
+  const sid = init.headers.get("mcp-session-id")!;
+  await mcp(apiKey, { jsonrpc: "2.0", method: "notifications/initialized" }, sid);
+  const kaynak = await mcp(
+    apiKey,
+    { jsonrpc: "2.0", id: 5, method: "resources/read", params: { uri: `adspilot://accounts/${1466231519}/limits` } },
+    sid
+  );
+  const govde = await kaynak.text();
+  assert.match(govde, /\\"gunlukButceTavani\\": 25|"gunlukButceTavani": 25/, "yeni tavan MCP'ye yansımalı");
+  assert.match(govde, /\\"yazmaIzni\\": false|"yazmaIzni": false/, "yazma kapalı görünmeli");
+});
+
+test("geçersiz tavan reddedilir (yazım hatası emniyeti)", async () => {
+  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  const { UserStore } = await import("../src/store.js");
+  const s = new UserStore(DB);
+  const { userId } = s.upsertUser({ subject: "sub-gecersiz", email: "gecersiz@ornek.com", refreshToken: "sahte" });
+  s.close();
+  const cookie = await insanOturumu(userId);
+
+  for (const govde of ["tavan=0", "tavan=-5", "tavan=abc", "tavan=999999999"]) {
+    const r = await fetch(`${BASE}/settings`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
+      body: govde,
+    });
+    assert.equal(r.status, 400, `${govde} kabul edilmemeli`);
+  }
+});
+
 test("/health kimliksiz çalışır (izleme için)", async () => {
   const r = await fetch(`${BASE}/health`);
   assert.equal(r.status, 200);
