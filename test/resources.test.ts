@@ -78,7 +78,6 @@ test("campaigns kaynağı enum'ları ada çevirir ve micros'u böler", async () 
               advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
             },
             campaign_budget: { amount_micros: 60_000_000 },
-            metrics: { cost_micros: 1_250_000 },
           },
         ],
       ],
@@ -90,8 +89,10 @@ test("campaigns kaynağı enum'ları ada çevirir ve micros'u böler", async () 
   assert.equal(veri.kampanyalar[0].durum, "ENABLED");
   assert.equal(veri.kampanyalar[0].kanal, "SEARCH");
   assert.equal(veri.kampanyalar[0].gunlukButce, 60);
-  assert.equal(veri.kampanyalar[0].maliyet30g, 1.25);
   assert.match(rec.queries.at(-1)!, /LIMIT 200/, "sorgu sınırsız olmamalı");
+  // Katalog kaynağı TARİH FİLTRESİ İÇERMEMELİ: istatistiği olmayan yeni
+  // taslaklar listeden düşüyor ve ajan "kampanya oluşmadı" sanıyordu.
+  assert.doesNotMatch(rec.queries.at(-1)!, /segments\.date/, "katalog dönemsel filtre kullanmamalı");
 });
 
 test("campaigns kaynağı URI'den gelen customerId'yi TEMİZLEYEREK kullanır", async () => {

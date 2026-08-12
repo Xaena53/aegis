@@ -1,5 +1,11 @@
 # Faz Q — "Çalışan MCP"den "Referans MCP"ye
 
+> **⚠ ARŞİV BELGESİ.** Bu plan 2026-08 tarihinde YAZILDIĞI ANDAKİ durumu anlatır
+> ve buradaki maddelerin TAMAMI (Q1-Q9) tamamlanmıştır. Aşağıdaki "bugünkü durum"
+> tablosu ve eksiklik tespitleri ARTIK GEÇERLİ DEĞİLDİR — güncel durum için
+> README ve testlere bakın. Belge yol haritasının nasıl kurulduğunu göstermek
+> için korunuyor.
+
 **Konum:** Faz 3a (hosted çekirdek) ✅ bitti → **Faz Q (burası)** → Faz 3d (VPS deploy)
 
 **Neden VPS'ten ÖNCE:** Deploy, mimariyi dondurur. Aşağıdaki maddelerin çoğu

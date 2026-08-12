@@ -1,7 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums } from "google-ads-api";
-import type { ContextProvider } from "./adsClient.js";
-import { dateRange } from "./util.js";
+import { formatAdsError, type ContextProvider } from "./adsClient.js";
+
 
 /**
  * RESOURCES — Faz Q / Q4
@@ -92,28 +92,34 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
     }),
     {
       title: "Kampanya listesi",
-      description: "Bir hesaptaki kampanyalar: durum, kanal, günlük bütçe ve son 30 günün maliyeti.",
+      description: "Bir hesaptaki TÜM kampanyalar (katalog): durum, kanal, günlük bütçe. Performans için campaign_performance aracını kullan.",
       mimeType: "application/json",
     },
     async (uri, { customerId }) => {
       const cid = String(customerId).replace(/\D/g, "");
+      /**
+       * segments.date FİLTRESİ YOK — bilinçli. Tarih filtresi eklendiğinde
+       * son 30 günde istatistiği olmayan kampanyalar HİÇ dönmüyordu; yeni
+       * kurulan bir taslak listede görünmüyor ve ajan "oluşmadı" sanıp
+       * ikinci kampanya kurabiliyordu. Bu kaynak KATALOGDUR; dönemsel
+       * performans için campaign_performance aracı var.
+       */
       const satirlar = await getCtx().queryWithRetry(
         cid,
         `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
-                campaign_budget.amount_micros, metrics.cost_micros
-         FROM campaign WHERE ${dateRange(30)} AND campaign.status != 'REMOVED'
-         ORDER BY metrics.cost_micros DESC LIMIT 200`
+                campaign_budget.amount_micros
+         FROM campaign WHERE campaign.status != 'REMOVED'
+         ORDER BY campaign.id DESC LIMIT 200`
       );
       return json(uri.href, {
         customerId: cid,
-        pencere: "son 30 gün",
-        kampanyalar: satirlar.map((r: any) => ({
+        not: "Tüm kampanyalar (performans verisi için campaign_performance aracını kullan).",
+        kampanyalar: satirlar.filter((r: any) => r?.campaign).map((r: any) => ({
           id: String(r.campaign.id),
           ad: r.campaign.name,
           durum: (enums.CampaignStatus as any)[r.campaign.status] ?? r.campaign.status,
           kanal: (enums.AdvertisingChannelType as any)[r.campaign.advertising_channel_type] ?? r.campaign.advertising_channel_type,
           gunlukButce: Number(r.campaign_budget?.amount_micros ?? 0) / 1e6,
-          maliyet30g: Number(r.metrics?.cost_micros ?? 0) / 1e6,
         })),
       });
     }
@@ -151,7 +157,8 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           "## Sık alanlar",
           "- Kimlik: `campaign.id`, `campaign.name`, `campaign.status`, `ad_group.id`",
           "- Para: `metrics.cost_micros` (1.000.000 = 1 birim), `campaign_budget.amount_micros`",
-          "- Performans: `metrics.clicks`, `metrics.impressions`, `metrics.conversions`, `metrics.ctr`, `metrics.average_cpc`",
+          "- Performans: `metrics.clicks`, `metrics.impressions`, `metrics.conversions`",
+          "- DİKKAT birim: `metrics.average_cpc` **micros**tur (`_micros` son eki YOK ama micros!), `metrics.ctr` **kesir**tir (0.02 = %2)",
           "- Kelime: `ad_group_criterion.keyword.text`, `ad_group_criterion.keyword.match_type`",
           "- Arama terimi: `search_term_view.search_term`, `search_term_view.status`",
           "",
@@ -163,7 +170,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           "SELECT search_term_view.search_term, metrics.cost_micros, metrics.conversions FROM search_term_view WHERE segments.date DURING LAST_30_DAYS AND metrics.clicks >= 1",
           "```",
           "```",
-          "SELECT campaign_criterion.keyword.text FROM campaign_criterion WHERE campaign_criterion.negative = true",
+          "SELECT campaign.id, campaign_criterion.keyword.text, campaign_criterion.type FROM campaign_criterion WHERE campaign_criterion.negative = true",
           "```",
           "",
           "## Tuzaklar",

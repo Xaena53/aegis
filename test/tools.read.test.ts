@@ -355,5 +355,10 @@ test("okuma araçları readOnlyHint, yazma araçları destructiveHint bildirir",
   assert.equal(bul("set_campaign_status").annotations.destructiveHint, true);
   assert.equal(bul("update_campaign_budget").annotations.destructiveHint, true);
   assert.equal(bul("create_search_campaign").annotations.readOnlyHint, false);
+  // Canlı kampanyaya yazan araçlar da yıkıcı sayılır: kodun kendi risk modeli
+  // bunları "yayına almakla aynı ağırlıkta" diyor, anotasyon da öyle demeli.
+  assert.equal(bul("create_responsive_search_ad").annotations.destructiveHint, true);
+  // Taslak kampanya kurmak duraklatılmış doğduğu için yıkıcı DEĞİL
+  assert.equal(bul("create_search_campaign").annotations.destructiveHint, false);
   assert.equal(tools.length, 12, "araç sayısı sözleşmesi");
 });

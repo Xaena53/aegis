@@ -233,7 +233,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         "KULLAN: kampanya taslağı kurulduktan hemen sonra — reklamsız kampanya yayına alınamaz. " +
         "GÜVENLİK: kampanya PAUSED ise serbesttir; kampanya ZATEN YAYINDAYSA kullanıcı onayı istenir (reklam anında gösterime girer). " +
         "İPUCU: karakter sınırlarını yazmadan önce SAYARAK doğrula; Google kırpmaz, reddeder.",
-      annotations: WRITE_SAFE,
+      annotations: WRITE_DESTRUCTIVE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
         adGroupId: z.string().describe("Reklam grubu ID"),

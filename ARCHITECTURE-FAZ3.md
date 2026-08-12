@@ -29,7 +29,7 @@ Hedef: site sahibi hiçbir şey kurmadan bağlanır → Google hesabını tek t�
   sınırlı beta için yeterli — beta bu tavana göre kotalanır.
 
 ### 3d — Dağıtım
-- VPS (<sunucu-ip>) + nginx + alan adı (karar: adspilot.* satın al ya da geçici
+- VPS + nginx + alan adı (karar: adspilot.* satın al ya da geçici
   `mcp.animerank.com.tr`). TLS zorunlu (bearer düz HTTP'de taşınamaz).
 - Anthropic connectors dizini başvurusu.
 
