@@ -34,7 +34,12 @@ npm run build
 npm test        # birim testleri (saf yardımcılar: guard'lar, retry, tarih aralığı)
 ```
 
-Geçici API hataları (UNAVAILABLE, kota) okuma yollarında üstel geri çekilmeyle otomatik tekrar denenir; **mutasyonlar bilerek retry'sız** — tekrar deneme çift kayıt oluşturabilir.
+**Node 22.13+ gerekir** (hosted mod `node:sqlite` kullanır; Node 18/20'de `npm run serve` ilk import'ta çöker).
+
+Geçici API hataları (UNAVAILABLE, kota) okuma yollarında üstel geri çekilmeyle
+otomatik tekrar denenir. **Mutasyonlar ağ hatalarında retry EDİLMEZ** (çift kayıt
+riski); tek istisna `CONCURRENT_MODIFICATION` — Google bu hatada isteği açıkça
+reddeder, yazma uygulanmamıştır, bu yüzden güvenle tekrar denenir.
 
 ### 1. Faz 0 — Google tarafı (bir kere yapılır)
 
@@ -71,6 +76,22 @@ anahtarı verilir → onunla bağlanır:
 claude mcp add --transport http adspilot <PUBLIC_URL>/mcp \
   --header "Authorization: Bearer ap_..."
 ```
+
+### VPS dağıtımında ZORUNLU adımlar
+
+1. **Node 22.13+** kur (apt'ın 18/20 sürümü `node:sqlite` yokluğundan çöker).
+2. **TEK instance** çalıştır. Oturumlar ve hız sınırı sayaçları süreç belleğindedir;
+   pm2 cluster / birden çok worker → istek başka worker'a düşer, `404 session_not_found`
+   döngüsü başlar ve hız sınırı worker sayısınca çarpılır.
+3. **`ADSPILOT_ALLOWED_HOSTS`** ayarla ve nginx'te `proxy_set_header Host $host;`
+   satırını UNUTMA — aksi halde upstream'e `Host: 127.0.0.1` gider, DNS rebinding
+   koruması eşleşmez ve **tüm MCP trafiği 403 alır** (teşhisi zor bir arıza).
+4. **`ADSPILOT_DB`'ye mutlak yol ver.** Boş bırakılırsa geçici bir veritabanı
+   açılır ve her yeniden başlatmada tüm kullanıcı token'ları kaybolur.
+5. `chmod 600 .env adspilot.db*` — master key ve şifreli token'lar taşırlar.
+   WAL modunda `.db-wal`/`.db-shm` yan dosyaları da yedeklenmelidir.
+6. TLS zorunlu; `ADSPILOT_PUBLIC_URL` https:// olmalı (bearer anahtarları ve
+   OAuth kodları düz HTTP'de taşınamaz).
 
 Hosted modda **her oturum tek kullanıcıya bağlıdır**: refresh token'lar AES-256-GCM
 ile şifreli saklanır, API anahtarları yalnız hash olarak tutulur, başka kullanıcının

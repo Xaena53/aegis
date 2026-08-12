@@ -103,12 +103,26 @@ export class UserStore {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key_hash);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
     `);
+    // Kalıcı kimlik: Google'ın `sub` claim'i. E-posta kiracı anahtarı OLAMAZ —
+    // değişebilir, Workspace'te yeniden atanabilir ve çözülemediğinde herkesi
+    // tek bir satırda birleştirir. Mevcut kurulumlar için eklemeli geçiş.
+    const cols = this.db.prepare("PRAGMA table_info(users)").all() as any[];
+    if (!cols.some((c) => String(c.name) === "google_sub")) {
+      this.db.exec("ALTER TABLE users ADD COLUMN google_sub TEXT");
+    }
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub ON users(google_sub)");
   }
 
-  /** Kullanıcı oluşturur (ya da aynı e-posta varsa token'ı yeniler) ve yeni API anahtarı döner. */
+  /**
+   * Kullanıcıyı kaydeder/yeniler ve YENİ bir API anahtarı döner.
+   * `subject` (Google `sub`) verildiyse kiracı anahtarı odur; yoksa e-postaya
+   * düşülür (yalnız stdio/test yolu — hosted akış subject'i ZORUNLU kılar).
+   * Tamamı tek işlemde: eşzamanlı iki callback yarışıp UNIQUE ihlaliyle
+   * kullanıcının taze refresh token'ını kaybettiremesin.
+   */
   upsertUser(input: {
+    subject?: string;
     email: string;
     refreshToken: string;
     loginCustomerId?: string;
@@ -116,28 +130,51 @@ export class UserStore {
   }): { apiKey: string; userId: number } {
     const { plain, hash } = generateApiKey();
     const enc = encryptSecret(input.refreshToken);
-    const existing = this.db.prepare("SELECT id FROM users WHERE email = ?").get(input.email) as
-      | { id: number }
-      | undefined;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const bySub = input.subject
+        ? (this.db.prepare("SELECT id FROM users WHERE google_sub = ?").get(input.subject) as { id: number } | undefined)
+        : undefined;
+      const existing =
+        bySub ?? (this.db.prepare("SELECT id FROM users WHERE email = ?").get(input.email) as { id: number } | undefined);
 
-    if (existing) {
-      this.db
-        .prepare(
-          `UPDATE users SET refresh_token_enc = ?, api_key_hash = ?, login_customer_id = ?,
-                            max_daily_budget = COALESCE(?, max_daily_budget)
-           WHERE id = ?`
-        )
-        .run(enc, hash, input.loginCustomerId ?? null, input.maxDailyBudget ?? null, existing.id);
-      return { apiKey: plain, userId: existing.id };
+      let userId: number;
+      if (existing) {
+        this.db
+          .prepare(
+            `UPDATE users SET google_sub = COALESCE(?, google_sub),
+                              email = ?,
+                              refresh_token_enc = ?,
+                              api_key_hash = ?,
+                              login_customer_id = COALESCE(?, login_customer_id),
+                              max_daily_budget = COALESCE(?, max_daily_budget)
+             WHERE id = ?`
+          )
+          .run(
+            input.subject ?? null,
+            input.email,
+            enc,
+            hash,
+            input.loginCustomerId ?? null,
+            input.maxDailyBudget ?? null,
+            existing.id
+          );
+        userId = existing.id;
+      } else {
+        const res = this.db
+          .prepare(
+            `INSERT INTO users (google_sub, email, refresh_token_enc, api_key_hash, login_customer_id, max_daily_budget)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          )
+          .run(input.subject ?? null, input.email, enc, hash, input.loginCustomerId ?? null, input.maxDailyBudget ?? 500);
+        userId = Number(res.lastInsertRowid);
+      }
+      this.db.exec("COMMIT");
+      return { apiKey: plain, userId };
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
     }
-
-    const res = this.db
-      .prepare(
-        `INSERT INTO users (email, refresh_token_enc, api_key_hash, login_customer_id, max_daily_budget)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(input.email, enc, hash, input.loginCustomerId ?? null, input.maxDailyBudget ?? 500);
-    return { apiKey: plain, userId: Number(res.lastInsertRowid) };
   }
 
   /**
@@ -160,7 +197,7 @@ export class UserStore {
   findById(id: number): StoredUser | undefined {
     const row = this.db
       .prepare(
-        `SELECT id, email, refresh_token_enc, login_customer_id, write_enabled, max_daily_budget, created_at
+        `SELECT id, google_sub, email, refresh_token_enc, login_customer_id, write_enabled, max_daily_budget, created_at
          FROM users WHERE id = ?`
       )
       .get(id) as any;
@@ -171,7 +208,7 @@ export class UserStore {
   findByApiKey(apiKeyPlain: string): StoredUser | undefined {
     const row = this.db
       .prepare(
-        `SELECT id, email, refresh_token_enc, login_customer_id, write_enabled, max_daily_budget, created_at
+        `SELECT id, google_sub, email, refresh_token_enc, login_customer_id, write_enabled, max_daily_budget, created_at
          FROM users WHERE api_key_hash = ?`
       )
       .get(hashApiKey(apiKeyPlain)) as any;
@@ -181,6 +218,7 @@ export class UserStore {
   private rowToUser(row: any): StoredUser {
     return {
       id: Number(row.id),
+      googleSub: row.google_sub ? String(row.google_sub) : undefined,
       email: String(row.email),
       refreshToken: decryptSecret(String(row.refresh_token_enc)),
       loginCustomerId: row.login_customer_id ? String(row.login_customer_id) : undefined,

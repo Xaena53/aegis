@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "adspilot": {
-      "command": "node",
-      "args": ["C:/AdsPilot/dist/index.js"]
-    }
-  }
-}

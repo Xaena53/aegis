@@ -1,9 +1,18 @@
 node_modules/
 dist/
+coverage/
+# Tüm .env varyantları — VPS'te .env.prod üretmek yaygın, sessizce izlenmesin
 .env
+.env.*
+!.env.example
+# Anahtar/sertifika dosyaları
+*.pem
+*.key
+*.p12
 *.log
 # Hosted mod kullanıcı veritabanı — ŞİFRELİ TOKEN İÇERİR, asla commit'lenmez
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+.mcp.json

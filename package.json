@@ -1,6 +1,6 @@
 {
   "name": "adspilot-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "UNLICENSED",
   "description": "AdsPilot — Google Ads MCP server: connect your site, let Claude run your ads (write-enabled, human-approval gated)",
@@ -15,11 +15,11 @@
     "start": "node dist/index.js",
     "serve": "node dist/http.js",
     "dev": "tsx src/index.ts",
-    "test": "node --import tsx --test test/util.test.ts test/siteExtract.test.ts test/store.test.ts test/rateLimit.test.ts",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
     "auth": "node scripts/get-refresh-token.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

@@ -1,31 +1,75 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import http from "node:http";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "./server.js";
 import { AdsContext } from "./adsClient.js";
-import { UserStore, type StoredUser } from "./store.js";
+import { UserStore, encryptSecret, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
 import { setRuntimeMode } from "./util.js";
+import { parseNumEnv } from "./config.js";
 
-const PORT = Number(process.env.PORT ?? 8787);
-const PUBLIC_URL = process.env.ADSPILOT_PUBLIC_URL ?? `http://localhost:${PORT}`;
+const PORT = parseNumEnv("PORT", process.env.PORT, 8787);
+const PUBLIC_URL = process.env.ADSPILOT_PUBLIC_URL?.trim() || `http://localhost:${PORT}`;
+
+/**
+ * BAŞLANGIÇTA HIZLI BAŞARISIZLIK. Eskiden eksik yapılandırma yalnız ilk
+ * kullanımda patlıyordu: sunucu ayağa kalkıyor, /health {ok:true} diyor,
+ * monitör yeşil yanıyor ve hata ancak ilk gerçek kullanıcı Google'dan
+ * dönerken görünüyordu. Bozuk deploy sessiz kalmamalı.
+ */
+function validateHostedEnv(): void {
+  const eksik: string[] = [];
+  for (const k of ["GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET"]) {
+    if (!process.env[k]?.trim()) eksik.push(k);
+  }
+  const mk = process.env.ADSPILOT_MASTER_KEY;
+  if (!mk?.trim() || mk.length < 32) eksik.push("ADSPILOT_MASTER_KEY (min 32 karakter)");
+  if (eksik.length) {
+    console.error(
+      `[adspilot-http] BAŞLATILAMADI — eksik/geçersiz yapılandırma:\n  - ${eksik.join("\n  - ")}\n` +
+        `Örnek için .env.example dosyasına bak. Anahtar üretmek için:\n` +
+        `  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+    );
+    process.exit(1);
+  }
+  try {
+    new URL(PUBLIC_URL);
+  } catch {
+    console.error(`[adspilot-http] BAŞLATILAMADI — ADSPILOT_PUBLIC_URL geçersiz: '${PUBLIC_URL}'`);
+    process.exit(1);
+  }
+  if (!process.env.ADSPILOT_DB?.trim()) {
+    console.error(
+      "[adspilot-http] Bilgi: ADSPILOT_DB tanımsız — çalışma dizinindeki 'adspilot.db' kullanılacak."
+    );
+  }
+}
+validateHostedEnv();
+
 const store = new UserStore();
+// Şifreleme anahtarını hemen dene: bozuksa ilk kullanıcıda değil ŞİMDİ patlasın
+try {
+  encryptSecret("baslangic-dogrulamasi");
+} catch (e: any) {
+  console.error(`[adspilot-http] BAŞLATILAMADI — şifreleme anahtarı kullanılamıyor: ${e?.message ?? e}`);
+  process.exit(1);
+}
 
 // ── Sınırlar (bellek tükenmesine karşı) ──────────────────────────────────
 const SESSION_IDLE_MS = 30 * 60_000; // 30 dk hareketsiz oturum kapatılır
 const OAUTH_STATE_TTL_MS = 10 * 60_000; // OAuth state 10 dk geçerli
-const MAX_PENDING_STATES = 5_000;
 const MAX_SESSIONS = 1_000;
 const MAX_SESSIONS_PER_USER = 10; // tek kullanıcı havuzu tüketemesin
 const SWEEP_MS = 60_000;
 
 // Paylaşılan Google Ads kotasını koruyan kullanıcı-başı hız sınırı
 const limiter = new RateLimiter({
-  perMinute: Number(process.env.ADSPILOT_RATE_PER_MINUTE ?? 120),
-  perDay: Number(process.env.ADSPILOT_RATE_PER_DAY ?? 2000),
+  // parseNumEnv şart: boş string Number("")===0 verip "her istek 429" yapardı
+  perMinute: parseNumEnv("ADSPILOT_RATE_PER_MINUTE", process.env.ADSPILOT_RATE_PER_MINUTE, 120),
+  perDay: parseNumEnv("ADSPILOT_RATE_PER_DAY", process.env.ADSPILOT_RATE_PER_DAY, 2000),
 });
 
 // Hosted modda hata ipuçları ".env düzenle" değil "yeniden bağlan" demeli
@@ -108,15 +152,12 @@ interface Session {
 }
 const sessions = new Map<string, Session>();
 
-// OAuth state → oluşturulma zamanı (CSRF); tek kullanımlık + TTL'li
-const pendingStates = new Map<string, number>();
+/** Kurulmakta olan (henüz kaydedilmemiş) oturumlar — tavan yarışını kapatır. */
+const pendingSessions = new Map<number, number>();
 
 /** Süresi geçen oturum ve OAuth state'lerini temizler (bellek DoS koruması). */
 function sweep(): void {
   const now = Date.now();
-  for (const [state, born] of pendingStates) {
-    if (now - born > OAUTH_STATE_TTL_MS) pendingStates.delete(state);
-  }
   for (const [sid, s] of sessions) {
     if (now - s.lastSeen > SESSION_IDLE_MS) {
       sessions.delete(sid);
@@ -143,8 +184,16 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
   res.end(payload);
 }
 
-function html(res: http.ServerResponse, status: number, body: string) {
-  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
+function html(res: http.ServerResponse, status: number, body: string, extraHeaders: Record<string, string> = {}) {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    // API anahtarı içeren sayfa önbelleğe/proxy'ye yazılmasın, referrer sızmasın
+    "Cache-Control": "no-store, max-age=0",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    ...extraHeaders,
+  });
   res.end(body);
 }
 
@@ -167,16 +216,46 @@ function page(title: string, inner: string): string {
 }
 
 // ── OAuth: /connect → Google → /oauth/callback ────────────────────────────
+/**
+ * OAuth state'i TARAYICIYA bağlar (imzalı çerez). İki sorunu birden çözer:
+ *  1) Sunucu tarafı `pendingStates` havuzu yoktu edilir → kimliksiz istekle
+ *     doldurulup tüm yeni kullanıcılara 503 verdirme yolu kapanır.
+ *  2) "state eşleşti" artık "bu tarayıcı üretti" demek olur → saldırganın
+ *     kendi Google hesabını kurbanın tarayıcısına bağlatması (login CSRF)
+ *     engellenir; aksi halde kurbanın kampanyaları saldırganın hesabına yazardı.
+ */
+function signState(nonce: string, ts: number): string {
+  const body = `${nonce}.${ts}`;
+  const mac = createHmac("sha256", process.env.ADSPILOT_MASTER_KEY ?? "").update(body).digest("base64url");
+  return `${body}.${mac}`;
+}
+
+function verifyState(value: string | undefined): boolean {
+  if (!value) return false;
+  const parts = value.split(".");
+  if (parts.length !== 3) return false;
+  const [nonce, tsRaw] = parts;
+  const ts = Number(tsRaw);
+  if (!Number.isFinite(ts) || Date.now() - ts > OAUTH_STATE_TTL_MS) return false;
+  const expected = signState(nonce, ts);
+  const a = Buffer.from(expected);
+  const b = Buffer.from(value);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function readCookie(req: http.IncomingMessage, name: string): string | undefined {
+  const raw = req.headers.cookie;
+  if (!raw) return undefined;
+  for (const part of raw.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === name) return decodeURIComponent(v.join("="));
+  }
+  return undefined;
+}
+
 function handleConnect(res: http.ServerResponse) {
   const { id } = oauthClient();
-  if (pendingStates.size >= MAX_PENDING_STATES) {
-    sweep();
-    if (pendingStates.size >= MAX_PENDING_STATES) {
-      return html(res, 503, page("Meşgul", "<h1>Şu an meşgul</h1><p>Birazdan tekrar dene.</p>"));
-    }
-  }
-  const state = randomBytes(16).toString("hex");
-  pendingStates.set(state, Date.now());
+  const state = signState(randomBytes(16).toString("hex"), Date.now());
   const url =
     "https://accounts.google.com/o/oauth2/v2/auth?" +
     new URLSearchParams({
@@ -189,6 +268,7 @@ function handleConnect(res: http.ServerResponse) {
       prompt: "consent",
       state,
     });
+  const secure = PUBLIC_URL.startsWith("https://") ? "; Secure" : "";
   html(
     res,
     200,
@@ -199,19 +279,24 @@ function handleConnect(res: http.ServerResponse) {
        Tüm yazma işlemleri <strong>duraklatılmış taslak</strong> olarak oluşur ve
        yayına almak için <strong>senin onayını</strong> ister.</p>
        <p><a class="btn" href="${url}">Google ile bağlan</a></p>`
-    )
+    ),
+    { "Set-Cookie": `adspilot_state=${encodeURIComponent(state)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}` }
   );
 }
 
 async function handleCallback(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const state = url.searchParams.get("state") ?? "";
-  const born = pendingStates.get(state);
-  pendingStates.delete(state); // tek kullanımlık
-  if (born === undefined) {
-    return html(res, 403, page("Hata", "<h1>Geçersiz istek</h1><p>state eşleşmedi (CSRF koruması).</p>"));
-  }
-  if (Date.now() - born > OAUTH_STATE_TTL_MS) {
-    return html(res, 403, page("Süre doldu", "<h1>Bağlantı isteği zaman aşımına uğradı</h1><p><a href='/connect'>Yeniden dene</a>.</p>"));
+  const cookieState = readCookie(req, "adspilot_state");
+  // state hem imzalı+taze olmalı HEM DE bu tarayıcının çerezindekiyle aynı olmalı
+  if (!verifyState(state) || cookieState !== state) {
+    return html(
+      res,
+      403,
+      page(
+        "Geçersiz istek",
+        "<h1>Geçersiz ya da süresi dolmuş bağlantı isteği</h1><p>Bu bağlantı bu tarayıcıda başlatılmamış ya da süresi dolmuş. <a href='/connect'>Baştan başla</a>.</p>"
+      )
+    );
   }
   const code = url.searchParams.get("code");
   if (!code) return html(res, 400, page("Hata", "<h1>Yetkilendirme iptal edildi</h1>"));
@@ -237,17 +322,35 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
     );
   }
 
-  // Kullanıcı e-postası (id_token'ın payload'ından; imza doğrulaması gerekmez —
-  // token doğrudan Google'dan TLS üzerinden geldi, sadece etiketleme amaçlı)
+  // Kimlik: id_token'ın `sub` claim'i (imza doğrulaması gerekmez — token
+  // doğrudan Google'dan TLS üzerinden geldi). `sub` DEĞİŞMEZ; e-posta değil.
+  let subject: string | undefined;
   let email = "bilinmiyor";
   try {
     const payload = JSON.parse(Buffer.from(String(tokens.id_token).split(".")[1], "base64url").toString("utf8"));
+    if (payload.sub) subject = String(payload.sub);
     if (payload.email) email = String(payload.email);
   } catch {
-    /* etiket yoksa sorun değil */
+    /* aşağıda kapalı-arıza */
   }
 
-  const { apiKey } = store.upsertUser({ email, refreshToken: tokens.refresh_token });
+  // KAPALI ARIZA: kimlik çözülemezse kullanıcıyı PAYLAŞILAN bir satıra yazma.
+  // Aksi halde iki farklı kişi aynı kayda düşer, biri diğerinin API anahtarını
+  // ve Google token'ını sessizce geçersizleştirir.
+  if (!subject) {
+    return html(
+      res,
+      400,
+      page(
+        "Kimlik doğrulanamadı",
+        `<h1>Kimlik doğrulanamadı</h1><p>Google hesabının kimliği alınamadı (id_token yok).
+         İzin ekranında e-posta/kimlik iznini onayladığından emin olup
+         <a href="/connect">yeniden dene</a>.</p>`
+      )
+    );
+  }
+
+  const { apiKey } = store.upsertUser({ subject, email, refreshToken: tokens.refresh_token });
   const mcpUrl = `${PUBLIC_URL}/mcp`;
   html(
     res,
@@ -339,16 +442,19 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
     sweep();
     if (sessions.size >= MAX_SESSIONS) return json(res, 503, { error: "too_many_sessions" });
   }
-  // Tek kullanıcı oturum havuzunu tüketip diğerlerini kilitleyemesin
-  if (sessionCountFor(user.id) >= MAX_SESSIONS_PER_USER) {
+  // Tek kullanıcı oturum havuzunu tüketip diğerlerini kilitleyemesin.
+  // YER AYIRMA senkron yapılır: kontrol ile kaydın arasında `await` var ve
+  // eşzamanlı initialize istekleri tavanı hep "0 oturum" görüp aşabiliyordu.
+  if (sessionCountFor(user.id) + (pendingSessions.get(user.id) ?? 0) >= MAX_SESSIONS_PER_USER) {
     sweep();
-    if (sessionCountFor(user.id) >= MAX_SESSIONS_PER_USER) {
+    if (sessionCountFor(user.id) + (pendingSessions.get(user.id) ?? 0) >= MAX_SESSIONS_PER_USER) {
       return json(res, 429, {
         error: "too_many_sessions_for_user",
         hint: `Aynı anda en fazla ${MAX_SESSIONS_PER_USER} oturum açabilirsin; eskilerini kapat.`,
       });
     }
   }
+  pendingSessions.set(user.id, (pendingSessions.get(user.id) ?? 0) + 1);
 
   // Paylaşılan kutu: hem oturum kaydı hem araç context sağlayıcısı bunu okur
   const live: { user: StoredUser } = { user };
@@ -368,9 +474,15 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   };
 
   // Bu oturumun araçları YALNIZ bu kullanıcının GÜNCEL context'ini görür
-  const server = buildServer(() => contextFor(live.user));
-  await server.connect(transport);
-  await transport.handleRequest(req, res, body);
+  try {
+    const server = buildServer(() => contextFor(live.user));
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body);
+  } finally {
+    const n = (pendingSessions.get(user.id) ?? 1) - 1;
+    if (n > 0) pendingSessions.set(user.id, n);
+    else pendingSessions.delete(user.id);
+  }
 }
 
 // ── Router ────────────────────────────────────────────────────────────────

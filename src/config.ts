@@ -43,9 +43,38 @@ export function loadConfig(): AdsPilotConfig {
     clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET!.trim(),
     refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN!.trim(),
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.trim() || undefined,
-    writeEnabled: process.env.ADSPILOT_WRITE_ENABLED !== "0",
+    writeEnabled: parseBool(process.env.ADSPILOT_WRITE_ENABLED, true),
     maxDailyBudget: parseBudgetCap(process.env.ADSPILOT_MAX_DAILY_BUDGET),
   };
+}
+
+/**
+ * Bayrak okuma — GÜVENLİ TARAFA yanılır.
+ * Eski hâli yalnız tam "0" değerini kapalı sayıyordu; `=false`, `=no`, `=off`
+ * yazan kullanıcı yazmayı kapattığını sanıp gerçek para harcatabilen araçları
+ * açık bırakıyordu. Tanınmayan değer de kapalı kabul edilir.
+ */
+export function parseBool(raw: string | undefined, varsayilan: boolean): boolean {
+  if (raw === undefined || raw.trim() === "") return varsayilan;
+  const v = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on", "evet", "acik", "açık"].includes(v)) return true;
+  if (["0", "false", "no", "off", "hayir", "hayır", "kapali", "kapalı"].includes(v)) return false;
+  console.error(`[adspilot] Uyarı: anlaşılamayan bayrak değeri '${raw}' — güvenli tarafa (kapalı) alındı.`);
+  return false;
+}
+
+/**
+ * Sayısal ortam değişkeni. Boş string `Number("")===0` verdiği için sessizce
+ * 0'a düşerdi (hız sınırında "her istek 429" demek) — burada reddedilir.
+ */
+export function parseNumEnv(name: string, raw: string | undefined, varsayilan: number): number {
+  if (raw === undefined || raw.trim() === "") return varsayilan;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(`[adspilot] Uyarı: ${name}='${raw}' geçersiz — varsayılan ${varsayilan} kullanılıyor.`);
+    return varsayilan;
+  }
+  return n;
 }
 
 /**
