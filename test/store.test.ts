@@ -7,9 +7,7 @@ import { join } from "node:path";
 process.env.ADSPILOT_MASTER_KEY = "birim-test-anahtari-32-bayttan-uzun-olmali";
 const DB = join(tmpdir(), `adspilot-test-${process.pid}.db`);
 
-const { UserStore, encryptSecret, decryptSecret, generateApiKey, hashApiKey, safeEqualHex } = await import(
-  "../src/store.js"
-);
+const { UserStore, encryptSecret, decryptSecret, generateApiKey, hashApiKey } = await import("../src/store.js");
 
 let store: InstanceType<typeof UserStore>;
 before(() => {
@@ -41,14 +39,14 @@ test("kurcalanmış şifreli veri reddedilir (GCM auth tag)", () => {
   assert.throws(() => decryptSecret("bozuk-format"));
 });
 
-test("API anahtarı: ap_ önekli, hash'i saklanır, sabit-zamanlı karşılaştırma", () => {
+test("API anahtarı: ap_ önekli, yalnız hash saklanır", () => {
   const { plain, hash } = generateApiKey();
   assert.match(plain, /^ap_[\w-]{40,}$/);
   assert.equal(hash, hashApiKey(plain));
   assert.notEqual(plain, hash);
-  assert.equal(safeEqualHex(hash, hashApiKey(plain)), true);
-  assert.equal(safeEqualHex(hash, hashApiKey("ap_baska")), false);
-  assert.equal(safeEqualHex(hash, "kisa"), false); // uzunluk farkında patlamamalı
+  assert.notEqual(hashApiKey(plain), hashApiKey("ap_baska"));
+  // İki üretim asla çakışmamalı (32 bayt entropi)
+  assert.notEqual(generateApiKey().plain, generateApiKey().plain);
 });
 
 test("kullanıcı kaydı ve API anahtarıyla çözümleme", () => {
@@ -79,6 +77,23 @@ test("kullanıcılar izole: her birinin kendi token ve tavanı", () => {
   assert.equal(store.findByApiKey(u2.apiKey)?.refreshToken, "token-C");
   assert.equal(store.findByApiKey(u1.apiKey)?.maxDailyBudget, 100);
   assert.equal(store.findByApiKey(u2.apiKey)?.maxDailyBudget, 900);
+});
+
+test("updateSettings: ayarlar anında yazılır, geçersiz tavan reddedilir", () => {
+  const { apiKey, userId } = store.upsertUser({ email: "e@ornek.com", refreshToken: "token-E", maxDailyBudget: 400 });
+  store.updateSettings(userId, { maxDailyBudget: 25, writeEnabled: false });
+  const u = store.findByApiKey(apiKey)!;
+  assert.equal(u.maxDailyBudget, 25);
+  assert.equal(u.writeEnabled, false);
+  // findById aynı sonucu vermeli (oturum tazeleme yolu)
+  assert.equal(store.findById(userId)?.maxDailyBudget, 25);
+  assert.equal(store.findById(userId)?.refreshToken, "token-E");
+  assert.throws(() => store.updateSettings(userId, { maxDailyBudget: 0 }));
+  assert.throws(() => store.updateSettings(userId, { maxDailyBudget: NaN }));
+});
+
+test("findById bilinmeyen id için undefined", () => {
+  assert.equal(store.findById(999999), undefined);
 });
 
 test("yeniden bağlanma: aynı e-posta token'ı yeniler, ESKİ anahtar geçersizleşir", () => {

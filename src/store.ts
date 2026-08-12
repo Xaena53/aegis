@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { randomBytes, createCipheriv, createDecipheriv, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, createCipheriv, createDecipheriv, createHash, scryptSync } from "node:crypto";
 
 /**
  * Hosted mod kullanıcı deposu. Refresh token'lar AES-256-GCM ile şifreli saklanır;
@@ -16,7 +16,18 @@ export interface StoredUser {
   createdAt: string;
 }
 
+let cachedMasterKey: Buffer | undefined;
+
+/**
+ * Şifreleme anahtarı türetimi:
+ * - 64 hex karakter (önerilen, makine üretimi) → doğrudan 32 baytlık anahtar
+ * - başka her şey (insan parolası) → scrypt ile türetilir; düz SHA-256 parola
+ *   girdisi için zayıftır, scrypt kaba kuvvete CPU/bellek maliyeti ekler.
+ * Sabit salt bilinçli: tek uygulama sırrı var, kullanıcılar arası rainbow-table
+ * riski yok; salt'ı DB'de saklamak anahtar rotasyonunu gereksiz yere karmaşıklaştırırdı.
+ */
 function masterKey(): Buffer {
+  if (cachedMasterKey) return cachedMasterKey;
   const raw = process.env.ADSPILOT_MASTER_KEY;
   if (!raw || raw.length < 32) {
     throw new Error(
@@ -24,8 +35,10 @@ function masterKey(): Buffer {
         "Üretmek için: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
     );
   }
-  // Hex ya da düz parola kabul; her ikisi de 32 baytlık anahtara indirgenir
-  return createHash("sha256").update(raw).digest();
+  cachedMasterKey = /^[0-9a-f]{64}$/i.test(raw)
+    ? Buffer.from(raw, "hex")
+    : scryptSync(raw, "adspilot-token-encryption-v1", 32);
+  return cachedMasterKey;
 }
 
 export function encryptSecret(plain: string): string {
@@ -53,13 +66,6 @@ export function hashApiKey(plain: string): string {
   return createHash("sha256").update(plain).digest("hex");
 }
 
-/** Zamanlama saldırısına kapalı hash karşılaştırma. */
-export function safeEqualHex(a: string, b: string): boolean {
-  const ba = Buffer.from(a, "hex");
-  const bb = Buffer.from(b, "hex");
-  return ba.length === bb.length && timingSafeEqual(ba, bb);
-}
-
 export class UserStore {
   private db: DatabaseSync;
 
@@ -75,7 +81,7 @@ export class UserStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
         refresh_token_enc TEXT NOT NULL,
         api_key_hash TEXT NOT NULL UNIQUE,
         login_customer_id TEXT,
@@ -84,6 +90,7 @@ export class UserStore {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key_hash);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
     `);
   }
 
@@ -120,6 +127,33 @@ export class UserStore {
     return { apiKey: plain, userId: Number(res.lastInsertRowid) };
   }
 
+  /**
+   * Kullanıcının güvenlik ayarlarını günceller. Açık MCP oturumları bir sonraki
+   * istekte tazelendiği için değişiklik anında etkili olur (bayat ayar kalmaz).
+   */
+  updateSettings(userId: number, s: { writeEnabled?: boolean; maxDailyBudget?: number }): void {
+    if (s.writeEnabled !== undefined) {
+      this.db.prepare("UPDATE users SET write_enabled = ? WHERE id = ?").run(s.writeEnabled ? 1 : 0, userId);
+    }
+    if (s.maxDailyBudget !== undefined) {
+      if (!Number.isFinite(s.maxDailyBudget) || s.maxDailyBudget <= 0) {
+        throw new Error("maxDailyBudget 0'dan büyük bir sayı olmalı.");
+      }
+      this.db.prepare("UPDATE users SET max_daily_budget = ? WHERE id = ?").run(s.maxDailyBudget, userId);
+    }
+  }
+
+  /** Kullanıcıyı id ile tazeler — açık oturumların ayarları bayatlamasın diye. */
+  findById(id: number): StoredUser | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, email, refresh_token_enc, login_customer_id, write_enabled, max_daily_budget, created_at
+         FROM users WHERE id = ?`
+      )
+      .get(id) as any;
+    return row ? this.rowToUser(row) : undefined;
+  }
+
   /** API anahtarından kullanıcıyı çözer; bulunamazsa undefined. */
   findByApiKey(apiKeyPlain: string): StoredUser | undefined {
     const row = this.db
@@ -128,7 +162,10 @@ export class UserStore {
          FROM users WHERE api_key_hash = ?`
       )
       .get(hashApiKey(apiKeyPlain)) as any;
-    if (!row) return undefined;
+    return row ? this.rowToUser(row) : undefined;
+  }
+
+  private rowToUser(row: any): StoredUser {
     return {
       id: Number(row.id),
       email: String(row.email),

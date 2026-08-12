@@ -3,6 +3,7 @@ import "dotenv/config";
 import http from "node:http";
 import { randomUUID, randomBytes } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "./server.js";
 import { AdsContext } from "./adsClient.js";
 import { UserStore, type StoredUser } from "./store.js";
@@ -10,6 +11,38 @@ import { UserStore, type StoredUser } from "./store.js";
 const PORT = Number(process.env.PORT ?? 8787);
 const PUBLIC_URL = process.env.ADSPILOT_PUBLIC_URL ?? `http://localhost:${PORT}`;
 const store = new UserStore();
+
+// ── Sınırlar (bellek tükenmesine karşı) ──────────────────────────────────
+const SESSION_IDLE_MS = 30 * 60_000; // 30 dk hareketsiz oturum kapatılır
+const OAUTH_STATE_TTL_MS = 10 * 60_000; // OAuth state 10 dk geçerli
+const MAX_PENDING_STATES = 5_000;
+const MAX_SESSIONS = 1_000;
+const SWEEP_MS = 60_000;
+
+/**
+ * DNS rebinding koruması için izinli Host/Origin listesi (MCP spec gereği).
+ * Yerel adreslerde 127.0.0.1/localhost varyantları birlikte kabul edilir;
+ * ek isimler ADSPILOT_ALLOWED_HOSTS ile virgüllü verilebilir (nginx/proxy arkası).
+ */
+function allowList(): { hosts: string[]; origins: string[] } {
+  const pub = new URL(PUBLIC_URL);
+  const hosts = new Set<string>([pub.host]);
+  const origins = new Set<string>([pub.origin]);
+  if (["localhost", "127.0.0.1", "[::1]"].includes(pub.hostname)) {
+    for (const h of ["localhost", "127.0.0.1"]) {
+      hosts.add(`${h}:${pub.port || PORT}`);
+      origins.add(`${pub.protocol}//${h}:${pub.port || PORT}`);
+    }
+  }
+  for (const extra of (process.env.ADSPILOT_ALLOWED_HOSTS ?? "").split(",")) {
+    const t = extra.trim();
+    if (t) {
+      hosts.add(t);
+      origins.add(`https://${t}`);
+    }
+  }
+  return { hosts: [...hosts], origins: [...origins] };
+}
 
 /** Sunucunun kendi OAuth istemcisi (hosted modda kullanıcılar bunu paylaşır). */
 function oauthClient() {
@@ -22,28 +55,68 @@ function oauthClient() {
   return { id, secret, devToken };
 }
 
+/**
+ * Kullanıcı ayarlarına göre memoize edilmiş context. Anahtar kullanıcının
+ * TÜM etkin alanlarını içerir: ayar değişince (token yenilenmesi, yazma
+ * izninin kapatılması, tavan düşürülmesi) yeni context üretilir — açık
+ * oturumlar eski/gevşek ayarlarla çalışmaya devam edemez.
+ */
+const ctxCache = new Map<string, AdsContext>();
+
 function contextFor(user: StoredUser): AdsContext {
-  const { id, secret, devToken } = oauthClient();
-  return new AdsContext({
-    developerToken: devToken,
-    clientId: id,
-    clientSecret: secret,
-    refreshToken: user.refreshToken,
-    loginCustomerId: user.loginCustomerId,
-    writeEnabled: user.writeEnabled,
-    maxDailyBudget: user.maxDailyBudget,
-  });
+  const key = [user.id, user.refreshToken, user.loginCustomerId ?? "", user.writeEnabled, user.maxDailyBudget].join("|");
+  let ctx = ctxCache.get(key);
+  if (!ctx) {
+    const { id, secret, devToken } = oauthClient();
+    ctx = new AdsContext({
+      developerToken: devToken,
+      clientId: id,
+      clientSecret: secret,
+      refreshToken: user.refreshToken,
+      loginCustomerId: user.loginCustomerId,
+      writeEnabled: user.writeEnabled,
+      maxDailyBudget: user.maxDailyBudget,
+    });
+    if (ctxCache.size > 500) ctxCache.clear(); // sınırsız büyümeyi engelle
+    ctxCache.set(key, ctx);
+  }
+  return ctx;
 }
 
 // ── Oturum yönetimi: her MCP oturumu TEK kullanıcıya bağlı ────────────────
 interface Session {
   transport: StreamableHTTPServerTransport;
   userId: number;
+  /**
+   * Paylaşılan kutu: her istekte DB'den tazelenir. Araç context sağlayıcısı
+   * AYNI nesneyi okuduğu için ayar değişiklikleri açık oturuma da yansır.
+   */
+  live: { user: StoredUser };
+  lastSeen: number;
 }
 const sessions = new Map<string, Session>();
 
-// OAuth state → nonce (CSRF); tek kullanımlık
+// OAuth state → oluşturulma zamanı (CSRF); tek kullanımlık + TTL'li
 const pendingStates = new Map<string, number>();
+
+/** Süresi geçen oturum ve OAuth state'lerini temizler (bellek DoS koruması). */
+function sweep(): void {
+  const now = Date.now();
+  for (const [state, born] of pendingStates) {
+    if (now - born > OAUTH_STATE_TTL_MS) pendingStates.delete(state);
+  }
+  for (const [sid, s] of sessions) {
+    if (now - s.lastSeen > SESSION_IDLE_MS) {
+      sessions.delete(sid);
+      try {
+        void s.transport.close();
+      } catch {
+        /* kapanış hatası önemsiz */
+      }
+    }
+  }
+}
+setInterval(sweep, SWEEP_MS).unref();
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);
@@ -54,6 +127,11 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 function html(res: http.ServerResponse, status: number, body: string) {
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
   res.end(body);
+}
+
+/** HTML'e gömülecek her dış veri buradan geçer (XSS savunması). */
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
 function page(title: string, inner: string): string {
@@ -72,6 +150,12 @@ function page(title: string, inner: string): string {
 // ── OAuth: /connect → Google → /oauth/callback ────────────────────────────
 function handleConnect(res: http.ServerResponse) {
   const { id } = oauthClient();
+  if (pendingStates.size >= MAX_PENDING_STATES) {
+    sweep();
+    if (pendingStates.size >= MAX_PENDING_STATES) {
+      return html(res, 503, page("Meşgul", "<h1>Şu an meşgul</h1><p>Birazdan tekrar dene.</p>"));
+    }
+  }
   const state = randomBytes(16).toString("hex");
   pendingStates.set(state, Date.now());
   const url =
@@ -80,7 +164,8 @@ function handleConnect(res: http.ServerResponse) {
       client_id: id,
       redirect_uri: `${PUBLIC_URL}/oauth/callback`,
       response_type: "code",
-      scope: "https://www.googleapis.com/auth/adwords email",
+      // openid ZORUNLU: onsuz Google id_token döndürmez, e-posta hiç çözülemezdi
+      scope: "openid email https://www.googleapis.com/auth/adwords",
       access_type: "offline",
       prompt: "consent",
       state,
@@ -101,8 +186,13 @@ function handleConnect(res: http.ServerResponse) {
 
 async function handleCallback(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const state = url.searchParams.get("state") ?? "";
-  if (!pendingStates.delete(state)) {
+  const born = pendingStates.get(state);
+  pendingStates.delete(state); // tek kullanımlık
+  if (born === undefined) {
     return html(res, 403, page("Hata", "<h1>Geçersiz istek</h1><p>state eşleşmedi (CSRF koruması).</p>"));
+  }
+  if (Date.now() - born > OAUTH_STATE_TTL_MS) {
+    return html(res, 403, page("Süre doldu", "<h1>Bağlantı isteği zaman aşımına uğradı</h1><p><a href='/connect'>Yeniden dene</a>.</p>"));
   }
   const code = url.searchParams.get("code");
   if (!code) return html(res, 400, page("Hata", "<h1>Yetkilendirme iptal edildi</h1>"));
@@ -121,7 +211,11 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
   });
   const tokens: any = await tokenRes.json();
   if (!tokens.refresh_token) {
-    return html(res, 400, page("Hata", `<h1>Token alınamadı</h1><p>${tokens.error_description ?? tokens.error ?? "bilinmeyen hata"}</p>`));
+    return html(
+      res,
+      400,
+      page("Hata", `<h1>Token alınamadı</h1><p>${esc(String(tokens.error_description ?? tokens.error ?? "bilinmeyen hata"))}</p>`)
+    );
   }
 
   // Kullanıcı e-postası (id_token'ın payload'ından; imza doğrulaması gerekmez —
@@ -142,9 +236,9 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
     page(
       "Bağlandı",
       `<h1>Bağlandı ✔</h1>
-       <p><strong>${email}</strong> hesabın AdsPilot'a bağlandı.</p>
+       <p><strong>${esc(email)}</strong> hesabın AdsPilot'a bağlandı.</p>
        <div class="warn"><strong>API anahtarın (yalnız bir kez gösterilir):</strong>
-       <pre>${apiKey}</pre></div>
+       <pre>${esc(apiKey)}</pre></div>
        <h2>Claude Code'a ekle</h2>
        <pre>claude mcp add --transport http adspilot ${mcpUrl} \\
   --header "Authorization: Bearer ${apiKey}"</pre>
@@ -182,10 +276,17 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   if (!user) return json(res, 401, { error: "invalid_api_key" });
 
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  let session = sessionId ? sessions.get(sessionId) : undefined;
+  const session = sessionId ? sessions.get(sessionId) : undefined;
 
   // Oturum kaçırma koruması: mevcut oturum başka kullanıcıya aitse reddet
   if (session && session.userId !== user.id) return json(res, 403, { error: "session_owner_mismatch" });
+
+  // Bilinmeyen/süresi dolmuş oturum kimliği: spec gereği 404 (istemci yeniden
+  // initialize eder). Sessizce yeni sunucu kurmak, rastgele oturum kimlikleriyle
+  // sınırsız nesne üretimine (DoS) yol açardı.
+  if (sessionId && !session) {
+    return json(res, 404, { error: "session_not_found", hint: "Oturum düştü — yeniden initialize et." });
+  }
 
   let body: unknown;
   try {
@@ -194,24 +295,43 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
     return json(res, 400, { error: "bad_request", message: e?.message });
   }
 
-  if (!session) {
-    const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sid: string): void => {
-        sessions.set(sid, { transport, userId: user.id });
-      },
-    });
-    transport.onclose = () => {
-      if (transport.sessionId) sessions.delete(transport.sessionId);
-    };
-    // Bu oturumun araçları YALNIZ bu kullanıcının context'ini görür
-    const ctx = contextFor(user);
-    const server = buildServer(() => ctx);
-    await server.connect(transport);
-    session = { transport, userId: user.id };
+  if (session) {
+    // Ayarlar bayatlamasın: kullanıcıyı her istekte DB'den tazele
+    session.live.user = store.findById(session.userId) ?? session.live.user;
+    session.lastSeen = Date.now();
+    return await session.transport.handleRequest(req, res, body);
   }
 
-  await session.transport.handleRequest(req, res, body);
+  // Oturum kimliği yok → yalnız initialize isteği yeni oturum açabilir
+  if (!isInitializeRequest(body)) {
+    return json(res, 400, { error: "invalid_request", hint: "Önce initialize çağır (mcp-session-id yok)." });
+  }
+  if (sessions.size >= MAX_SESSIONS) {
+    sweep();
+    if (sessions.size >= MAX_SESSIONS) return json(res, 503, { error: "too_many_sessions" });
+  }
+
+  // Paylaşılan kutu: hem oturum kaydı hem araç context sağlayıcısı bunu okur
+  const live: { user: StoredUser } = { user };
+  const { hosts, origins } = allowList();
+  const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+    // MCP spec: DNS rebinding'e karşı Host/Origin doğrulaması
+    enableDnsRebindingProtection: true,
+    allowedHosts: hosts,
+    allowedOrigins: origins,
+    onsessioninitialized: (sid: string): void => {
+      sessions.set(sid, { transport, userId: user.id, live, lastSeen: Date.now() });
+    },
+  });
+  transport.onclose = () => {
+    if (transport.sessionId) sessions.delete(transport.sessionId);
+  };
+
+  // Bu oturumun araçları YALNIZ bu kullanıcının GÜNCEL context'ini görür
+  const server = buildServer(() => contextFor(live.user));
+  await server.connect(transport);
+  await transport.handleRequest(req, res, body);
 }
 
 // ── Router ────────────────────────────────────────────────────────────────
@@ -226,12 +346,20 @@ const server = http.createServer(async (req, res) => {
       return html(res, 200, page("AdsPilot", `<h1>AdsPilot</h1><p>Google Ads MCP sunucusu. <a href="/connect">Hesabını bağla</a>.</p>`));
     json(res, 404, { error: "not_found" });
   } catch (e: any) {
+    // Ayrıntı yalnız sunucu loguna; istemciye iç hata metni sızdırma
     console.error("[adspilot-http] hata:", e);
-    if (!res.headersSent) json(res, 500, { error: "internal", message: e?.message });
+    if (!res.headersSent) json(res, 500, { error: "internal" });
   }
 });
 
 server.listen(PORT, () => {
   console.log(`[adspilot-http] ${PUBLIC_URL} üzerinde dinliyor (port ${PORT})`);
   console.log(`[adspilot-http] Bağlanma sayfası: ${PUBLIC_URL}/connect`);
+  const pub = new URL(PUBLIC_URL);
+  if (pub.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(pub.hostname)) {
+    console.error(
+      "[adspilot-http] UYARI: PUBLIC_URL http:// — API anahtarları ve OAuth kodları AÇIK METİN taşınır. " +
+        "Üretimde TLS (nginx/Caddy) arkasına al ve ADSPILOT_PUBLIC_URL'i https:// yap."
+    );
+  }
 });
