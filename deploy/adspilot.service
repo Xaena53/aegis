@@ -1,0 +1,54 @@
+# systemd unit — /etc/systemd/system/adspilot.service
+#
+# Kurulum:
+#   sudo cp deploy/adspilot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now adspilot
+#
+# ÖNEMLİ: pm2 cluster ya da birden çok instance KULLANMA. Oturumlar ve hız
+# sınırı sayaçları süreç belleğindedir; ikinci bir worker'a düşen istek
+# "404 session_not_found" döngüsü yaratır ve hız sınırı worker sayısınca çarpılır.
+
+[Unit]
+Description=AdsPilot — Google Ads MCP sunucusu
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=adspilot
+Group=adspilot
+WorkingDirectory=/opt/adspilot
+
+# Sırlar dosyadan okunur; komut satırında görünmez (ps ile sızmasın).
+# chmod 600 ve sahibi adspilot olmalı.
+EnvironmentFile=/opt/adspilot/.env
+
+ExecStart=/usr/bin/node dist/http.js
+Restart=on-failure
+RestartSec=5
+
+# SIGTERM ile düzgün kapanma: açık oturumlar ve SQLite temiz kapatılır
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# ── Sertleştirme ──────────────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Yalnız veritabanı dizinine yazma izni (WAL yan dosyaları da buraya düşer)
+ReadWritePaths=/opt/adspilot/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=adspilot
+
+[Install]
+WantedBy=multi-user.target

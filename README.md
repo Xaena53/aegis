@@ -77,6 +77,9 @@ claude mcp add --transport http adspilot <PUBLIC_URL>/mcp \
   --header "Authorization: Bearer ap_..."
 ```
 
+Adım adım VPS kurulumu için: **[deploy/README.md](deploy/README.md)**
+(systemd unit, nginx örneği ve Dockerfile `deploy/` altında hazır).
+
 ### VPS dağıtımında ZORUNLU adımlar
 
 1. **Node 22.13+** kur (apt'ın 18/20 sürümü `node:sqlite` yokluğundan çöker).
