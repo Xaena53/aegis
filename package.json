@@ -2,7 +2,11 @@
   "name": "adspilot-mcp",
   "version": "0.2.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xaena53/google-ads-mcp.git"
+  },
   "description": "AdsPilot — Google Ads MCP server: connect your site, let Claude run your ads (write-enabled, human-approval gated)",
   "type": "module",
   "main": "dist/index.js",

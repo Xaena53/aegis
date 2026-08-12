@@ -1,5 +1,14 @@
 # AdsPilot — Google Ads MCP Sunucusu
 
+> **Lisans: [AGPL-3.0](LICENSE)** · Copyright (C) 2026 AdsPilot katkıcıları
+>
+> Bu yazılımı kullanabilir, değiştirebilir ve dağıtabilirsin. **Ancak** değiştirilmiş
+> bir sürümünü ağ üzerinden servis olarak sunuyorsan (AGPL §13), o servisin
+> kullanıcılarına kaynak kodu sunmakla yükümlüsün. Bu yükümlülük bu projenin
+> kendi hosted sürümü için de geçerlidir: `/source` adresi ve her sayfanın
+> altbilgisi kaynağa bağlantı verir.
+
+
 Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: raporlama **ve** güvenlik kapılı kampanya yönetimi. Google'ın resmi MCP'sinden farkı: **yazma erişimi** var (kampanya oluşturma, bütçe, anahtar kelime, RSA reklam), ama her tehlikeli adım korumalı:
 
 - Kampanyalar **her zaman PAUSED** oluşturulur — asla doğrudan yayına çıkmaz.

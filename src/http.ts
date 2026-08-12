@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+/*
+ * AdsPilot — Google Ads MCP sunucusu (hosted mod)
+ * Copyright (C) 2026 AdsPilot katkıcıları
+ *
+ * GNU Affero General Public License v3 altında dağıtılır — bkz. LICENSE.
+ * AGPL §13 gereği bu servisin kullanıcılarına kaynak kod sunulur (/source).
+ */
 import "dotenv/config";
 import http from "node:http";
 import { randomUUID, randomBytes, createHmac, timingSafeEqual } from "node:crypto";
@@ -10,6 +17,19 @@ import { UserStore, encryptSecret, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
 import { setRuntimeMode } from "./util.js";
 import { parseNumEnv } from "./config.js";
+
+/**
+ * AGPL-3.0 BÖLÜM 13 UYUMU.
+ *
+ * "Ağ üzerinden etkileşen kullanıcılara Karşılık Gelen Kaynak sunulmalıdır."
+ * AdsPilot bir ağ servisi olduğu için bu yükümlülük İŞLETMECİYİ (bu sunucuyu
+ * çalıştıran kişiyi) bağlar. Bağlantı her sayfanın altbilgisinde ve /source
+ * adresinde sunulur.
+ *
+ * DİKKAT: Bu adres GERÇEKTEN erişilebilir olmalı. Depo private iken dışarıya
+ * açık bir servis çalıştırmak lisans ihlalidir.
+ */
+const SOURCE_URL = process.env.ADSPILOT_SOURCE_URL?.trim() || "https://github.com/Xaena53/google-ads-mcp";
 
 const PORT = parseNumEnv("PORT", process.env.PORT, 8787);
 const PUBLIC_URL = process.env.ADSPILOT_PUBLIC_URL?.trim() || `http://localhost:${PORT}`;
@@ -215,7 +235,11 @@ function page(title: string, inner: string): string {
  .ok{border-left:4px solid #1a9e4b;padding:.6rem 1rem;background:rgba(26,158,75,.12);border-radius:0 6px 6px 0}
  label{display:block;margin:.3rem 0} input[type=number]{padding:.5rem;border-radius:6px;border:1px solid rgba(127,127,127,.4);width:12rem}
  button{background:#1a73e8;color:#fff;border:0;padding:.7rem 1.4rem;border-radius:8px;font-weight:600;cursor:pointer}
-</style></head><body>${inner}</body></html>`;
+ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;opacity:.75}
+</style></head><body>${inner}
+<footer>AdsPilot — <a href="${SOURCE_URL}">kaynak kodu</a> ·
+AGPL-3.0 lisanslıdır: bu servisi kullanan herkes kaynağa erişme hakkına sahiptir.</footer>
+</body></html>`;
 }
 
 // ── OAuth: /connect → Google → /oauth/callback ────────────────────────────
@@ -614,6 +638,11 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/connect" && req.method === "GET") return handleConnect(res);
     if (url.pathname === "/oauth/callback" && req.method === "GET") return handleCallback(req, res, url);
     if (url.pathname === "/settings") return await handleSettings(req, res);
+    // AGPL §13: kaynak kod teklifi — makine tarafından da bulunabilir olsun
+    if (url.pathname === "/source") {
+      res.writeHead(302, { Location: SOURCE_URL, "Cache-Control": "no-store" });
+      return res.end();
+    }
     if (url.pathname === "/mcp") return await handleMcp(req, res);
     if (url.pathname === "/")
       return html(res, 200, page("AdsPilot", `<h1>AdsPilot</h1><p>Google Ads MCP sunucusu. <a href="/connect">Hesabını bağla</a>.</p>`));

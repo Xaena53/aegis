@@ -1,4 +1,15 @@
 #!/usr/bin/env node
+/*
+ * AdsPilot — Google Ads MCP sunucusu
+ * Copyright (C) 2026 AdsPilot katkıcıları
+ *
+ * Bu program özgür yazılımdır: Free Software Foundation tarafından yayımlanan
+ * GNU Affero General Public License sürüm 3 koşulları altında yeniden
+ * dağıtabilir ve/veya değiştirebilirsiniz. Ayrıntılar için LICENSE dosyasına bakın.
+ *
+ * AGPL §13: Bu programı değiştirip ağ üzerinden servis olarak sunuyorsanız,
+ * kullanıcılarına Karşılık Gelen Kaynağı sunmakla yükümlüsünüz.
+ */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildServer } from "./server.js";
 import { getEnvContext } from "./adsClient.js";
