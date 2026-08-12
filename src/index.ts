@@ -3,6 +3,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { buildServer } from "./server.js";
 import { getEnvContext } from "./adsClient.js";
 import { missingCredentials } from "./config.js";
+import { setRuntimeMode } from "./util.js";
+
+setRuntimeMode("stdio");
 
 const server = buildServer(getEnvContext);
 

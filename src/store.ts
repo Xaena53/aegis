@@ -78,6 +78,14 @@ export class UserStore {
           `Klasör var mı ve yazılabilir mi? ADSPILOT_DB ile başka bir yol verebilirsin.`
       );
     }
+    // Eşzamanlılık: varsayılan busy_timeout=0 → aynı anda gelen iki istek
+    // SQLITE_BUSY ile SERT hata verir. WAL + bekleme süresi bunu giderir.
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA foreign_keys = ON;
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

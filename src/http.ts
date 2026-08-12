@@ -7,6 +7,8 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "./server.js";
 import { AdsContext } from "./adsClient.js";
 import { UserStore, type StoredUser } from "./store.js";
+import { RateLimiter } from "./rateLimit.js";
+import { setRuntimeMode } from "./util.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const PUBLIC_URL = process.env.ADSPILOT_PUBLIC_URL ?? `http://localhost:${PORT}`;
@@ -17,7 +19,17 @@ const SESSION_IDLE_MS = 30 * 60_000; // 30 dk hareketsiz oturum kapatılır
 const OAUTH_STATE_TTL_MS = 10 * 60_000; // OAuth state 10 dk geçerli
 const MAX_PENDING_STATES = 5_000;
 const MAX_SESSIONS = 1_000;
+const MAX_SESSIONS_PER_USER = 10; // tek kullanıcı havuzu tüketemesin
 const SWEEP_MS = 60_000;
+
+// Paylaşılan Google Ads kotasını koruyan kullanıcı-başı hız sınırı
+const limiter = new RateLimiter({
+  perMinute: Number(process.env.ADSPILOT_RATE_PER_MINUTE ?? 120),
+  perDay: Number(process.env.ADSPILOT_RATE_PER_DAY ?? 2000),
+});
+
+// Hosted modda hata ipuçları ".env düzenle" değil "yeniden bağlan" demeli
+setRuntimeMode("hosted", `${PUBLIC_URL}/connect`);
 
 /**
  * DNS rebinding koruması için izinli Host/Origin listesi (MCP spec gereği).
@@ -115,6 +127,13 @@ function sweep(): void {
       }
     }
   }
+  limiter.sweep();
+}
+
+function sessionCountFor(userId: number): number {
+  let n = 0;
+  for (const s of sessions.values()) if (s.userId === userId) n++;
+  return n;
 }
 setInterval(sweep, SWEEP_MS).unref();
 
@@ -275,6 +294,16 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   const user = store.findByApiKey(key);
   if (!user) return json(res, 401, { error: "invalid_api_key" });
 
+  // Paylaşılan Google Ads kotasını ve sunucuyu koruyan kullanıcı-başı sınır
+  const rl = limiter.check(user.id);
+  if (!rl.allowed) {
+    res.writeHead(429, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Retry-After": String(rl.retryAfterSec ?? 60),
+    });
+    return res.end(JSON.stringify({ error: "rate_limited", message: rl.reason, retryAfterSec: rl.retryAfterSec }));
+  }
+
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const session = sessionId ? sessions.get(sessionId) : undefined;
 
@@ -309,6 +338,16 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   if (sessions.size >= MAX_SESSIONS) {
     sweep();
     if (sessions.size >= MAX_SESSIONS) return json(res, 503, { error: "too_many_sessions" });
+  }
+  // Tek kullanıcı oturum havuzunu tüketip diğerlerini kilitleyemesin
+  if (sessionCountFor(user.id) >= MAX_SESSIONS_PER_USER) {
+    sweep();
+    if (sessionCountFor(user.id) >= MAX_SESSIONS_PER_USER) {
+      return json(res, 429, {
+        error: "too_many_sessions_for_user",
+        hint: `Aynı anda en fazla ${MAX_SESSIONS_PER_USER} oturum açabilirsin; eskilerini kapat.`,
+      });
+    }
   }
 
   // Paylaşılan kutu: hem oturum kaydı hem araç context sağlayıcısı bunu okur
@@ -351,6 +390,42 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) json(res, 500, { error: "internal" });
   }
 });
+
+// Yavaş-istemci (slowloris) savunması: başlık ve gövde için üst sınırlar
+server.headersTimeout = 20_000;
+server.requestTimeout = 60_000;
+server.keepAliveTimeout = 30_000;
+server.maxConnections = 512;
+
+// Düzgün kapanma: açık oturumları ve veritabanını temiz bırak (deploy/restart).
+// NOT: Windows SIGTERM teslimini desteklemez (süreç doğrudan sonlandırılır);
+// bu yol yalnız Linux/VPS dağıtımında etkindir — yerelde doğrulanamaz.
+let shuttingDown = false;
+for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  process.on(sig, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[adspilot-http] ${sig} alındı — kapanıyor...`);
+    server.close(() => {
+      for (const s of sessions.values()) {
+        try {
+          void s.transport.close();
+        } catch {
+          /* yoksay */
+        }
+      }
+      sessions.clear();
+      try {
+        store.close();
+      } catch {
+        /* yoksay */
+      }
+      process.exit(0);
+    });
+    // Takılan bağlantılar kapanışı sonsuza dek bekletmesin
+    setTimeout(() => process.exit(0), 10_000).unref();
+  });
+}
 
 server.listen(PORT, () => {
   console.log(`[adspilot-http] ${PUBLIC_URL} üzerinde dinliyor (port ${PORT})`);

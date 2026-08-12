@@ -33,6 +33,36 @@ Hedef: site sahibi hiçbir şey kurmadan bağlanır → Google hesabını tek t�
   `mcp.animerank.com.tr`). TLS zorunlu (bearer düz HTTP'de taşınamaz).
 - Anthropic connectors dizini başvurusu.
 
+## Paylaşılan kaynak: developer token kotası (kritik kısıt)
+
+Hosted modda tüm kullanıcılar **sunucunun tek developer token'ını** paylaşır.
+Google'ın günlük işlem kotası hesap başına değil **token başına** uygulanır
+(Basic Access: 15.000/gün). Sonuç:
+
+- Tek bir aşırı kullanıcı tüm servisi durdurabilir → kullanıcı-başı hız sınırı
+  (`ADSPILOT_RATE_PER_MINUTE` / `ADSPILOT_RATE_PER_DAY`) zorunlu bir korumadır,
+  konfor özelliği değil.
+- Kullanıcı sayısı arttıkça toplam kota tavanı gerçek büyüme sınırı olur →
+  Standard Access başvurusu (3c) ölçeklemenin ön koşulu.
+- Sayaçlar süreç belleğinde tutulur; yeniden başlatmada sıfırlanır ve yatay
+  ölçeklemede paylaşılmaz. Çok sunuculu dağıtımda Redis'e taşınmalı.
+
+**Test Access uyarısı:** token Test Access seviyesindeyken hosted kullanıcıların
+GERÇEK hesapları hiç çalışmaz (yalnız test hesapları). Yani hosted beta,
+Basic Access onayından önce açılamaz.
+
+## Dağıtım notları (3d hazırlığı)
+
+- TLS zorunlu: bearer anahtarları ve OAuth kodları düz HTTP'de taşınamaz.
+  Sunucu `http://` + yerel-olmayan adres görürse başlangıçta uyarı basar.
+- Ters proxy arkasında `ADSPILOT_ALLOWED_HOSTS` ayarlanmalı (DNS rebinding
+  koruması Host/Origin doğrular).
+- `/connect` kimlik doğrulaması gerektirmez; IP bazlı hız sınırı nginx
+  katmanında verilmeli (uygulama içi koruma yalnız sayı tavanı + TTL).
+- SIGTERM ile düzgün kapanma yalnız Linux'ta etkin (Windows sinyali desteklemez).
+- SQLite WAL modunda `.db-wal` / `.db-shm` yan dosyaları oluşur; yedeklemede
+  üçü birlikte alınmalı.
+
 ## Güvenlik değişmezleri (her aşamada geçerli)
 1. Yazmalar PAUSED-by-default + confirm kapısı — kullanıcı başına `writeEnabled`/bütçe tavanı.
 2. Refresh token'lar yalnız şifreli saklanır; loglara asla yazılmaz.

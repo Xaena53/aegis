@@ -85,17 +85,46 @@ export function dateRange(days: number, now: Date = new Date()): string {
   return `segments.date BETWEEN '${fmt(start)}' AND '${fmt(end)}'`;
 }
 
-/** Sık onboarding hatalarına Türkçe çözüm ipuçları. */
-const ERROR_HINTS: Array<[RegExp, string]> = [
-  [/DEVELOPER_TOKEN_NOT_APPROVED|DEVELOPER_TOKEN_PROHIBITED/i,
-    "İpucu: developer token henüz Test Access'te — gerçek hesaplar için MCC > API Center'dan Basic Access başvurusu gerekiyor."],
-  [/USER_PERMISSION_DENIED|login.customer.id/i,
-    "İpucu: MCC (yönetici) üzerinden erişiyorsan .env'de GOOGLE_ADS_LOGIN_CUSTOMER_ID (MCC'nin 10 haneli ID'si) dolu olmalı."],
-  [/invalid_grant/i,
-    "İpucu: refresh token geçersiz ya da iptal edilmiş — `npm run auth` ile yeniden üret."],
-  [/invalid_client|unauthorized_client/i,
-    "İpucu: GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_CLIENT_SECRET hatalı ya da OAuth istemcisi silinmiş."],
-  [/CUSTOMER_NOT_FOUND|CUSTOMER_NOT_ENABLED/i,
+/**
+ * Çalışma modu — hata ipuçlarının doğru talimatı vermesi için.
+ * stdio: kullanıcı sunucuyu kendi makinesinde .env ile çalıştırır.
+ * hosted: kullanıcı uzak sunucuya bağlıdır, .env'i ya da terminali YOKTUR.
+ */
+export type RuntimeMode = "stdio" | "hosted";
+let runtimeMode: RuntimeMode = "stdio";
+let reconnectUrl = "";
+
+export function setRuntimeMode(mode: RuntimeMode, connectUrl = ""): void {
+  runtimeMode = mode;
+  reconnectUrl = connectUrl;
+}
+
+function reauthHint(): string {
+  return runtimeMode === "hosted"
+    ? `İpucu: Google erişimi iptal edilmiş ya da süresi dolmuş — ${reconnectUrl || "/connect"} adresinden hesabını yeniden bağla.`
+    : "İpucu: refresh token geçersiz ya da iptal edilmiş — `npm run auth` ile yeniden üret.";
+}
+
+function mccHint(): string {
+  return runtimeMode === "hosted"
+    ? "İpucu: MCC (yönetici) hesabı üzerinden erişiyorsan yönetici hesabının bu müşteriye erişim izni olmalı; alt hesabı list_accounts ile doğrula."
+    : "İpucu: MCC (yönetici) üzerinden erişiyorsan .env'de GOOGLE_ADS_LOGIN_CUSTOMER_ID (MCC'nin 10 haneli ID'si) dolu olmalı.";
+}
+
+function clientHint(): string {
+  return runtimeMode === "hosted"
+    ? "İpucu: sunucunun OAuth yapılandırması hatalı — bu bir sunucu tarafı sorunu, yöneticiye bildir."
+    : "İpucu: GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_CLIENT_SECRET hatalı ya da OAuth istemcisi silinmiş.";
+}
+
+/** Sık karşılaşılan hatalara moda uygun Türkçe çözüm ipuçları. */
+const ERROR_HINTS: Array<[RegExp, () => string]> = [
+  [/DEVELOPER_TOKEN_NOT_APPROVED|DEVELOPER_TOKEN_PROHIBITED/i, () =>
+    "İpucu: kullanılan developer token henüz Test Access seviyesinde — gerçek (test olmayan) hesaplar için Basic Access onayı gerekiyor."],
+  [/USER_PERMISSION_DENIED|login.customer.id/i, mccHint],
+  [/invalid_grant/i, reauthHint],
+  [/invalid_client|unauthorized_client/i, clientHint],
+  [/CUSTOMER_NOT_FOUND|CUSTOMER_NOT_ENABLED/i, () =>
     "İpucu: müşteri ID yanlış ya da hesap etkin değil — list_accounts ile doğrula."],
 ];
 
@@ -116,7 +145,7 @@ export function formatAdsError(err: unknown): string {
     .join("; ");
   const base = `Google Ads API hatası: ${fromList || e?.message || String(err)}`;
   const hint = ERROR_HINTS.find(([re]) => re.test(base))?.[1];
-  return hint ? `${base}\n${hint}` : base;
+  return hint ? `${base}\n${hint()}` : base;
 }
 
 /** Geçici (retry edilebilir) hata mı? gRPC 4/8/14 veya kota/uygunluk mesajları. */
