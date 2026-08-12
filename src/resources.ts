@@ -75,8 +75,10 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
         kurallar: [
           "Kampanyalar her zaman duraklatılmış (PAUSED) oluşturulur.",
           "Yayına alma ve bütçe ARTIŞI kullanıcının açık onayını gerektirir.",
+          "YAYINDAKİ bir kampanyaya reklam ya da pozitif anahtar kelime eklemek de onay gerektirir.",
           "Bütçe azaltma ve negatif anahtar kelime ekleme onay gerektirmez (harcamayı düşürür).",
           "Tavanı yalnız hesap sahibi yükseltebilir; ajan kendi limitini değiştiremez.",
+          "Tavan tek KAMPANYA başınadır, hesabın toplam harcaması için değildir.",
         ],
       });
     }

@@ -53,10 +53,22 @@ export class AdsContext {
   async tumHesaplar(): Promise<Array<{ id: string; ad: string; yonetici: boolean }>> {
     const now = Date.now();
     if (this.hesapCache && now - this.hesapCache.zaman < 60_000) return this.hesapCache.liste;
+    // Uçuştaki isteği paylaş: eşzamanlı tamamlamalar (her tuş vuruşu bir istek)
+    // aynı hasadı defalarca yapıp paylaşılan Google kotasını tüketmesin.
+    if (this.hesapBekleyen) return this.hesapBekleyen;
+    this.hesapBekleyen = this.hesaplariTopla(now).finally(() => {
+      this.hesapBekleyen = undefined;
+    });
+    return this.hesapBekleyen;
+  }
 
+  private async hesaplariTopla(now: number): Promise<Array<{ id: string; ad: string; yonetici: boolean }>> {
     const liste: Array<{ id: string; ad: string; yonetici: boolean }> = [];
     const gorulen = new Set<string>();
-    for (const id of await this.listAccessibleCustomers()) {
+    let hataOldu = false;
+    // Üst hesap tavanı: tavansız döngü tek tamamlamada yüzlerce sorgu üretebiliyordu
+    const ustHesaplar = (await this.listAccessibleCustomers()).slice(0, 30);
+    for (const id of ustHesaplar) {
       try {
         const [row]: any[] = await this.queryWithRetry(
           id,
@@ -85,14 +97,22 @@ export class AdsContext {
           }
         }
       } catch {
-        /* tek hesap okunamazsa listeyi tamamen düşürme */
+        // Tek hesap okunamazsa listeyi tamamen düşürme, ama EKSİK olduğunu işaretle
+        hataOldu = true;
       }
     }
-    this.hesapCache = { zaman: now, liste };
+    /**
+     * NEGATİF ÖNBELLEKLEME YASAK. Eskiden hata durumunda da yazılıyordu:
+     * geçici bir Google 5xx sırasında oluşan BOŞ/EKSİK liste 60 saniye
+     * boyunca sunuluyor, API düzelse bile ajan "hiç hesabın yok" diyordu.
+     * Eksik sonuç önbelleğe alınmaz — sonraki çağrı yeniden dener.
+     */
+    if (!hataOldu) this.hesapCache = { zaman: now, liste };
     return liste;
   }
 
   private hesapCache?: { zaman: number; liste: Array<{ id: string; ad: string; yonetici: boolean }> };
+  private hesapBekleyen?: Promise<Array<{ id: string; ad: string; yonetici: boolean }>>;
 
   /**
    * Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı.

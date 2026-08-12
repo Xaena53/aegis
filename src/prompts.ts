@@ -148,10 +148,13 @@ export function registerPrompts(server: McpServer, getCtx: ContextProvider): voi
       metin(
         `Bu AdsPilot bağlantısının güvenlik ayarlarını bana açıkla:\n` +
           `1. list_accounts ile hangi hesaplara erişimim olduğunu göster.\n` +
-          `2. Yazma araçlarının açık olup olmadığını ve günlük bütçe tavanını belirt ` +
-          `(bir yazma aracını deneme amaçlı ÇAĞIRMA; bilgiyi araç açıklamalarından ve önceki yanıtlardan çıkar).\n` +
-          `3. Şu güvenlik kurallarını bana hatırlat: kampanyalar duraklatılmış oluşturulur, ` +
-          `yayına alma ve bütçe artışı benim açık onayımı ister, negatif kelime eklemek onay istemez.`
+          `2. Bir reklam hesabı seç ve "adspilot://accounts/<hesapId>/limits" KAYNAĞINI oku. ` +
+          `Yazma izni ve günlük bütçe tavanı ORADA yazılıdır — tahmin etme, uydurma, ` +
+          `yazma aracını deneme amaçlı çağırma.\n` +
+          `3. Kaynaktaki "kurallar" listesini bana aktar ve şunu da ekle: YAYINDAKİ bir kampanyaya ` +
+          `reklam ya da pozitif anahtar kelime eklemek de onayımı gerektirir.\n` +
+          `4. Tavanı ya da yazma iznini değiştirmek istersem ne yapmam gerektiğini söyle ` +
+          `(bunu sen yapamazsın; hesap sahibi olarak ayar sayfasından ben yaparım).`
       )
   );
 }

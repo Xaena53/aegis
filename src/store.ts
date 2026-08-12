@@ -182,14 +182,28 @@ export class UserStore {
    * istekte tazelendiği için değişiklik anında etkili olur (bayat ayar kalmaz).
    */
   updateSettings(userId: number, s: { writeEnabled?: boolean; maxDailyBudget?: number }): void {
-    if (s.writeEnabled !== undefined) {
-      this.db.prepare("UPDATE users SET write_enabled = ? WHERE id = ?").run(s.writeEnabled ? 1 : 0, userId);
+    // Doğrulama YAZMADAN ÖNCE: yarım uygulanmış ayar kalmasın.
+    if (s.maxDailyBudget !== undefined && (!Number.isFinite(s.maxDailyBudget) || s.maxDailyBudget <= 0)) {
+      throw new Error("maxDailyBudget 0'dan büyük bir sayı olmalı.");
     }
-    if (s.maxDailyBudget !== undefined) {
-      if (!Number.isFinite(s.maxDailyBudget) || s.maxDailyBudget <= 0) {
-        throw new Error("maxDailyBudget 0'dan büyük bir sayı olmalı.");
+    /**
+     * TEK İŞLEM. Eskiden iki ayrı UPDATE vardı ve sıra terstiŕ: önce
+     * write_enabled (tehlikeli yarı), sonra tavan (koruyucu yarı). İkincisi
+     * SQLITE_BUSY ya da disk hatasıyla patlarsa sonuç "yazma AÇIK + tavan
+     * ESKİ/yüksek" oluyordu — yani hata güvenli olmayan tarafa düşüyordu.
+     */
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (s.maxDailyBudget !== undefined) {
+        this.db.prepare("UPDATE users SET max_daily_budget = ? WHERE id = ?").run(s.maxDailyBudget, userId);
       }
-      this.db.prepare("UPDATE users SET max_daily_budget = ? WHERE id = ?").run(s.maxDailyBudget, userId);
+      if (s.writeEnabled !== undefined) {
+        this.db.prepare("UPDATE users SET write_enabled = ? WHERE id = ?").run(s.writeEnabled ? 1 : 0, userId);
+      }
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
     }
   }
 

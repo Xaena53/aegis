@@ -56,15 +56,27 @@ async function liveCampaignGuard(
     `SELECT campaign.id, campaign.name, campaign.status, ad_group.status
      FROM ad_group WHERE ${filter} LIMIT 1`
   );
-  if (!rows.length) return null; // bulunamadıysa API kendi hatasını versin
-  const campaignLive = String(enums.CampaignStatus[rows[0].campaign.status] ?? "") === "ENABLED";
-  if (!campaignLive) return null; // taslak akışı: onay istenmez
+  /**
+   * KAPALI ARIZA. Bu kapı eskiden üç yolda SESSİZCE açık kalıyordu: sorgu
+   * 0 satır dönerse, durum alanı hiç gelmezse ya da sayı yerine metin gelirse
+   * "kampanya yayında değil" varsayılıp onay atlanıyordu. Para kapısının
+   * belirsizlikte açılması kabul edilemez — kampanyanın PAUSED olduğunu
+   * KANITLAYAMIYORSAK onay isteriz.
+   */
+  const ham = rows.length ? rows[0]?.campaign?.status : undefined;
+  const durumAdi =
+    typeof ham === "number" ? String((enums.CampaignStatus as any)[ham] ?? "") : typeof ham === "string" ? ham : "";
+  const kesinTaslak = durumAdi !== "" && durumAdi !== "ENABLED" && durumAdi !== "UNKNOWN" && durumAdi !== "UNSPECIFIED";
+  if (kesinTaslak) return null; // taslak akışı: onay istenmez
+
+  const kampanyaAdi = rows.length ? String(rows[0]?.campaign?.name ?? "(adsız)") : "(bulunamadı)";
+  const belirsiz = durumAdi === "" ? " (kampanya durumu doğrulanamadı — güvenli tarafa geçildi)" : "";
 
   const onay = await onayAl(
     server,
     {
-      eylem: `"${rows[0].campaign.name}" kampanyası ŞU AN YAYINDA — ${eylem} anında gerçek harcamayı etkiler.`,
-      satirlar: ayrinti,
+      eylem: `"${kampanyaAdi}" kampanyası ŞU AN YAYINDA${belirsiz} — ${eylem} anında gerçek harcamayı etkiler.`,
+      satirlar: [`Hesap: ${normalizeCustomerId(customerId)}`, ...ayrinti],
       soru: `${eylem} onaylıyor musun?`,
     },
     confirm
@@ -325,18 +337,27 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             `Reddedildi: "${row.campaign.name}" PAYLAŞIMLI bir bütçe kullanıyor — değişiklik bu bütçeyi kullanan TÜM kampanyaları etkiler. Kullanıcıya durumu bildir; isterse Google Ads arayüzünden kampanyaya özel bütçe atansın.`
           );
         }
-        const oldBudget = Number(row.campaign_budget.amount_micros) / 1e6;
-        // Bütçe ARTIŞI harcamayı doğrudan yükseltir → insan onayı iste.
-        // Azaltma (ya da eşit) harcamayı düşürdüğü için serbesttir.
-        if (newDailyBudget > oldBudget) {
+        const oldBudget = Number(row.campaign_budget?.amount_micros) / 1e6;
+        /**
+         * KAPALI ARIZA. `amount_micros` eksikse oldBudget NaN olur ve
+         * `yeni > NaN` HER ZAMAN false döner — yani artış onayı TAMAMEN
+         * atlanıyordu (kullanıcıya "NaN → 400 güncellendi" yazılıyordu).
+         * Mevcut bütçeyi bilmiyorsak artış olup olmadığını da bilemeyiz:
+         * onay isteriz.
+         */
+        const eskiBilinmiyor = !Number.isFinite(oldBudget);
+        if (eskiBilinmiyor || newDailyBudget > oldBudget) {
           const onay = await onayAl(
             server,
             {
-              eylem: `"${row.campaign.name}" kampanyasının GÜNLÜK BÜTÇESİ ARTIRILACAK.`,
+              eylem: `"${row.campaign.name}" kampanyasının GÜNLÜK BÜTÇESİ DEĞİŞTİRİLECEK.`,
               satirlar: [
-                `Mevcut: ${oldBudget} → Yeni: ${newDailyBudget}`,
-                `Günlük artış: +${(newDailyBudget - oldBudget).toFixed(2)}`,
+                `Hesap: ${normalizeCustomerId(customerId)}`,
+                eskiBilinmiyor
+                  ? `Mevcut bütçe OKUNAMADI → Yeni: ${newDailyBudget} (güvenlik gereği onay isteniyor)`
+                  : `Mevcut: ${oldBudget} → Yeni: ${newDailyBudget} (günlük artış: +${(newDailyBudget - oldBudget).toFixed(2)})`,
                 `Hesap güvenlik tavanı: ${ctx.config.maxDailyBudget}`,
+                `Tutarlar hesabın kendi para birimindedir.`,
               ],
               soru: "Bütçe artışını onaylıyor musun?",
             },
@@ -546,9 +567,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             {
               eylem: `"${row.campaign.name}" kampanyası YAYINA ALINACAK — bu andan itibaren gerçek para harcanır.`,
               satirlar: [
-                `Günlük bütçe: ${daily}`,
-                `Coğrafi hedef sayısı: ${hedefler.length || "belirtilmemiş"}`,
-                `Kampanya ID: ${cleanId(campaignId)}`,
+                // Hangi hesabın parasının harcanacağı özette YOKTU; MCC altında
+                // düzinelerce hesabı olan kullanıcı bunu göremiyordu.
+                `Hesap: ${normalizeCustomerId(customerId)} · Kampanya: ${cleanId(campaignId)}`,
+                `Günlük bütçe: ${daily} (hesabın para biriminde; Google günlük bütçenin katlarını harcayabilir)`,
+                hedefler.length
+                  ? `Coğrafi hedef: ${hedefler.length} konum`
+                  : `⚠ COĞRAFİ HEDEF YOK — kampanya DÜNYA GENELİ yayınlanır ve bütçe alakasız trafiğe gider`,
               ],
               soru: "Kampanyayı yayına al?",
             },

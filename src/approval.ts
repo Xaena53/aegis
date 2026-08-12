@@ -33,9 +33,20 @@ export interface OnayOzeti {
   soru?: string;
 }
 
+/**
+ * FORM modu şart: SDK `elicitInput`'un form çağrısı `elicitation.form`
+ * yeteneğini arar. Yalnız `elicitation` nesnesinin varlığına bakmak, url-modu
+ * destekleyen bir istemcide güçlü dalı seçip her onayın hata vermesine ve
+ * kullanıcının HİÇBİR ZAMAN kampanya yayına alamamasına yol açıyordu.
+ */
 function elicitationVar(server: McpServer): boolean {
   try {
-    return Boolean(server.server.getClientCapabilities()?.elicitation);
+    const e: any = server.server.getClientCapabilities()?.elicitation;
+    if (!e) return false;
+    // Alt-yetenek bildirilmemişse (eski istemciler) form varsayılır.
+    if (typeof e !== "object") return true;
+    const altlar = Object.keys(e);
+    return altlar.length === 0 || "form" in e;
   } catch {
     return false;
   }
@@ -67,20 +78,28 @@ export async function onayAl(
   // Güçlü yol: insana doğrudan sor
   const metin = `${ozet.eylem}\n\n${ozet.satirlar.map((s) => `• ${s}`).join("\n")}`;
   try {
-    const cevap = await server.server.elicitInput({
-      message: metin,
-      requestedSchema: {
+    const cevap = await server.server.elicitInput(
+      {
+        message: metin,
+        requestedSchema: {
         type: "object",
         properties: {
-          onay: {
-            type: "boolean",
-            title: ozet.soru ?? "Onaylıyor musun?",
-            description: "Evet dersen işlem hemen uygulanır ve gerçek harcamayı etkileyebilir.",
+            onay: {
+              type: "boolean",
+              title: ozet.soru ?? "Onaylıyor musun?",
+              description: "Evet dersen işlem hemen uygulanır ve gerçek harcamayı etkileyebilir.",
+            },
           },
+          required: ["onay"],
         },
-        required: ["onay"],
       },
-    });
+      /**
+       * SDK varsayılanı 60 saniye — insan için çok kısa. Kullanıcı Google Ads'i
+       * başka sekmede kontrol etmeye gidip döndüğünde sunucu çoktan vazgeçmiş
+       * oluyor; kullanıcı "Onayla"ya basıyor ama hiçbir şey olmuyor.
+       */
+      { timeout: 10 * 60_000, resetTimeoutOnProgress: true }
+    );
 
     if (cevap.action === "accept" && cevap.content?.onay === true) {
       return { onaylandi: true, kanal: "insan" };

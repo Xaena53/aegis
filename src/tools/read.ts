@@ -91,6 +91,7 @@ const ARAMA_TERIMI_SEMASI = {
   terimler: z.array(
     z.object({
       terim: z.string(),
+      kampanyaId: z.string().describe("add_campaign_negative_keywords için gereken kimlik"),
       kampanya: z.string(),
       reklamGrubu: z.string(),
       reklamGrubuId: z.string(),
@@ -277,10 +278,11 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           WHERE ${dateRange(d)}
           ${statusFilter}
           ORDER BY metrics.cost_micros DESC
+          LIMIT 500
         `);
         if (!rows.length) return ikili(`Son ${d} günde veri bulunan kampanya yok.`, { pencereGun: d, kampanyalar: [] });
 
-        const kampanyalar = rows.map((r: any) => {
+        const kampanyalar = rows.filter((r: any) => r?.campaign).map((r: any) => {
           const m = r.metrics ?? {};
           return {
             id: String(r.campaign.id),
@@ -345,7 +347,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         const rows = await getCtx().queryWithRetry(
           customerId,
           `SELECT
-             campaign.name, ad_group.id, ad_group.name,
+             campaign.id, campaign.name, ad_group.id, ad_group.name,
              search_term_view.search_term, search_term_view.status,
              metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions
            FROM search_term_view
@@ -365,7 +367,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
 
         let totalCost = 0;
         let wastedCost = 0;
-        const terimler = rows.map((r: any) => {
+        const terimler = rows.filter((r: any) => r?.campaign && r?.ad_group && r?.search_term_view).map((r: any) => {
           const m = r.metrics ?? {};
           const cost = Number(m.cost_micros ?? 0) / 1e6;
           const conv = Number(m.conversions ?? 0);
@@ -378,6 +380,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           // "boşa harcama adayı" olarak tekrar tekrar öneriliyordu.
           return {
             terim: String(r.search_term_view.search_term),
+            kampanyaId: String(r.campaign.id),
             kampanya: String(r.campaign.name),
             reklamGrubu: String(r.ad_group.name),
             reklamGrubuId: String(r.ad_group.id),
@@ -392,7 +395,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         const lines = terimler.map(
           (t) =>
             `"${t.terim}" — maliyet: ${t.maliyet.toFixed(2)}, tıklama: ${t.tiklama}, ` +
-            `dönüşüm: ${t.donusum} (${t.kampanya} / ${t.reklamGrubu}, ag:${t.reklamGrubuId})` +
+            `dönüşüm: ${t.donusum} (${t.kampanya} [kmp:${t.kampanyaId}] / ${t.reklamGrubu}, ag:${t.reklamGrubuId})` +
             `${t.israfAdayi ? " 🔥 boşa-harcama-adayı" : ""}${t.zatenDislanmis ? " [zaten dışlanmış]" : ""}`
         );
         const israfYuzde = totalCost > 0 ? Number(((wastedCost / totalCost) * 100).toFixed(0)) : 0;
@@ -448,7 +451,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         `);
         if (!rows.length) return ikili("Anahtar kelime verisi bulunamadı.", { pencereGun: d, kelimeler: [] });
 
-        const kelimeler = rows.map((r: any) => {
+        const kelimeler = rows.filter((r: any) => r?.campaign && r?.ad_group).map((r: any) => {
           const kw = r.ad_group_criterion?.keyword ?? {};
           const m = r.metrics ?? {};
           return {

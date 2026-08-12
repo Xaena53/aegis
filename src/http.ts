@@ -309,7 +309,15 @@ function readCookie(req: http.IncomingMessage, name: string): string | undefined
   if (!raw) return undefined;
   for (const part of raw.split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === name) return decodeURIComponent(v.join("="));
+    if (k === name) {
+      // Bozuk yüzde dizisi (ör. "%") URIError fırlatır. Çerez tamamen
+      // saldırgan kontrolündedir; kimliksiz bir istekle sunucu düşmemeli.
+      try {
+        return decodeURIComponent(v.join("="));
+      } catch {
+        return undefined; // geçersiz çerez = çerez yok
+      }
+    }
   }
   return undefined;
 }
@@ -485,6 +493,23 @@ async function handleSettings(req: http.IncomingMessage, res: http.ServerRespons
   if (req.method === "GET") return html(res, 200, ayarSayfasi(user));
 
   if (req.method === "POST") {
+    /**
+     * CSRF: SameSite=Strict tek başına YETMEZ. SameSite "kayıt edilebilir alan"
+     * (eTLD+1) bazlıdır; adspilot.ornek.com kurulumunda ornek.com altındaki
+     * HERHANGİ bir alt alan (pazarlama sitesi, ele geçirilmiş eski uygulama)
+     * "same-site" sayılır ve çerez gönderilir. Oradan gelen otomatik bir form
+     * gönderimi yazmayı açıp tavanı sonuna kadar yükseltebilirdi — yani
+     * "kelepçeyi yalnız insan gevşetebilir" iddiası tam burada kırılıyordu.
+     * Origin doğrulaması bu yolu kapatır (izin listesi zaten mevcut).
+     */
+    const origin = req.headers.origin;
+    if (origin && !allowList().origins.includes(origin)) {
+      return html(res, 403, ayarSayfasi(user, { tur: "hata", metin: "İstek reddedildi: kaynak (origin) doğrulanamadı." }));
+    }
+    if (!origin && req.headers["sec-fetch-site"] && req.headers["sec-fetch-site"] !== "same-origin") {
+      return html(res, 403, ayarSayfasi(user, { tur: "hata", metin: "İstek reddedildi: çapraz-site form gönderimi." }));
+    }
+
     const govde = await new Promise<string>((resolve, reject) => {
       let veri = "";
       req.on("data", (c) => {
@@ -636,7 +661,10 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", PUBLIC_URL);
     if (url.pathname === "/health") return json(res, 200, { ok: true, sessions: sessions.size });
     if (url.pathname === "/connect" && req.method === "GET") return handleConnect(res);
-    if (url.pathname === "/oauth/callback" && req.method === "GET") return handleCallback(req, res, url);
+    // `await` ŞART: await'siz `return` edilen bir async fonksiyonun reddi bu
+    // try/catch'e HİÇ uğramaz, en üste sızar ve süreci öldürür. Kimliksiz tek
+    // bir istekle tüm sunucunun düştüğü uzaktan servis-dışı bırakma açığıydı.
+    if (url.pathname === "/oauth/callback" && req.method === "GET") return await handleCallback(req, res, url);
     if (url.pathname === "/settings") return await handleSettings(req, res);
     // AGPL §13: kaynak kod teklifi — makine tarafından da bulunabilir olsun
     if (url.pathname === "/source") {
@@ -653,6 +681,16 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) json(res, 500, { error: "internal" });
   }
 });
+
+/**
+ * SON EMNİYET AĞI. Tek bir isteğin işlenmesi sırasındaki beklenmeyen bir hata
+ * TÜM kullanıcıların servisini düşürmemeli: süreç ölünce bellekteki bütün MCP
+ * oturumları da kaybolur ve herkes `404 session_not_found` alır.
+ * Hata loglanır, süreç ayakta kalır. (stdio modunda index.ts'te zaten vardı;
+ * hosted modda eksikti.)
+ */
+process.on("unhandledRejection", (e) => console.error("[adspilot-http] unhandledRejection:", e));
+process.on("uncaughtException", (e) => console.error("[adspilot-http] uncaughtException:", e));
 
 // Yavaş-istemci (slowloris) savunması: başlık ve gövde için üst sınırlar
 server.headersTimeout = 20_000;
