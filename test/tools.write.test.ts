@@ -43,13 +43,54 @@ test("yazma kilidi: writeEnabled=false iken ALTI yazma aracının hepsi reddeder
   assert.equal(rec.mutations.length, 0, "kilitliyken HİÇBİR mutasyon gitmemeli");
 });
 
+/** Yayına alma yolunun ön kontrollerini geçen (uygun bütçe + yayınlanabilir reklam) hesap. */
+const YAYINA_HAZIR: Array<[RegExp, any[]]> = [
+  [/campaign_budget\.amount_micros/, [{ campaign: { name: "Hazır" }, campaign_budget: { amount_micros: 50_000_000 } }]],
+  [/FROM ad_group_ad/, [{ ad_group_ad: { ad: { id: 1 } } }]],
+  [/FROM campaign_criterion/, [{ campaign_criterion: { location: { geo_target_constant: "geoTargetConstants/2792" } } }]],
+];
+
 test("onay kapısı: set_campaign_status(ENABLED) confirm olmadan yayına ALMAZ", async () => {
-  const { ctx, rec } = sahteContext();
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR });
   const c = await baglanti(ctx);
   const out = await cagir(c, "set_campaign_status", { customerId: MUSTERI, campaignId: KAMPANYA, status: "ENABLED" });
   assert.match(out, /Reddedildi/);
   assert.match(out, /onay/i);
   assert.equal(rec.mutations.length, 0, "onaysız yayına alma mutasyon üretmemeli");
+});
+
+test("onay kapısı: confirm=true ile (elicitation'sız istemcide) yayına alır", async () => {
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+    confirm: true,
+  });
+  assert.match(out, /YAYINDA/);
+  assert.equal(rec.mutations.filter((m) => m.kind === "campaigns").length, 1);
+});
+
+test("bütçe ARTIŞI onay ister, AZALTMA istemez", async () => {
+  const butce: Array<[RegExp, any[]]> = [
+    [
+      /campaign_budget\.explicitly_shared/,
+      [{ campaign: { name: "K" }, campaign_budget: { resource_name: "r", amount_micros: 50_000_000, explicitly_shared: false } }],
+    ],
+  ];
+
+  const a = sahteContext({ queries: butce });
+  const ca = await baglanti(a.ctx);
+  const artis = await cagir(ca, "update_campaign_budget", { customerId: MUSTERI, campaignId: KAMPANYA, newDailyBudget: 90 });
+  assert.match(artis, /Reddedildi/);
+  assert.equal(a.rec.mutations.length, 0, "onaysız bütçe artışı uygulanmamalı");
+
+  const b = sahteContext({ queries: butce });
+  const cb = await baglanti(b.ctx);
+  const azalt = await cagir(cb, "update_campaign_budget", { customerId: MUSTERI, campaignId: KAMPANYA, newDailyBudget: 20 });
+  assert.match(azalt, /güncellendi/);
+  assert.equal(b.rec.mutations.length, 1, "azaltma serbest olmalı (harcamayı düşürür)");
 });
 
 test("onay kapısı: PAUSED'a çekmek onay istemez (harcamayı azaltır)", async () => {

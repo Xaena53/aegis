@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums, ResourceNames } from "google-ads-api";
 import { formatAdsError, normalizeCustomerId, type ContextProvider } from "../adsClient.js";
+import { onayAl } from "../approval.js";
 import {
   dedupe,
   geoTargetId,
@@ -39,11 +40,13 @@ function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: num
  * Dönen değer: engelleme mesajı ya da null (devam edilebilir).
  */
 async function liveCampaignGuard(
+  server: McpServer,
   ctx: any,
   customerId: string,
   where: { adGroupId?: string; campaignId?: string },
   confirm: boolean | undefined,
-  eylem: string
+  eylem: string,
+  ayrinti: string[]
 ): Promise<string | null> {
   const filter = where.adGroupId
     ? `ad_group.id = ${Number(cleanId(where.adGroupId))}`
@@ -55,11 +58,18 @@ async function liveCampaignGuard(
   );
   if (!rows.length) return null; // bulunamadıysa API kendi hatasını versin
   const campaignLive = String(enums.CampaignStatus[rows[0].campaign.status] ?? "") === "ENABLED";
-  if (!campaignLive || confirm) return null;
-  return (
-    `Reddedildi: "${rows[0].campaign.name}" kampanyası ŞU AN YAYINDA — ${eylem} anında gerçek harcamayı etkiler. ` +
-    `Önce kullanıcıya ne ekleneceğini göster ve açık onayını al; onay geldiyse confirm=true ile tekrar çağır.`
+  if (!campaignLive) return null; // taslak akışı: onay istenmez
+
+  const onay = await onayAl(
+    server,
+    {
+      eylem: `"${rows[0].campaign.name}" kampanyası ŞU AN YAYINDA — ${eylem} anında gerçek harcamayı etkiler.`,
+      satirlar: ayrinti,
+      soru: `${eylem} onaylıyor musun?`,
+    },
+    confirm
   );
+  return onay.onaylandi ? null : onay.mesaj!;
 }
 
 // Yazma araçları: openWorld (dış API), idempotent değil.
@@ -233,7 +243,11 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           `Reddedildi: tekrarlar ayıklanınca ${ud.length} benzersiz açıklama kaldı — en az 2 FARKLI açıklama gerekli.`
         );
       try {
-        const live = await liveCampaignGuard(ctx, customerId, { adGroupId }, confirm, "reklam eklemek");
+        const live = await liveCampaignGuard(server, ctx, customerId, { adGroupId }, confirm, "reklam eklemek", [
+          `Hedef sayfa: ${finalUrl}`,
+          `Başlıklar: ${uh.join(" | ")}`,
+          `Açıklamalar: ${ud.join(" | ")}`,
+        ]);
         if (live) return text(live);
         const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
@@ -270,9 +284,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         customerId: z.string().describe("Google Ads müşteri ID"),
         campaignId: z.string().describe("Kampanya ID"),
         newDailyBudget: z.number().positive().describe("Yeni günlük bütçe (hesap para biriminde)"),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe("Bütçeyi ARTIRIYORSAN zorunlu: kullanıcının açık onayını aldıysan true"),
       },
     },
-    async ({ customerId, campaignId, newDailyBudget }) => {
+    async ({ customerId, campaignId, newDailyBudget, confirm }) => {
       const ctx = getCtx();
       if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("kampanya ID", campaignId);
@@ -294,6 +312,24 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           );
         }
         const oldBudget = Number(row.campaign_budget.amount_micros) / 1e6;
+        // Bütçe ARTIŞI harcamayı doğrudan yükseltir → insan onayı iste.
+        // Azaltma (ya da eşit) harcamayı düşürdüğü için serbesttir.
+        if (newDailyBudget > oldBudget) {
+          const onay = await onayAl(
+            server,
+            {
+              eylem: `"${row.campaign.name}" kampanyasının GÜNLÜK BÜTÇESİ ARTIRILACAK.`,
+              satirlar: [
+                `Mevcut: ${oldBudget} → Yeni: ${newDailyBudget}`,
+                `Günlük artış: +${(newDailyBudget - oldBudget).toFixed(2)}`,
+                `Hesap güvenlik tavanı: ${ctx.config.maxDailyBudget}`,
+              ],
+              soru: "Bütçe artışını onaylıyor musun?",
+            },
+            confirm
+          );
+          if (!onay.onaylandi) return text(onay.mesaj!);
+        }
         await ctx.mutateWithRetry(() => customer.campaignBudgets.update([
           {
             resource_name: row.campaign_budget.resource_name,
@@ -339,7 +375,10 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       try {
         // Negatif kelime harcamayı AZALTIR — onay gerektirmez; pozitif kelime artırır.
         if (!negative) {
-          const live = await liveCampaignGuard(ctx, customerId, { adGroupId }, confirm, "anahtar kelime eklemek");
+          const live = await liveCampaignGuard(server, ctx, customerId, { adGroupId }, confirm, "anahtar kelime eklemek", [
+            `Eşleme türü: ${matchType ?? "PHRASE"}`,
+            `Kelimeler (${unique.length}): ${unique.join(", ")}`,
+          ]);
           if (live) return text(live);
         }
         const customer = ctx.getCustomer(customerId);
@@ -432,11 +471,6 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("kampanya ID", campaignId);
       if (idErr) return text(idErr);
-      if (status === "ENABLED" && !confirm) {
-        return text(
-          "Reddedildi: kampanyayı yayına almak gerçek harcama başlatır. Önce kullanıcıya kampanya özetini (bütçe, anahtar kelimeler, reklam metni) göster ve açık onayını al; onay geldiyse confirm=true ile tekrar çağır."
-        );
-      }
       try {
         const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
@@ -470,6 +504,29 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               `Reddedildi: kampanya ${campaignId} içinde yayınlanabilir (ENABLED reklam grubunda ENABLED) reklam yok — yayına alınsa da gösterim yapamaz. Önce create_responsive_search_ad ile reklam ekle.`
             );
           }
+
+          // 3) ONAY — elicitation varsa doğrudan İNSANA sorulur; ajanın
+          //    confirm'ü o durumda dikkate alınmaz (sahte onay üretilemesin).
+          const hedefler = await ctx.queryWithRetry(
+            customerId,
+            `SELECT campaign_criterion.location.geo_target_constant
+             FROM campaign_criterion WHERE campaign.id = ${Number(cleanId(campaignId))}
+             AND campaign_criterion.type = 'LOCATION' LIMIT 20`
+          );
+          const onay = await onayAl(
+            server,
+            {
+              eylem: `"${row.campaign.name}" kampanyası YAYINA ALINACAK — bu andan itibaren gerçek para harcanır.`,
+              satirlar: [
+                `Günlük bütçe: ${daily}`,
+                `Coğrafi hedef sayısı: ${hedefler.length || "belirtilmemiş"}`,
+                `Kampanya ID: ${cleanId(campaignId)}`,
+              ],
+              soru: "Kampanyayı yayına al?",
+            },
+            confirm
+          );
+          if (!onay.onaylandi) return text(onay.mesaj!);
         }
         await ctx.mutateWithRetry(() => customer.campaigns.update([
           {
