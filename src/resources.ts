@@ -23,6 +23,19 @@ function markdown(uri: string, metin: string) {
   return { contents: [{ uri, mimeType: "text/markdown", text: metin }] };
 }
 
+/**
+ * Kaynak okuma hatalarını ARAÇLARLA AYNI dille sunar.
+ * Aksi halde kullanıcı araç yolundan "hesabını yeniden bağla" ipucunu alırken
+ * kaynak yolundan ham `invalid_grant` görüyor ve ne yapacağını bilemiyordu.
+ */
+async function kaynakGuvenli<T>(uri: string, isi: () => Promise<T>): Promise<T> {
+  try {
+    return await isi();
+  } catch (e) {
+    throw new Error(`${uri} okunamadı — ${formatAdsError(e)}`);
+  }
+}
+
 /** Kampanya kurulabilen (yönetici olmayan) hesapları döner. */
 async function reklamHesaplari(getCtx: ContextProvider): Promise<string[]> {
   try {
@@ -41,7 +54,8 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
       description: "Bu bağlantının eriştiği tüm hesaplar (MCC alt hesapları dahil).",
       mimeType: "application/json",
     },
-    async (uri) => {
+    async (uri) =>
+      kaynakGuvenli(uri.href, async () => {
       const hesaplar = await getCtx().tumHesaplar();
       return json(uri.href, {
         toplam: hesaplar.length,
@@ -51,7 +65,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           tur: h.yonetici ? "yönetici (MCC — kampanya kurulamaz)" : "reklam hesabı",
         })),
       });
-    }
+      })
   );
 
   server.registerResource(
@@ -95,7 +109,8 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
       description: "Bir hesaptaki TÜM kampanyalar (katalog): durum, kanal, günlük bütçe. Performans için campaign_performance aracını kullan.",
       mimeType: "application/json",
     },
-    async (uri, { customerId }) => {
+    async (uri, { customerId }) =>
+      kaynakGuvenli(uri.href, async () => {
       const cid = String(customerId).replace(/\D/g, "");
       /**
        * segments.date FİLTRESİ YOK — bilinçli. Tarih filtresi eklendiğinde
@@ -122,7 +137,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           gunlukButce: Number(r.campaign_budget?.amount_micros ?? 0) / 1e6,
         })),
       });
-    }
+      })
   );
 
   server.registerResource(

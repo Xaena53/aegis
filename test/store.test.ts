@@ -35,7 +35,7 @@ test("şifreleme gidiş-dönüş, her seferinde farklı şifre metni", () => {
 
 test("kurcalanmış şifreli veri reddedilir (GCM auth tag)", () => {
   const packed = encryptSecret("gizli");
-  const [iv, tag, data] = packed.split(".");
+  const [iv, tag] = packed.split(".");
   const bozuk = [iv, tag, Buffer.from("baskaveri").toString("base64")].join(".");
   assert.throws(() => decryptSecret(bozuk));
   assert.throws(() => decryptSecret("bozuk-format"));

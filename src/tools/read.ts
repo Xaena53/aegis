@@ -4,10 +4,6 @@ import { formatAdsError, type ContextProvider } from "../adsClient.js";
 import { enums } from "google-ads-api";
 import { dateRange, ensureGaqlLimit } from "../util.js";
 
-function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
-}
-
 /**
  * Q5 — YAPISAL ÇIKTI.
  * outputSchema tanımlı araçlar HEM insan-okur metin HEM tipli veri döner.

@@ -37,7 +37,13 @@ kabul edilir:
    harcama başlatmaz.
 2. Yayına alma, bütçe **artışı** ve **yayındaki** kampanyaya reklam/pozitif kelime
    ekleme kullanıcının açık onayını gerektirir. Elicitation destekleyen istemcilerde
-   onay doğrudan insandan alınır; ajanın `confirm` değeri dikkate alınmaz.
+   onay doğrudan insandan alınır ve ajanın `confirm` değeri **dikkate alınmaz**.
+
+   > **Bilinen sınır (tasarım gereği):** Elicitation desteklemeyen istemcilerde geri
+   > uyumluluk için `confirm=true` kabul edilir — yani o istemcilerde onay ajan
+   > aracılıdır. Sunucuyu kendi seçtiği bir istemciyle çalıştırabilen bir saldırgan
+   > bu yola düşebilir. Bu, kimlik bilgilerine zaten erişimi olan bir tarafı
+   > varsayar; yine de üretimde elicitation destekleyen istemci kullanın.
 3. Belirsizlikte **kapalı arıza**: durum doğrulanamıyorsa onay istenir.
 4. Bütçe tavanı ve yazma izni MCP üzerinden **yalnız okunur**; değişiklik yalnız
    insanın tarayıcı oturumundan yapılır (API anahtarı bu kapıyı açmaz).

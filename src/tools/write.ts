@@ -502,7 +502,9 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         "Kampanyayı yayına alır (ENABLED) ya da duraklatır (PAUSED). " +
         "KULLAN — PAUSED: harcamayı acilen durdurmak için, onaysız ve serbesttir. " +
         "KULLAN — ENABLED: YALNIZCA kullanıcı bu konuşmada açıkça 'yayına al' dediyse. " +
-        "GÜVENLİK: yayına alma gerçek para harcatır; sunucu kullanıcıya doğrudan sorar ve onay alınmadan uygulamaz. " +
+        "GÜVENLİK: yayına alma gerçek para harcatır. İstemcin destekliyorsa sunucu kullanıcıya DOĞRUDAN sorar " +
+        "ve senin confirm değerin dikkate alınmaz; desteklemiyorsa onayı SENİN almış olman gerekir — " +
+        "confirm=true göndermek 'kullanıcıya sordum, evet dedi' demektir, sormadan gönderme. " +
         "Bütçesi hesabın tavanını aşan ya da yayınlanabilir reklamı olmayan kampanya yayına alınamaz.",
       annotations: WRITE_DESTRUCTIVE,
       inputSchema: {
