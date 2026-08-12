@@ -202,7 +202,10 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           if (wasteful) wastedCost += cost;
           const flag = wasteful ? " 🔥 boşa-harcama-adayı" : "";
           const stName = (enums.SearchTermTargetingStatus as any)[r.search_term_view?.status] ?? r.search_term_view?.status;
-          const excluded = stName === "EXCLUDED" || stName === "EXCLUDED_AND_ADDED" ? " [zaten dışlanmış]" : "";
+          // Gerçek enum adı ADDED_EXCLUDED'dır; 'EXCLUDED_AND_ADDED' diye bir
+          // değer yok — o dal hiç çalışmıyordu ve zaten dışlanmış terimler
+          // "boşa harcama adayı" olarak tekrar tekrar öneriliyordu.
+          const excluded = stName === "EXCLUDED" || stName === "ADDED_EXCLUDED" ? " [zaten dışlanmış]" : "";
           return (
             `"${r.search_term_view.search_term}" — maliyet: ${cost.toFixed(2)}, tıklama: ${m.clicks ?? 0}, ` +
             `dönüşüm: ${conv} (${r.campaign.name} / ${r.ad_group.name}, ag:${r.ad_group.id})${flag}${excluded}`
