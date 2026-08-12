@@ -150,6 +150,136 @@ test("list_accounts: MCC altındaki alt hesaplar da listelenir", async () => {
   assert.match(out, /\[TEST\]/);
 });
 
+/** Q5 — yapısal çıktı: ajan metni ayrıştırmak zorunda kalmasın. */
+async function yapisal(c: any, name: string, args: Record<string, unknown>) {
+  const res: any = await c.callTool({ name, arguments: args });
+  return res;
+}
+
+test("beş okuma aracı outputSchema bildirir", async () => {
+  const { ctx } = sahteContext();
+  const c = await baglanti(ctx);
+  const { tools }: any = await c.listTools();
+  const semali = tools.filter((t: any) => t.outputSchema).map((t: any) => t.name).sort();
+  assert.deepEqual(semali, [
+    "campaign_performance",
+    "keyword_performance",
+    "list_accounts",
+    "run_gaql",
+    "search_terms_report",
+  ]);
+});
+
+test("campaign_performance tipli veri döner (sayılar SAYI, enum'lar AD)", async () => {
+  const { ctx } = sahteContext({
+    queries: [
+      [
+        /FROM campaign/,
+        [
+          {
+            campaign: {
+              id: 7,
+              name: "K",
+              status: enums.CampaignStatus.ENABLED,
+              advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+            },
+            campaign_budget: { amount_micros: 60_000_000 },
+            metrics: { cost_micros: 12_500_000, clicks: 10, impressions: 100, conversions: 2, ctr: 0.1, average_cpc: 1_250_000 },
+          },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res = await yapisal(c, "campaign_performance", { customerId: MUSTERI, days: 7 });
+
+  assert.ok(res.structuredContent, "structuredContent bulunmalı");
+  assert.ok(res.content?.[0]?.text, "insan-okur metin de korunmalı");
+  const s = res.structuredContent;
+  assert.equal(s.pencereGun, 7);
+  assert.equal(s.kampanyalar[0].id, "7");
+  assert.equal(s.kampanyalar[0].durum, "ENABLED");
+  assert.equal(s.kampanyalar[0].gunlukButce, 60, "micros bölünmüş SAYI olmalı");
+  assert.equal(s.kampanyalar[0].maliyet, 12.5);
+  assert.equal(s.kampanyalar[0].ctrYuzde, 10);
+  assert.equal(typeof s.kampanyalar[0].tiklama, "number");
+});
+
+test("search_terms_report israf hesabını tipli döner", async () => {
+  const { ctx } = sahteContext({
+    queries: [
+      [
+        /FROM search_term_view/,
+        [
+          {
+            campaign: { name: "K" },
+            ad_group: { id: 11, name: "G" },
+            search_term_view: { search_term: "bedava", status: enums.SearchTermTargetingStatus.ADDED },
+            metrics: { cost_micros: 75_000_000, clicks: 30, impressions: 300, conversions: 0 },
+          },
+          {
+            campaign: { name: "K" },
+            ad_group: { id: 11, name: "G" },
+            search_term_view: { search_term: "satın al", status: enums.SearchTermTargetingStatus.ADDED_EXCLUDED },
+            metrics: { cost_micros: 25_000_000, clicks: 10, impressions: 100, conversions: 5 },
+          },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const s = (await yapisal(c, "search_terms_report", { customerId: MUSTERI })).structuredContent;
+  assert.equal(s.toplamMaliyet, 100);
+  assert.equal(s.israfMaliyet, 75);
+  assert.equal(s.israfYuzde, 75);
+  assert.equal(s.terimler[0].israfAdayi, true);
+  assert.equal(s.terimler[0].reklamGrubuId, "11", "negatif eklemek için gereken ID yapısal veride olmalı");
+  assert.equal(s.terimler[1].israfAdayi, false);
+  assert.equal(s.terimler[1].zatenDislanmis, true);
+});
+
+test("run_gaql çıktıyı SATIR atarak sınırlar (geçersiz JSON üretmez)", async () => {
+  const kocaman = Array.from({ length: 400 }, (_, i) => ({
+    campaign: { id: i, name: "K".repeat(200) },
+  }));
+  const { ctx } = sahteContext({ queries: [[/.*/, kocaman]] });
+  const c = await baglanti(ctx);
+  const res = await yapisal(c, "run_gaql", { customerId: MUSTERI, query: "SELECT campaign.id FROM campaign", limit: 400 });
+  const s = res.structuredContent;
+
+  assert.equal(s.satirSayisi, 400);
+  assert.ok(s.gosterilen < 400, "büyük çıktı kısılmalı");
+  assert.equal(s.kesildi, true);
+  // Eski davranış JSON metnini ortadan kesiyordu; artık satırlar tam nesneler
+  assert.equal(s.satirlar.length, s.gosterilen);
+  assert.doesNotThrow(() => JSON.parse(JSON.stringify(s.satirlar)));
+});
+
+test("boş sonuçlar da tipli döner (şema ihlali olmaz)", async () => {
+  const { ctx } = sahteContext({ queries: [[/.*/, []]] });
+  const c = await baglanti(ctx);
+  for (const [ad, beklenenAlan] of [
+    ["campaign_performance", "kampanyalar"],
+    ["keyword_performance", "kelimeler"],
+    ["search_terms_report", "terimler"],
+  ] as Array<[string, string]>) {
+    const res = await yapisal(c, ad, { customerId: MUSTERI });
+    assert.ok(res.structuredContent, `${ad} boş sonuçta structuredContent vermeli`);
+    assert.deepEqual(res.structuredContent[beklenenAlan], [], `${ad}.${beklenenAlan} boş dizi olmalı`);
+  }
+});
+
+test("geçersiz girdi isError döner (şema doğrulaması patlamasın)", async () => {
+  const { ctx } = sahteContext();
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({
+    name: "keyword_performance",
+    arguments: { customerId: MUSTERI, campaignId: "1 OR 1=1" },
+  });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /Geçersiz kampanya ID/);
+});
+
 test("okuma araçlarının hiçbiri yazma yapmaz", async () => {
   const { ctx, rec } = sahteContext({ queries: [[/.*/, []]] });
   const c = await baglanti(ctx);
