@@ -1,0 +1,175 @@
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { enums } from "google-ads-api";
+import type { ContextProvider } from "./adsClient.js";
+import { dateRange } from "./util.js";
+
+/**
+ * RESOURCES — Faz Q / Q4
+ *
+ * Resources, istemcinin veriyi ARAÇ ÇAĞIRMADAN okumasını sağlar: keşif
+ * kolaylaşır, tekrar eden sorgular için token harcanmaz ve kullanıcı neyin
+ * mevcut olduğunu görebilir.
+ *
+ * Buradaki en önemli kaynak `.../limits`: denetimde çıkan boşluktu — kullanıcı
+ * hangi kelepçelerle çalıştığını (bütçe tavanı, yazma izni) hiçbir yerden
+ * göremiyordu. Not: bu kaynak SALT OKUMADIR; ajan buradan limit değiştiremez.
+ */
+
+function json(uri: string, veri: unknown) {
+  return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(veri, null, 2) }] };
+}
+
+function markdown(uri: string, metin: string) {
+  return { contents: [{ uri, mimeType: "text/markdown", text: metin }] };
+}
+
+/** Kampanya kurulabilen (yönetici olmayan) hesapları döner. */
+async function reklamHesaplari(getCtx: ContextProvider): Promise<string[]> {
+  try {
+    return (await getCtx().tumHesaplar()).filter((h) => !h.yonetici).map((h) => h.id);
+  } catch {
+    return [];
+  }
+}
+
+export function registerResources(server: McpServer, getCtx: ContextProvider): void {
+  server.registerResource(
+    "hesaplar",
+    "adspilot://accounts",
+    {
+      title: "Google Ads hesapları",
+      description: "Bu bağlantının eriştiği tüm hesaplar (MCC alt hesapları dahil).",
+      mimeType: "application/json",
+    },
+    async (uri) => {
+      const hesaplar = await getCtx().tumHesaplar();
+      return json(uri.href, {
+        toplam: hesaplar.length,
+        hesaplar: hesaplar.map((h) => ({
+          id: h.id,
+          ad: h.ad,
+          tur: h.yonetici ? "yönetici (MCC — kampanya kurulamaz)" : "reklam hesabı",
+        })),
+      });
+    }
+  );
+
+  server.registerResource(
+    "hesap-limitleri",
+    new ResourceTemplate("adspilot://accounts/{customerId}/limits", {
+      list: undefined,
+      complete: { customerId: (deger) => reklamHesaplari(getCtx).then((l) => l.filter((id) => id.startsWith(deger.replace(/\D/g, "")))) },
+    }),
+    {
+      title: "Güvenlik kelepçeleri",
+      description:
+        "Bu bağlantının güvenlik ayarları: günlük bütçe tavanı ve yazma izni. SALT OKUNUR — limitleri yalnız hesap sahibi değiştirebilir.",
+      mimeType: "application/json",
+    },
+    async (uri, { customerId }) => {
+      const cfg = getCtx().config;
+      return json(uri.href, {
+        customerId,
+        yazmaIzni: cfg.writeEnabled,
+        gunlukButceTavani: cfg.maxDailyBudget,
+        kurallar: [
+          "Kampanyalar her zaman duraklatılmış (PAUSED) oluşturulur.",
+          "Yayına alma ve bütçe ARTIŞI kullanıcının açık onayını gerektirir.",
+          "Bütçe azaltma ve negatif anahtar kelime ekleme onay gerektirmez (harcamayı düşürür).",
+          "Tavanı yalnız hesap sahibi yükseltebilir; ajan kendi limitini değiştiremez.",
+        ],
+      });
+    }
+  );
+
+  server.registerResource(
+    "kampanyalar",
+    new ResourceTemplate("adspilot://accounts/{customerId}/campaigns", {
+      list: undefined,
+      complete: { customerId: (deger) => reklamHesaplari(getCtx).then((l) => l.filter((id) => id.startsWith(deger.replace(/\D/g, "")))) },
+    }),
+    {
+      title: "Kampanya listesi",
+      description: "Bir hesaptaki kampanyalar: durum, kanal, günlük bütçe ve son 30 günün maliyeti.",
+      mimeType: "application/json",
+    },
+    async (uri, { customerId }) => {
+      const cid = String(customerId).replace(/\D/g, "");
+      const satirlar = await getCtx().queryWithRetry(
+        cid,
+        `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
+                campaign_budget.amount_micros, metrics.cost_micros
+         FROM campaign WHERE ${dateRange(30)} AND campaign.status != 'REMOVED'
+         ORDER BY metrics.cost_micros DESC LIMIT 200`
+      );
+      return json(uri.href, {
+        customerId: cid,
+        pencere: "son 30 gün",
+        kampanyalar: satirlar.map((r: any) => ({
+          id: String(r.campaign.id),
+          ad: r.campaign.name,
+          durum: (enums.CampaignStatus as any)[r.campaign.status] ?? r.campaign.status,
+          kanal: (enums.AdvertisingChannelType as any)[r.campaign.advertising_channel_type] ?? r.campaign.advertising_channel_type,
+          gunlukButce: Number(r.campaign_budget?.amount_micros ?? 0) / 1e6,
+          maliyet30g: Number(r.metrics?.cost_micros ?? 0) / 1e6,
+        })),
+      });
+    }
+  );
+
+  server.registerResource(
+    "gaql-sema",
+    "adspilot://gaql-sema",
+    {
+      title: "GAQL alan rehberi",
+      description:
+        "run_gaql için sık kullanılan kaynaklar, alanlar ve çalışan örnek sorgular. Alan adı uydurmadan önce buraya bak.",
+      mimeType: "text/markdown",
+    },
+    async (uri) =>
+      markdown(
+        uri.href,
+        [
+          "# GAQL hızlı rehber",
+          "",
+          "> Sorguyu TEK SATIR yaz. Çok satırlı sorgularda istemci ayrıştırıcısı",
+          "> SELECT listesinin son alanını bozar (sunucu normalize eder ama alışkanlık edin).",
+          "",
+          "## Sık kullanılan kaynaklar",
+          "| FROM | ne için |",
+          "|---|---|",
+          "| `campaign` | kampanya performansı |",
+          "| `ad_group` | reklam grubu bilgisi |",
+          "| `keyword_view` | anahtar kelime performansı |",
+          "| `search_term_view` | kullanıcıların GERÇEKTE yazdığı aramalar |",
+          "| `ad_group_ad` | reklam metinleri |",
+          "| `campaign_criterion` | coğrafi hedefler, kampanya negatifleri |",
+          "| `customer_client` | MCC alt hesapları |",
+          "",
+          "## Sık alanlar",
+          "- Kimlik: `campaign.id`, `campaign.name`, `campaign.status`, `ad_group.id`",
+          "- Para: `metrics.cost_micros` (1.000.000 = 1 birim), `campaign_budget.amount_micros`",
+          "- Performans: `metrics.clicks`, `metrics.impressions`, `metrics.conversions`, `metrics.ctr`, `metrics.average_cpc`",
+          "- Kelime: `ad_group_criterion.keyword.text`, `ad_group_criterion.keyword.match_type`",
+          "- Arama terimi: `search_term_view.search_term`, `search_term_view.status`",
+          "",
+          "## Örnekler",
+          "```",
+          "SELECT campaign.name, metrics.cost_micros, metrics.conversions FROM campaign WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.cost_micros DESC",
+          "```",
+          "```",
+          "SELECT search_term_view.search_term, metrics.cost_micros, metrics.conversions FROM search_term_view WHERE segments.date DURING LAST_30_DAYS AND metrics.clicks >= 1",
+          "```",
+          "```",
+          "SELECT campaign_criterion.keyword.text FROM campaign_criterion WHERE campaign_criterion.negative = true",
+          "```",
+          "",
+          "## Tuzaklar",
+          "- `metrics.*` alanları segmentlere göre değişir; `segments.date` olmadan toplam döner.",
+          "- Para alanları **micros**: 1.500.000 → 1,50.",
+          "- `LIMIT` verilmezse sunucu 100 ekler; çok büyük LIMIT tavana kırpılır.",
+          "- Yazma yapılamaz — GAQL yalnız okumadır.",
+        ].join("\n")
+      )
+  );
+}

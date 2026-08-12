@@ -3,6 +3,7 @@ import { registerReadTools } from "./tools/read.js";
 import { registerWriteTools } from "./tools/write.js";
 import { registerSiteTools } from "./tools/site.js";
 import { registerPrompts } from "./prompts.js";
+import { registerResources } from "./resources.js";
 import type { ContextProvider } from "./adsClient.js";
 
 /**
@@ -16,5 +17,6 @@ export function buildServer(getCtx: ContextProvider): McpServer {
   registerWriteTools(server, getCtx);
   registerSiteTools(server);
   registerPrompts(server, getCtx);
+  registerResources(server, getCtx);
   return server;
 }

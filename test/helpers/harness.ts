@@ -28,10 +28,12 @@ export interface Kayit {
   mutations: Array<{ kind: string; payload: any }>;
   /** Çalıştırılan GAQL metinleri. */
   queries: string[];
+  /** Her sorgunun HANGİ hesapta çalıştırıldığı (queries ile aynı sırada). */
+  customerIds: string[];
 }
 
 export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
-  const rec: Kayit = { mutations: [], queries: [] };
+  const rec: Kayit = { mutations: [], queries: [], customerIds: [] };
 
   const yanit = (gaql: string): any[] => {
     for (const [re, rows] of opts.queries ?? []) if (re.test(gaql)) return rows;
@@ -67,8 +69,9 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
     maxDailyBudget: opts.maxDailyBudget ?? 500,
   };
   ctx.getCustomer = () => customer;
-  ctx.queryWithRetry = async (_cid: string, gaql: string) => {
+  ctx.queryWithRetry = async (cid: string, gaql: string) => {
     rec.queries.push(gaql);
+    rec.customerIds.push(cid);
     return yanit(gaql);
   };
   ctx.mutateWithRetry = async (fn: () => any) => fn();
