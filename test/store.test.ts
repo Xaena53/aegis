@@ -23,6 +23,8 @@ after(() => {
 });
 
 test("şifreleme gidiş-dönüş, her seferinde farklı şifre metni", () => {
+  // Test verisi GERÇEK bir kimlik bilgisinden TÜRETİLMEZ (önek dahil) —
+  // sahte olsa bile gerçek sırrın parçası repoya girmemeli.
   const secret = "TEST-ONLY-refresh-token-sabiti-0000";
   const a = encryptSecret(secret);
   const b = encryptSecret(secret);
