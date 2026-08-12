@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerReadTools } from "./tools/read.js";
 import { registerWriteTools } from "./tools/write.js";
 import { registerSiteTools } from "./tools/site.js";
+import { registerPrompts } from "./prompts.js";
 import type { ContextProvider } from "./adsClient.js";
 
 /**
@@ -14,5 +15,6 @@ export function buildServer(getCtx: ContextProvider): McpServer {
   registerReadTools(server, getCtx);
   registerWriteTools(server, getCtx);
   registerSiteTools(server);
+  registerPrompts(server, getCtx);
   return server;
 }

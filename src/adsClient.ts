@@ -43,6 +43,58 @@ export class AdsContext {
   }
 
   /**
+   * Erişilebilir TÜM hesaplar (MCC alt hesapları dahil), kısa süreli önbellekli.
+   *
+   * `listAccessibleCustomers` yalnız üst düzey hesapları döner; kullanıcının
+   * fiilen kampanya kurduğu alt hesaplar orada YOKTUR. Otomatik tamamlama ve
+   * kaynak listeleri bu düzleştirilmiş listeye ihtiyaç duyar. Önbellek, her
+   * tuş vuruşunda API'ye çıkılmasını engeller.
+   */
+  async tumHesaplar(): Promise<Array<{ id: string; ad: string; yonetici: boolean }>> {
+    const now = Date.now();
+    if (this.hesapCache && now - this.hesapCache.zaman < 60_000) return this.hesapCache.liste;
+
+    const liste: Array<{ id: string; ad: string; yonetici: boolean }> = [];
+    const gorulen = new Set<string>();
+    for (const id of await this.listAccessibleCustomers()) {
+      try {
+        const [row]: any[] = await this.queryWithRetry(
+          id,
+          `SELECT customer.descriptive_name, customer.manager FROM customer LIMIT 1`
+        );
+        const yonetici = Boolean(row?.customer?.manager);
+        if (!gorulen.has(id)) {
+          gorulen.add(id);
+          liste.push({ id, ad: String(row?.customer?.descriptive_name ?? "(isimsiz)"), yonetici });
+        }
+        if (yonetici) {
+          const cocuklar: any[] = await this.queryWithRetry(
+            id,
+            `SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager
+             FROM customer_client WHERE customer_client.level = 1 LIMIT 100`
+          );
+          for (const c of cocuklar) {
+            const cid = String(c.customer_client?.id ?? "");
+            if (!cid || gorulen.has(cid)) continue;
+            gorulen.add(cid);
+            liste.push({
+              id: cid,
+              ad: String(c.customer_client?.descriptive_name ?? "(isimsiz)"),
+              yonetici: Boolean(c.customer_client?.manager),
+            });
+          }
+        }
+      } catch {
+        /* tek hesap okunamazsa listeyi tamamen düşürme */
+      }
+    }
+    this.hesapCache = { zaman: now, liste };
+    return liste;
+  }
+
+  private hesapCache?: { zaman: number; liste: Array<{ id: string; ad: string; yonetici: boolean }> };
+
+  /**
    * Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı.
    * normalizeGaql ZORUNLU: çok satırlı sorgularda istemci ayrıştırıcısı
    * SELECT listesinin son alanını bozar ve değeri sessizce null döner.

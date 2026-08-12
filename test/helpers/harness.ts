@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.js";
+import { AdsContext } from "../../src/adsClient.js";
 
 /**
  * Entegrasyon test koşum takımı.
@@ -18,6 +19,8 @@ export interface SahteAyar {
   maxDailyBudget?: number;
   /** GAQL metnine göre yanıt; ilk eşleşen desen kazanır. */
   queries?: Array<[RegExp, any[]]>;
+  /** listAccessibleCustomers'ın döneceği üst düzey hesaplar. */
+  hesaplar?: string[];
 }
 
 export interface Kayit {
@@ -52,19 +55,24 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
     mutateResources: kaydet("mutateResources"),
   };
 
-  const ctx = {
-    config: {
-      writeEnabled: opts.writeEnabled ?? true,
-      maxDailyBudget: opts.maxDailyBudget ?? 500,
-    },
-    getCustomer: () => customer,
-    queryWithRetry: async (_cid: string, gaql: string) => {
-      rec.queries.push(gaql);
-      return yanit(gaql);
-    },
-    mutateWithRetry: async (fn: () => any) => fn(),
-    listAccessibleCustomers: async () => ["1234567890"],
+  /**
+   * Gerçek AdsContext prototipinden türetilir: yalnız AĞA ÇIKAN yöntemler
+   * değiştirilir. Böylece `tumHesaplar` gibi saf iş mantığı (alt hesap
+   * düzleştirme, önbellek) SAHTE bir kopya değil, ÜRETİMDEKİ kod olarak
+   * test edilir.
+   */
+  const ctx: any = Object.create(AdsContext.prototype);
+  ctx.config = {
+    writeEnabled: opts.writeEnabled ?? true,
+    maxDailyBudget: opts.maxDailyBudget ?? 500,
   };
+  ctx.getCustomer = () => customer;
+  ctx.queryWithRetry = async (_cid: string, gaql: string) => {
+    rec.queries.push(gaql);
+    return yanit(gaql);
+  };
+  ctx.mutateWithRetry = async (fn: () => any) => fn();
+  ctx.listAccessibleCustomers = async () => opts.hesaplar ?? ["1234567890"];
 
   return { ctx, rec };
 }
