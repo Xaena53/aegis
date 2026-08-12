@@ -2,7 +2,15 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums, ResourceNames } from "google-ads-api";
 import { formatAdsError, normalizeCustomerId, type ContextProvider } from "../adsClient.js";
-import { dedupe, geoTargetId, invalidId, ISO_NUMERIC, toMicrosInt, budgetGuard as budgetGuardPure } from "../util.js";
+import {
+  dedupe,
+  geoTargetId,
+  invalidId,
+  cleanId,
+  ISO_NUMERIC,
+  toMicrosInt,
+  budgetGuard as budgetGuardPure,
+} from "../util.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -14,13 +22,44 @@ function err(e: unknown) {
 
 function writesDisabled() {
   return text(
-    "Yazma araçları devre dışı (ADSPILOT_WRITE_ENABLED=0). .env üzerinden açılması gerekiyor — kullanıcıya danış."
+    "Yazma araçları bu hesap için devre dışı. Yalnız hesap sahibi açabilir — kullanıcıya bildir, kendi başına aşmaya çalışma."
   );
 }
 
 /** Bütçe kelepçesi — tavan çağıran kullanıcının context'inden. */
 function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: number): string | null {
   return budgetGuardPure(amount, ctx.config.maxDailyBudget);
+}
+
+/**
+ * CANLI KAMPANYA KORUMASI. Yayındaki bir kampanyaya reklam/anahtar kelime
+ * eklemek anında gerçek para harcatır — bu, kampanyayı yayına almakla aynı
+ * ağırlıkta bir eylemdir ve aynı açık onayı gerektirir. Kampanya PAUSED ise
+ * (normal taslak akışı) onay istenmez.
+ * Dönen değer: engelleme mesajı ya da null (devam edilebilir).
+ */
+async function liveCampaignGuard(
+  ctx: any,
+  customerId: string,
+  where: { adGroupId?: string; campaignId?: string },
+  confirm: boolean | undefined,
+  eylem: string
+): Promise<string | null> {
+  const filter = where.adGroupId
+    ? `ad_group.id = ${Number(cleanId(where.adGroupId))}`
+    : `campaign.id = ${Number(cleanId(where.campaignId!))}`;
+  const rows = await ctx.queryWithRetry(
+    customerId,
+    `SELECT campaign.id, campaign.name, campaign.status, ad_group.status
+     FROM ad_group WHERE ${filter} LIMIT 1`
+  );
+  if (!rows.length) return null; // bulunamadıysa API kendi hatasını versin
+  const campaignLive = String(enums.CampaignStatus[rows[0].campaign.status] ?? "") === "ENABLED";
+  if (!campaignLive || confirm) return null;
+  return (
+    `Reddedildi: "${rows[0].campaign.name}" kampanyası ŞU AN YAYINDA — ${eylem} anında gerçek harcamayı etkiler. ` +
+    `Önce kullanıcıya ne ekleneceğini göster ve açık onayını al; onay geldiyse confirm=true ile tekrar çağır.`
+  );
 }
 
 // Yazma araçları: openWorld (dış API), idempotent değil.
@@ -170,13 +209,18 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         finalUrl: z.string().url().max(2048).describe("Reklamın gideceği sayfa URL'i"),
         headlines: z.array(z.string().min(1).max(30)).min(3).max(15).describe("Başlıklar (maks 30 karakter)"),
         descriptions: z.array(z.string().min(1).max(90)).min(2).max(4).describe("Açıklamalar (maks 90 karakter)"),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe("Kampanya ZATEN YAYINDAYSA zorunlu: kullanıcının açık onayını aldıysan true"),
       },
     },
-    async ({ customerId, adGroupId, finalUrl, headlines, descriptions }) => {
+    async ({ customerId, adGroupId, finalUrl, headlines, descriptions, confirm }) => {
       const ctx = getCtx();
       if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("reklam grubu ID", adGroupId);
       if (idErr) return text(idErr);
+      if (!/^https?:\/\//i.test(finalUrl)) return text("Reddedildi: finalUrl yalnız http/https olabilir.");
       // Google tekrar eden varlıkları reddeder — burada anlaşılır mesajla yakala
       const uh = dedupe(headlines);
       const ud = dedupe(descriptions);
@@ -189,11 +233,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           `Reddedildi: tekrarlar ayıklanınca ${ud.length} benzersiz açıklama kaldı — en az 2 FARKLI açıklama gerekli.`
         );
       try {
+        const live = await liveCampaignGuard(ctx, customerId, { adGroupId }, confirm, "reklam eklemek");
+        if (live) return text(live);
         const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const res: any = await ctx.mutateWithRetry(() => customer.adGroupAds.create([
           {
-            ad_group: ResourceNames.adGroup(cid, adGroupId),
+            ad_group: ResourceNames.adGroup(cid, cleanId(adGroupId)),
             status: enums.AdGroupAdStatus.ENABLED,
             ad: {
               final_urls: [finalUrl],
@@ -277,9 +323,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           .optional()
           .describe("Eşleme türü (varsayılan PHRASE)"),
         negative: z.boolean().optional().describe("true ise negatif anahtar kelime olarak eklenir"),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe("Kampanya ZATEN YAYINDAYSA zorunlu (pozitif kelimeler için): kullanıcının açık onayı"),
       },
     },
-    async ({ customerId, adGroupId, keywords, matchType, negative }) => {
+    async ({ customerId, adGroupId, keywords, matchType, negative, confirm }) => {
       const ctx = getCtx();
       if (!ctx.config.writeEnabled) return writesDisabled();
       const idErr = invalidId("reklam grubu ID", adGroupId);
@@ -287,12 +337,17 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       const unique = dedupe(keywords);
       if (!unique.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
       try {
+        // Negatif kelime harcamayı AZALTIR — onay gerektirmez; pozitif kelime artırır.
+        if (!negative) {
+          const live = await liveCampaignGuard(ctx, customerId, { adGroupId }, confirm, "anahtar kelime eklemek");
+          if (live) return text(live);
+        }
         const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
         await ctx.mutateWithRetry(() => customer.adGroupCriteria.create(
           unique.map((kw) => ({
-            ad_group: ResourceNames.adGroup(cid, adGroupId),
+            ad_group: ResourceNames.adGroup(cid, cleanId(adGroupId)),
             // negatif kriterlerde status gönderilmez
             ...(negative ? { negative: true } : { status: enums.AdGroupCriterionStatus.ENABLED }),
             keyword: { text: kw, match_type: mt },
@@ -339,7 +394,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         const mt = enums.KeywordMatchType[matchType ?? "PHRASE"];
         await ctx.mutateWithRetry(() => customer.campaignCriteria.create(
           unique.map((kw) => ({
-            campaign: ResourceNames.campaign(cid, campaignId),
+            campaign: ResourceNames.campaign(cid, cleanId(campaignId)),
             negative: true,
             keyword: { text: kw, match_type: mt },
           }))
@@ -386,21 +441,39 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         if (status === "ENABLED") {
-          // Reklamı olmayan kampanyayı yayına almak anlamsız — büyük ihtimalle akış hatası
+          // 1) Yayına alınacak kampanyanın bütçesi de güvenlik tavanına tabidir.
+          //    (Kullanıcının arayüzde kurduğu 10.000 TL'lik kampanya bu kapı
+          //    olmadan tavanın kat kat üstünde yayına girebiliyordu.)
+          const [row]: any[] = await ctx.queryWithRetry(
+            customerId,
+            `SELECT campaign.name, campaign_budget.amount_micros
+             FROM campaign WHERE campaign.id = ${Number(cleanId(campaignId))}
+             AND campaign.status != 'REMOVED' LIMIT 1`
+          );
+          if (!row) return text(`Kampanya bulunamadı: ${campaignId}`);
+          const daily = Number(row.campaign_budget?.amount_micros ?? 0) / 1e6;
+          const capMsg = budgetGuardFor(ctx, daily);
+          if (capMsg) {
+            return text(
+              `Reddedildi: "${row.campaign.name}" kampanyasının günlük bütçesi ${daily} — ${capMsg}`
+            );
+          }
+          // 2) Gösterim yapabilecek durumda mı? (yayınlanamayan reklam kapıyı geçmesin)
           const ads = await ctx.queryWithRetry(
             customerId,
             `SELECT ad_group_ad.ad.id FROM ad_group_ad
-             WHERE campaign.id = ${Number(campaignId)} AND ad_group_ad.status != 'REMOVED' LIMIT 1`
+             WHERE campaign.id = ${Number(cleanId(campaignId))}
+             AND ad_group_ad.status = 'ENABLED' AND ad_group.status = 'ENABLED' LIMIT 1`
           );
           if (!ads.length) {
             return text(
-              `Reddedildi: kampanya ${campaignId} içinde hiç reklam yok — yayına alınsa da gösterim yapamaz. Önce create_responsive_search_ad ile reklam ekle.`
+              `Reddedildi: kampanya ${campaignId} içinde yayınlanabilir (ENABLED reklam grubunda ENABLED) reklam yok — yayına alınsa da gösterim yapamaz. Önce create_responsive_search_ad ile reklam ekle.`
             );
           }
         }
         await ctx.mutateWithRetry(() => customer.campaigns.update([
           {
-            resource_name: ResourceNames.campaign(cid, campaignId),
+            resource_name: ResourceNames.campaign(cid, cleanId(campaignId)),
             status: enums.CampaignStatus[status],
           },
         ]));

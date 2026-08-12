@@ -8,6 +8,8 @@ import { randomBytes, createCipheriv, createDecipheriv, createHash, scryptSync }
 
 export interface StoredUser {
   id: number;
+  /** Google'ın değişmez kullanıcı kimliği (id_token `sub`). Kiracı anahtarı budur. */
+  googleSub?: string;
   email: string;
   refreshToken: string;
   loginCustomerId?: string;
@@ -69,7 +71,10 @@ export function hashApiKey(plain: string): string {
 export class UserStore {
   private db: DatabaseSync;
 
-  constructor(path = process.env.ADSPILOT_DB ?? "adspilot.db") {
+  // DİKKAT: `??` boş string'i geçirir ve DatabaseSync("") sessizce GEÇİCİ bir
+  // veritabanı açar — her yeniden başlatmada tüm kullanıcı token'ları yok olur,
+  // tek hata bile vermeden. Bu yüzden `||` (boş string'i de yakalar) şart.
+  constructor(path = process.env.ADSPILOT_DB || "adspilot.db") {
     try {
       this.db = new DatabaseSync(path);
     } catch (e: any) {

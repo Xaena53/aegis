@@ -117,6 +117,83 @@ test("validateAnalyzeUrl şema ve host kontrolü", () => {
   assert.match(validateAnalyzeUrl("garbage")!, /Geçersiz URL/);
 });
 
+test("ReDoS: patolojik girdiler DOĞRUSAL sürede ayrıştırılır", () => {
+  // Eskiden karesel davranıyordu: 1.5MB (gövde tavanı) DAKİKALARCA sürüp
+  // tek iş parçacıklı sunucuyu tüm kiracılar için donduruyordu.
+  const N = 300_000;
+  const yukler: Array<[string, string]> = [
+    ["kapanmayan <", "<".repeat(N)],
+    ["kapanmayan meta", "<meta ".repeat(N / 6)],
+    ["kapanmayan a-benzeri", "<article>".repeat(N / 9)],
+    ["kapanmayan yorum", "<!--".repeat(N / 4)],
+    ["kapanmayan script", "<script".repeat(N / 7)],
+  ];
+  for (const [ad, html] of yukler) {
+    const t = Date.now();
+    extractPageFacts(html);
+    const ms = Date.now() - t;
+    assert.ok(ms < 1000, `${ad}: ${ms}ms — doğrusal olmalı (<1000ms)`);
+  }
+});
+
+test("alan uzunlukları sınırlı: tek sayfa ajan bağlamını şişiremez", () => {
+  // Makul ama büyük içerik: kırpılmalı
+  const buyuk = "A".repeat(5_000);
+  const f = extractPageFacts(
+    `<html><head><title>${buyuk}</title>
+     <meta name="description" content="${buyuk}">
+     <meta name="keywords" content="${buyuk}"></head></html>`
+  );
+  assert.ok(f.title!.length <= 400, `başlık ${f.title!.length}`);
+  assert.ok(f.metaDescription!.length <= 400, `meta ${f.metaDescription!.length}`);
+  assert.ok(f.metaKeywords!.length <= 400);
+
+  // Absürt uzunlukta tek etiket (200KB) tamamen atılır — çıktıya hiç girmez
+  const absurt = "A".repeat(200_000);
+  const f2 = extractPageFacts(`<html><head><title>${absurt}</title><meta name="description" content="${absurt}"></head></html>`);
+  assert.ok((f2.title?.length ?? 0) <= 400);
+  assert.equal(f2.metaDescription, undefined, "8KB üstü etiket atlanmalı");
+});
+
+test("JSON-LD: @graph binlerce öğeyle şişiremez, bozuk öğe bloğu düşürmez", () => {
+  const cok = JSON.stringify({ "@graph": Array.from({ length: 5000 }, (_, i) => ({ "@type": "Product", name: "U" + i })) });
+  const f = extractPageFacts(`<script type="application/ld+json">${cok}</script>`);
+  assert.ok(f.jsonLd.length <= 20, `girdi sayısı ${f.jsonLd.length}`);
+
+  // Dizide null varken geçerli öğeler KAYBOLMAMALI (eskiden tüm blok düşüyordu)
+  const f2 = extractPageFacts(
+    `<script type="application/ld+json">[null,{"@type":"Product","name":"Gecerli Urun"}]</script>`
+  );
+  assert.equal(f2.jsonLd.length, 1);
+  assert.match(f2.jsonLd[0], /Gecerli Urun/);
+
+  // offers DİZİ olduğunda fiyat kaybolmamalı
+  const f3 = extractPageFacts(
+    `<script type="application/ld+json">{"@type":"Product","name":"X","offers":[{"price":"99","priceCurrency":"TRY"}]}</script>`
+  );
+  assert.match(f3.jsonLd[0], /99/);
+  assert.match(f3.jsonLd[0], /TRY/);
+});
+
+test("Türkçe karakterler indeks hizasını bozmaz (İ → i+nokta tuzağı)", () => {
+  // toLowerCase() 'İ'yi İKİ koda açar; indeks tabanlı dilimleme kayar ve
+  // kapanış etiketinin '<' karakteri içeriğe sızardı (canlıda yakalandı).
+  const f = extractPageFacts(
+    `<html lang="tr"><head><title>AnimeRank | Türkiye'nin İlk Platformu — Erken Erişim</title></head>
+     <body><h1>İSTANBUL ŞİŞLİ ÖĞÜT</h1><h2>ĞÜŞİÖÇ</h2></body></html>`
+  );
+  assert.equal(f.title, "AnimeRank | Türkiye'nin İlk Platformu — Erken Erişim");
+  assert.doesNotMatch(f.title!, /[<>]/, "kapanış etiketi içeriğe sızmamalı");
+  assert.deepEqual(f.h1, ["İSTANBUL ŞİŞLİ ÖĞÜT"]);
+  assert.deepEqual(f.h2, ["ĞÜŞİÖÇ"]);
+  assert.equal(f.lang, "tr");
+});
+
+test("<a> sınırı: <article> bir bağlantı sanılmaz", () => {
+  const f = extractPageFacts(`<nav><a href="/x">Gercek Link</a><article>Makale</article></nav>`);
+  assert.deepEqual(f.navTexts, ["Gercek Link"]);
+});
+
 test("validateAnalyzeUrl port kısıtı: ayrıcalıklı portlar reddedilir", () => {
   assert.match(validateAnalyzeUrl("http://example.com:25/")!, /25 portu/); // SMTP
   assert.match(validateAnalyzeUrl("http://example.com:22/")!, /22 portu/); // SSH

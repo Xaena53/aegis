@@ -1,13 +1,23 @@
-/** Saf yardımcılar — dış bağımlılık yok, birim testleri test/ altında. */
+/** Yardımcılar — birim testleri test/ altında. */
+import { errors as adsErrors } from "google-ads-api";
 
 /** customerId: tireli/tiresiz kabul eder ("123-456-7890" → "1234567890") */
 export function normalizeCustomerId(id: string): string {
   return id.replace(/[^0-9]/g, "");
 }
 
-/** ID alanları sadece rakam olmalı (GAQL'e ham gömüldükleri için). */
+/** ID alanları sadece rakam olmalı (GAQL'e ve kaynak adlarına gömüldükleri için). */
 export function invalidId(label: string, v: string): string | null {
   return /^\d+$/.test(v.trim()) ? null : `Geçersiz ${label}: '${v}' — sadece rakamlardan oluşmalı.`;
+}
+
+/**
+ * Doğrulanmış ID'yi temizlenmiş haliyle döner. invalidId trim'lenmiş değeri
+ * doğruladığı için kaynak adlarında da AYNI temiz değer kullanılmalı — aksi
+ * halde " 123" doğrulamayı geçip "adGroups/ 123" gibi bozuk kaynak adı üretir.
+ */
+export function cleanId(v: string): string {
+  return v.trim();
 }
 
 /**
@@ -50,9 +60,46 @@ export function toMicrosInt(amount: number): number {
   return Math.round(amount * 1_000_000);
 }
 
-/** LIMIT'siz GAQL tüm sayfaları belleğe çeker — yoksa sona LIMIT ekle. */
+/**
+ * GAQL normalizasyonu — TÜM sorgular API'ye gitmeden buradan geçmeli.
+ *
+ * KRİTİK: google-ads-api istemcisi sorguyu regex ile ayrıştırıp hangi alanların
+ * satırlara yazılacağını belirler ve tek `\n` karakterlerini sıkıştırmaz. Çok
+ * satırlı bir sorguda SELECT listesinin SON alanı "cost_microsfromcampaign..."
+ * gibi bozuk bir isme dönüşür ve değeri SESSİZCE null gelir. Bir ajan bunu
+ * "harcama yok" sanıp bütçe artırabilir. Tüm boşlukları tek boşluğa indirmek
+ * bu sınıf hatayı kökünden keser.
+ */
+export function normalizeGaql(query: string): string {
+  return query.replace(/\s+/g, " ").trim();
+}
+
+/** Metin sabitlerinin İÇİNİ maskeler (uzunluk korunur) — anahtar sözcük araması yanılmasın. */
+function maskGaqlStrings(q: string): string {
+  return q.replace(/'(?:[^'\\]|\\.)*'/g, (m) => `'${"x".repeat(Math.max(0, m.length - 2))}'`);
+}
+
+/**
+ * LIMIT'i garanti eder VE tavanı dayatır. LIMIT'siz sorgu tüm sayfaları belleğe
+ * çeker; kullanıcının verdiği devasa LIMIT de aynı sonucu doğurur (paylaşılan
+ * süreçte OOM → tüm kiracılar düşer), bu yüzden mevcut LIMIT de kırpılır.
+ * PARAMETERS yan tümcesi GAQL'de LIMIT'ten SONRA gelmek zorundadır.
+ */
 export function ensureGaqlLimit(query: string, limit: number): string {
-  return /\bLIMIT\s+\d+/i.test(query) ? query : `${query.trim()} LIMIT ${limit}`;
+  const q = normalizeGaql(query);
+  const masked = maskGaqlStrings(q); // aynı uzunlukta
+  const pIdx = masked.search(/\bPARAMETERS\b/i);
+  const bodyEnd = pIdx >= 0 ? pIdx : q.length;
+  const body = q.slice(0, bodyEnd).trimEnd();
+  const maskedBody = masked.slice(0, bodyEnd).trimEnd();
+  const tail = pIdx >= 0 ? ` ${q.slice(pIdx).trim()}` : "";
+
+  const m = /\bLIMIT\s+(\d+)$/i.exec(maskedBody);
+  if (m) {
+    if (Number(m[1]) <= limit) return body + tail;
+    return `${body.slice(0, m.index).trimEnd()} LIMIT ${limit}${tail}`;
+  }
+  return `${body} LIMIT ${limit}${tail}`;
 }
 
 /** Bütçe kelepçesi: tavanı aşan/geçersiz istekler için ret mesajı, geçerliyse null. */
@@ -128,13 +175,27 @@ const ERROR_HINTS: Array<[RegExp, () => string]> = [
     "İpucu: müşteri ID yanlış ya da hesap etkin değil — list_accounts ile doğrula."],
 ];
 
+/**
+ * Sayısal hata kodunu okunur enum adına çevirir.
+ * Google gRPC yolunda `error_code: { authorization_error: 24 }` gibi SAYI döner;
+ * ham sayı hem kullanıcıya anlamsızdır hem de ad tabanlı ipucu eşleşmesini
+ * tamamen ölü bırakır. `authorization_error` → AuthorizationErrorEnum.AuthorizationError[24].
+ */
+function resolveErrorCodeName(key: string, value: unknown): string {
+  if (typeof value !== "number") return String(value);
+  const pascal = key.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase());
+  const table = (adsErrors as any)?.[`${pascal}Enum`]?.[pascal];
+  const name = table && typeof table === "object" ? table[value] : undefined;
+  return typeof name === "string" ? name : String(value);
+}
+
 /** Google Ads API hatalarını okunur tek satıra indirger (hata kodu adı + mesaj + ipucu). */
 export function formatAdsError(err: unknown): string {
   const e = err as any;
   const fromList = e?.errors
     ?.map((x: any) => {
       const code = x?.error_code ? Object.keys(x.error_code).filter((k) => x.error_code[k])[0] : null;
-      const codeVal = code ? `${code}=${x.error_code[code]}` : null;
+      const codeVal = code ? `${code}=${resolveErrorCodeName(code, x.error_code[code])}` : null;
       // Hangi alan? (örn. REQUIRED hatasında suçlu alanın yolu)
       const path = x?.location?.field_path_elements
         ?.map((p: any) => (p.index != null ? `${p.field_name}[${p.index}]` : p.field_name))

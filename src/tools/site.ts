@@ -68,9 +68,12 @@ async function fetchPage(url: string): Promise<{ finalUrl: string; html: string;
         continue;
       }
 
+      // Yalnız MEDYA TÜRÜ üzerinde eşleştir: tüm başlığa bakmak
+      // "application/octet-stream; note=xml" gibi parametrelerle atlatılabiliyordu.
       const contentType = res.headers.get("content-type");
-      if (contentType && !/text\/html|application\/xhtml|text\/plain|xml/i.test(contentType)) {
-        throw new Error(`HTML değil (${contentType.split(";")[0]}) — bu araç yalnız web sayfası analiz eder.`);
+      const mediaType = (contentType ?? "").split(";")[0].trim().toLowerCase();
+      if (mediaType && !/^(text\/html|application\/xhtml\+xml|text\/plain|(application|text)\/xml)$/.test(mediaType)) {
+        throw new Error(`HTML değil (${mediaType}) — bu araç yalnız web sayfası analiz eder.`);
       }
 
       const reader = res.body?.getReader();
@@ -156,8 +159,10 @@ export function registerSiteTools(server: McpServer) {
         if (f.jsonLd.length) site.push(`**Yapılandırılmış veri (JSON-LD):**\n${f.jsonLd.map((j) => `- ${j}`).join("\n")}`);
         if (f.navTexts.length) site.push(`**Menü/linkler:** ${f.navTexts.join(" · ")}`);
         if (f.visibleText) site.push("", "**Görünür metin (kısaltılmış):**", f.visibleText);
-        // Sınırlayıcı kaçışını engelle: site içeriğindeki sahte etiketleri temizle
-        lines.push(site.join("\n").replace(/<\/?site-verisi>/gi, "[etiket-temizlendi]"));
+        // Sınırlayıcı kaçışını engelle. Desen BİLEREK gevşek: clean() boşlukları
+        // sıkıştırdığı için sayfa "&lt;/site-verisi&#9;&gt;" yazarak çıktıda
+        // "</site-verisi >" üretebiliyor ve dar desen bunu kaçırıyordu.
+        lines.push(site.join("\n").replace(/<\s*\/?\s*site-verisi[^>]{0,200}>/gi, "[etiket-temizlendi]"));
 
         lines.push(
           "</site-verisi>",

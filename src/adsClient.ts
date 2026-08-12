@@ -1,6 +1,6 @@
 import { GoogleAdsApi, Customer } from "google-ads-api";
 import { loadConfig, AdsPilotConfig } from "./config.js";
-import { normalizeCustomerId, withRetry, isConcurrentModificationError } from "./util.js";
+import { normalizeCustomerId, withRetry, isConcurrentModificationError, normalizeGaql } from "./util.js";
 
 export { normalizeCustomerId, formatAdsError } from "./util.js";
 export type { AdsPilotConfig } from "./config.js";
@@ -42,9 +42,14 @@ export class AdsContext {
     return res.resource_names.map((rn: string) => rn.replace("customers/", ""));
   }
 
-  /** Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı. */
+  /**
+   * Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı.
+   * normalizeGaql ZORUNLU: çok satırlı sorgularda istemci ayrıştırıcısı
+   * SELECT listesinin son alanını bozar ve değeri sessizce null döner.
+   */
   async queryWithRetry(customerId: string, gaql: string): Promise<any[]> {
-    return withRetry(() => this.getCustomer(customerId).query(gaql));
+    const q = normalizeGaql(gaql);
+    return withRetry(() => this.getCustomer(customerId).query(q));
   }
 
   /**

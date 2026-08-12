@@ -12,6 +12,8 @@ import {
   withRetry,
   toMicrosInt,
   ensureGaqlLimit,
+  normalizeGaql,
+  cleanId,
   isConcurrentModificationError,
 } from "../src/util.js";
 
@@ -69,19 +71,48 @@ test("toMicrosInt float artığı bırakmaz", () => {
   assert.ok(Number.isInteger(toMicrosInt(123.456789)));
 });
 
-test("ensureGaqlLimit yoksa ekler, varsa dokunmaz", () => {
+test("ensureGaqlLimit: yoksa ekler, küçük LIMIT'e dokunmaz, büyüğünü KIRPAR", () => {
   assert.equal(
     ensureGaqlLimit("SELECT campaign.name FROM campaign", 100),
     "SELECT campaign.name FROM campaign LIMIT 100"
   );
+  assert.equal(ensureGaqlLimit("SELECT x FROM y LIMIT 5", 100), "SELECT x FROM y LIMIT 5");
+  // Kullanıcının verdiği devasa LIMIT süreç belleğini tüketebilir → tavana çekilir
+  assert.equal(ensureGaqlLimit("SELECT x FROM y LIMIT 500000", 100), "SELECT x FROM y LIMIT 100");
   assert.equal(
-    ensureGaqlLimit("SELECT x FROM y LIMIT 5", 100),
-    "SELECT x FROM y LIMIT 5"
+    ensureGaqlLimit("SELECT x FROM y ORDER BY x LIMIT 250", 100),
+    "SELECT x FROM y ORDER BY x LIMIT 100"
+  );
+});
+
+test("ensureGaqlLimit: PARAMETERS yan tümcesi LIMIT'ten SONRA kalmalı", () => {
+  assert.equal(
+    ensureGaqlLimit("SELECT x FROM y PARAMETERS include_drafts=true", 100),
+    "SELECT x FROM y LIMIT 100 PARAMETERS include_drafts=true"
   );
   assert.equal(
-    ensureGaqlLimit("SELECT x FROM y ORDER BY x LIMIT 250\n", 100),
-    "SELECT x FROM y ORDER BY x LIMIT 250\n"
+    ensureGaqlLimit("SELECT x FROM y LIMIT 900 PARAMETERS include_drafts=true", 100),
+    "SELECT x FROM y LIMIT 100 PARAMETERS include_drafts=true"
   );
+});
+
+test("ensureGaqlLimit: metin sabiti içindeki LIMIT yanıltmaz", () => {
+  // Tırnak içindeki "LIMIT 5" gerçek LIMIT sanılırsa sorgu sınırsız kalırdı
+  const q = "SELECT x FROM y WHERE campaign.name LIKE '%LIMIT 5%'";
+  assert.equal(ensureGaqlLimit(q, 100), `${q} LIMIT 100`);
+});
+
+test("normalizeGaql çok satırlı sorguyu tek satıra indirir (sessiz veri kaybı fix'i)", () => {
+  const multi = "SELECT campaign.name,\n  metrics.cost_micros\nFROM campaign\nWHERE x = 1";
+  assert.equal(normalizeGaql(multi), "SELECT campaign.name, metrics.cost_micros FROM campaign WHERE x = 1");
+  assert.doesNotMatch(normalizeGaql(multi), /\n/);
+  // ensureGaqlLimit de normalize etmeli (tek giriş noktası garantisi)
+  assert.doesNotMatch(ensureGaqlLimit(multi, 10), /\n/);
+});
+
+test("cleanId doğrulanan değerle kaynak adında kullanılan değeri eşitler", () => {
+  assert.equal(invalidId("x", " 123 "), null);
+  assert.equal(cleanId(" 123 "), "123"); // trim'siz kullanılsa "adGroups/ 123" olurdu
 });
 
 test("dateRange bugünü dışlar, N gün kapsar", () => {

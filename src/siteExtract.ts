@@ -44,23 +44,139 @@ function attrValue(tag: string, attr: string): string | undefined {
   return m ? (m[2] ?? m[3]) : undefined;
 }
 
+/**
+ * ── DOĞRUSAL TARAYICILAR ────────────────────────────────────────────────
+ * Buradaki hiçbir işlev regex geri izlemesine dayanmaz.
+ *
+ * NEDEN: `<[^>]+>` / `<x[^>]*>([\s\S]*?)</x>` kalıpları, sonlandırıcı hiç
+ * gelmediğinde her başlangıç konumundan sona kadar tarayıp geri izler → O(n²).
+ * Ölçüldü: 80 KB'lık `"<"` yığını 2 saniye, 1.5 MB (gövde tavanı) dakikalar
+ * sürüyordu. Node tek iş parçacıklı olduğu için bu, TEK bir istekle tüm
+ * kiracıların servisini dondurmak demekti. indexOf tabanlı tarama doğrusaldır.
+ */
+
+const MAX_TAG_LEN = 8192; // aşırı uzun tek etiket (kötü niyetli) atlanır
+
+/**
+ * SADECE ASCII küçültme — uzunluğu korur.
+ * `toLowerCase()` KULLANILAMAZ: Türkçe 'İ' (U+0130) iki koda ("i" + birleşik
+ * nokta) açılır ve dizge uzar; indeksler ham HTML ile hizasını kaybeder,
+ * dilimleme bir karakter kayar (canlıda başlığın sonuna '<' sızmasıyla yakalandı).
+ * HTML etiket adları zaten ASCII olduğu için bu dönüşüm yeterlidir.
+ */
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
+
+function isTagBoundary(code: number): boolean {
+  // '>' | ' ' | '\t' | '\n' | '\r' | '/'
+  return code === 62 || code === 32 || code === 9 || code === 10 || code === 13 || code === 47;
+}
+
+/** Açılış etiketlerini (ör. `<meta ...>`) doğrusal olarak toplar. */
+function findTags(html: string, tag: string, max: number): string[] {
+  const lower = asciiLower(html);
+  const open = `<${tag}`;
+  const out: string[] = [];
+  let i = 0;
+  while (out.length < max) {
+    const s = lower.indexOf(open, i);
+    if (s < 0) break;
+    if (!isTagBoundary(lower.charCodeAt(s + open.length))) {
+      i = s + open.length;
+      continue;
+    }
+    const gt = lower.indexOf(">", s);
+    if (gt < 0) break;
+    if (gt - s <= MAX_TAG_LEN) out.push(html.slice(s, gt + 1));
+    i = gt + 1;
+  }
+  return out;
+}
+
+/** `<tag ...>iç</tag>` bloklarını doğrusal olarak toplar. */
+function findElements(html: string, tag: string, max: number): Array<{ openTag: string; inner: string }> {
+  const lower = asciiLower(html);
+  const open = `<${tag}`;
+  const close = `</${tag}`;
+  const out: Array<{ openTag: string; inner: string }> = [];
+  let i = 0;
+  while (out.length < max) {
+    const s = lower.indexOf(open, i);
+    if (s < 0) break;
+    if (!isTagBoundary(lower.charCodeAt(s + open.length))) {
+      i = s + open.length;
+      continue;
+    }
+    const gt = lower.indexOf(">", s);
+    if (gt < 0) break;
+    const e = lower.indexOf(close, gt + 1);
+    if (e < 0) {
+      i = gt + 1;
+      continue;
+    }
+    out.push({ openTag: html.slice(s, gt + 1), inner: html.slice(gt + 1, e) });
+    i = e + close.length;
+  }
+  return out;
+}
+
+/** Başlangıç/bitiş belirteçleri arasını doğrusal olarak siler (script/style/yorum). */
+function removeBetween(html: string, startTok: string, endTok: string): string {
+  const lower = asciiLower(html);
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const s = lower.indexOf(startTok, i);
+    if (s < 0) {
+      out += html.slice(i);
+      break;
+    }
+    out += html.slice(i, s) + " ";
+    const e = lower.indexOf(endTok, s + startTok.length);
+    if (e < 0) break; // kapanmayan blok: gerisi atılır
+    i = e + endTok.length;
+  }
+  return out;
+}
+
+/** Etiketleri doğrusal olarak söker. */
+function stripTags(s: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const lt = s.indexOf("<", i);
+    if (lt < 0) {
+      out += s.slice(i);
+      break;
+    }
+    out += s.slice(i, lt) + " ";
+    const gt = s.indexOf(">", lt + 1);
+    if (gt < 0) break; // kapanmayan etiket: gerisi atılır
+    i = gt + 1;
+  }
+  return out;
+}
+
 function metaContent(html: string, attr: "name" | "property", key: string): string | undefined {
-  const tagRe = /<meta\b[^>]*>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = tagRe.exec(html))) {
-    if (attrValue(m[0], attr)?.toLowerCase() === key.toLowerCase()) {
-      return clean(attrValue(m[0], "content"));
+  for (const tag of findTags(html, "meta", 200)) {
+    if (attrValue(tag, attr)?.toLowerCase() === key.toLowerCase()) {
+      return cap(clean(attrValue(tag, "content")));
     }
   }
   return undefined;
 }
 
+/** Alan uzunluk tavanı — tek bir sayfa ajanın bağlamını şişiremesin. */
+const FIELD_MAX = 300;
+function cap(s: string | undefined, n = FIELD_MAX): string | undefined {
+  return s === undefined ? undefined : s.length > n ? s.slice(0, n) + "…" : s;
+}
+
 function headings(html: string, tag: string, max: number): string[] {
   const out: string[] = [];
-  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi");
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) && out.length < max) {
-    const t = clean(m[1].replace(/<[^>]+>/g, " "));
+  for (const el of findElements(html, tag, max)) {
+    const t = clean(stripTags(el.inner));
     if (t) out.push(t.slice(0, 200));
   }
   return out;
@@ -69,31 +185,37 @@ function headings(html: string, tag: string, max: number): string[] {
 export function extractPageFacts(rawHtml: string, opts: { textChars?: number } = {}): PageFacts {
   const textChars = opts.textChars ?? 2500;
   // Yorumlar her çıkarımdan önce sökülür — yorum içi başlık/link/metin sinyal değildir
-  const html = rawHtml.replace(/<!--[\s\S]*?-->/g, " ");
+  const html = removeBetween(rawHtml, "<!--", "-->");
 
-  const title = clean(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]);
-  const htmlTag = /<html\b[^>]*>/i.exec(html)?.[0];
-  const lang = htmlTag ? clean(attrValue(htmlTag, "lang")) : undefined;
+  const title = cap(clean(findElements(html, "title", 1)[0]?.inner));
+  const htmlTag = findTags(html, "html", 1)[0];
+  const lang = htmlTag ? cap(clean(attrValue(htmlTag, "lang")), 20) : undefined;
 
   // JSON-LD blokları (schema.org — ürün/hizmet/fiyat sinyali)
   const jsonLd: string[] = [];
-  const ldRe = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let ld: RegExpExecArray | null;
-  while ((ld = ldRe.exec(html)) && jsonLd.length < 5) {
+  const JSONLD_MAX = 20; // tek sayfa binlerce @graph öğesiyle bağlamı şişiremesin
+  for (const el of findElements(html, "script", 20)) {
+    if (jsonLd.length >= JSONLD_MAX) break;
+    const type = attrValue(el.openTag, "type") ?? "";
+    if (!/application\/ld\+json/i.test(type)) continue;
     try {
-      const parsed = JSON.parse(ld[1].trim());
-      // @graph sarmalayıcısı yaygın: {"@context":..., "@graph":[...]}
+      // CDATA sarmalayıcıları ve JS yorum önekleri yaygın
+      const raw = el.inner.replace(/^\s*(?:\/\/)?\s*<!\[CDATA\[/i, "").replace(/\]\]>\s*(?:\/\/)?\s*$/i, "").trim();
+      const parsed = JSON.parse(raw);
       const top = Array.isArray(parsed) ? parsed : [parsed];
       const items = top.flatMap((p: any) => (Array.isArray(p?.["@graph"]) ? p["@graph"] : [p]));
       for (const it of items) {
+        if (jsonLd.length >= JSONLD_MAX) break;
+        if (!it || typeof it !== "object") continue; // dizide null tüm bloğu düşürmesin
+        const offer = Array.isArray(it.offers) ? it.offers[0] : it.offers;
         const summary = {
           type: it["@type"],
-          name: it.name,
+          name: typeof it.name === "string" ? it.name.slice(0, 200) : undefined,
           description: typeof it.description === "string" ? it.description.slice(0, 200) : undefined,
-          price: it.offers?.price ?? it.offers?.lowPrice,
-          currency: it.offers?.priceCurrency,
+          price: offer?.price ?? offer?.lowPrice,
+          currency: offer?.priceCurrency,
         };
-        if (summary.type || summary.name) jsonLd.push(JSON.stringify(summary));
+        if (summary.type || summary.name) jsonLd.push(JSON.stringify(summary).slice(0, 500));
       }
     } catch {
       /* bozuk JSON-LD atla */
@@ -102,26 +224,22 @@ export function extractPageFacts(rawHtml: string, opts: { textChars?: number } =
 
   // nav/menü link metinleri — hizmet/kategori sinyali
   const navTexts: string[] = [];
-  const navBlock = /<nav\b[\s\S]*?<\/nav>/i.exec(html)?.[0] ?? html;
-  const aRe = /<a[^>]*>([\s\S]*?)<\/a>/gi;
-  let a: RegExpExecArray | null;
+  const navBlock = findElements(html, "nav", 1)[0]?.inner ?? html;
   const seen = new Set<string>();
-  while ((a = aRe.exec(navBlock)) && navTexts.length < 30) {
-    const t = clean(a[1].replace(/<[^>]+>/g, " "));
+  for (const link of findElements(navBlock, "a", 200)) {
+    if (navTexts.length >= 30) break;
+    const t = clean(stripTags(link.inner));
     if (t && t.length >= 2 && t.length <= 60 && !seen.has(t.toLowerCase())) {
       seen.add(t.toLowerCase());
       navTexts.push(t);
     }
   }
 
-  // Görünür metin: script/style/nav dışı, etiketler sökülür
-  const visible = clean(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-  );
+  // Görünür metin: script/style/noscript dışı, etiketler sökülür (hepsi doğrusal)
+  let body = removeBetween(html, "<script", "</script>");
+  body = removeBetween(body, "<style", "</style>");
+  body = removeBetween(body, "<noscript", "</noscript>");
+  const visible = clean(stripTags(body));
 
   return {
     title,
