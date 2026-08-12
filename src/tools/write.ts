@@ -81,8 +81,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "create_search_campaign",
     {
+      title: "Arama kampanyası kur (taslak)",
       description:
-        "Yeni bir Arama kampanyası oluşturur (bütçe + kampanya + ülke hedefleme + reklam grubu + anahtar kelimeler). GÜVENLİK: kampanya her zaman PAUSED (duraklatılmış) oluşturulur; yayına almak için kullanıcı onayı sonrası set_campaign_status kullanılır.",
+        "Yeni Arama kampanyası oluşturur: bütçe + kampanya + ülke hedefi + reklam grubu + anahtar kelimeler, tek atomik işlemde. " +
+        "KULLAN: sıfırdan yeni kampanya kurarken. " +
+        "KULLANMA: var olan kampanyaya kelime/reklam eklemek için (add_keywords, create_responsive_search_ad). " +
+        "GÜVENLİK: kampanya HER ZAMAN duraklatılmış (PAUSED) doğar — bu araç asla harcama başlatmaz. " +
+        "SONRAKİ ADIM: create_responsive_search_ad ile reklam metni ekle, sonra kullanıcıya sor; yayına alma ayrı ve onaylıdır.",
       annotations: WRITE_SAFE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
@@ -210,8 +215,12 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "create_responsive_search_ad",
     {
+      title: "Reklam metni ekle (RSA)",
       description:
-        "Bir reklam grubuna Duyarlı Arama Ağı Reklamı (RSA) ekler. En az 3 başlık (30 karakter) ve 2 açıklama (90 karakter) gerekir; başlık/açıklamalar birbirinden farklı olmalı.",
+        "Reklam grubuna Duyarlı Arama Ağı Reklamı ekler. En az 3 FARKLI başlık (≤30 karakter) ve 2 FARKLI açıklama (≤90 karakter) gerekir. " +
+        "KULLAN: kampanya taslağı kurulduktan hemen sonra — reklamsız kampanya yayına alınamaz. " +
+        "GÜVENLİK: kampanya PAUSED ise serbesttir; kampanya ZATEN YAYINDAYSA kullanıcı onayı istenir (reklam anında gösterime girer). " +
+        "İPUCU: karakter sınırlarını yazmadan önce SAYARAK doğrula; Google kırpmaz, reddeder.",
       annotations: WRITE_SAFE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
@@ -277,8 +286,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "update_campaign_budget",
     {
+      title: "Günlük bütçeyi değiştir",
       description:
-        "Bir kampanyanın günlük bütçesini günceller. Güvenlik tavanı (ADSPILOT_MAX_DAILY_BUDGET) üzerindeki istekler ve paylaşımlı bütçeler reddedilir.",
+        "Kampanyanın günlük bütçesini günceller. " +
+        "KULLAN: harcamayı kısmak ya da kullanıcının istediği artışı uygulamak için. " +
+        "GÜVENLİK: AZALTMA serbesttir; ARTIŞ kullanıcı onayı ister. Hesabın güvenlik tavanı üzerindeki istekler ve " +
+        "birden çok kampanyanın paylaştığı bütçeler reddedilir. " +
+        "DİKKAT: tavanı kendi başına aşmaya çalışma — reddedilirse kullanıcıya bildir, tekrar denemeyi bırak.",
       annotations: WRITE_DESTRUCTIVE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
@@ -348,7 +362,12 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "add_keywords",
     {
-      description: "Mevcut bir reklam grubuna anahtar kelime ekler.",
+      title: "Reklam grubuna kelime ekle",
+      description:
+        "Mevcut bir reklam grubuna anahtar kelime (ya da negative=true ile negatif kelime) ekler. " +
+        "KULLAN: tek reklam grubunu kapsayan eklemeler için. " +
+        "KULLANMA: negatif kelimeyi TÜM kampanyaya uygulamak istiyorsan — o add_campaign_negative_keywords'tür ve genelde doğrusu odur. " +
+        "GÜVENLİK: negatif kelime harcamayı AZALTTIĞI için onay istemez; pozitif kelime canlı kampanyada onay ister.",
       annotations: WRITE_SAFE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
@@ -407,8 +426,12 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "add_campaign_negative_keywords",
     {
+      title: "Kampanya negatif kelimeleri",
       description:
-        "KAMPANYA seviyesinde negatif anahtar kelime ekler (kampanyadaki tüm reklam gruplarını kapsar). Boşa harcamayı kesmenin ana aracı — reklam-grubu seviyesi için add_keywords(negative=true).",
+        "KAMPANYA seviyesinde negatif anahtar kelime ekler — kampanyadaki tüm reklam gruplarını kapsar. " +
+        "KULLAN: boşa harcamayı kesmenin ANA aracı; search_terms_report'ta bulduğun alakasız terimleri buraya ekle. " +
+        "GÜVENLİK: harcamayı azalttığı için onay istemez, güvenle çağırabilirsin. " +
+        "DİKKAT: eklemeden önce kullanıcıya listeyi göster — yanlış negatif kelime gerçek müşteriyi de engeller.",
       annotations: WRITE_SAFE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
@@ -453,8 +476,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "set_campaign_status",
     {
+      title: "Yayına al / duraklat",
       description:
-        "Kampanyayı yayına alır (ENABLED) veya duraklatır (PAUSED). GÜVENLİK: ENABLED yapmak gerçek para harcatır — yalnızca kullanıcı bu konuşmada açıkça onay verdiyse confirm=true gönder.",
+        "Kampanyayı yayına alır (ENABLED) ya da duraklatır (PAUSED). " +
+        "KULLAN — PAUSED: harcamayı acilen durdurmak için, onaysız ve serbesttir. " +
+        "KULLAN — ENABLED: YALNIZCA kullanıcı bu konuşmada açıkça 'yayına al' dediyse. " +
+        "GÜVENLİK: yayına alma gerçek para harcatır; sunucu kullanıcıya doğrudan sorar ve onay alınmadan uygulamaz. " +
+        "Bütçesi hesabın tavanını aşan ya da yayınlanabilir reklamı olmayan kampanya yayına alınamaz.",
       annotations: WRITE_DESTRUCTIVE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),

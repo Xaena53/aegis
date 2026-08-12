@@ -295,6 +295,54 @@ test("okuma araçlarının hiçbiri yazma yapmaz", async () => {
   assert.equal(rec.mutations.length, 0);
 });
 
+/**
+ * Q6 — AJAN ERGONOMİSİ SÖZLEŞMESİ.
+ * Bir MCP'nin kalitesi, LLM'in doğru aracı doğru argümanla seçme oranıdır.
+ * Bu testler açıklamaların sessizce fakirleşmesini engeller.
+ */
+test("her aracın başlığı ve yeterince açıklayıcı bir tarifi var", async () => {
+  const { ctx } = sahteContext();
+  const c = await baglanti(ctx);
+  const { tools }: any = await c.listTools();
+  for (const t of tools) {
+    assert.ok(t.title, `${t.name}: başlık yok`);
+    assert.ok(t.description.length >= 120, `${t.name}: açıklama çok kısa (${t.description.length})`);
+    assert.match(t.description, /KULLAN:|KULLAN —/, `${t.name}: 'ne zaman kullan' yönlendirmesi yok`);
+  }
+});
+
+test("karıştırılması kolay araç çiftleri birbirine YÖNLENDİRİR", async () => {
+  const { ctx } = sahteContext();
+  const c = await baglanti(ctx);
+  const { tools }: any = await c.listTools();
+  const bul = (n: string) => tools.find((t: any) => t.name === n).description;
+
+  // Arama terimi ≠ anahtar kelime: en sık yapılan kavram hatası
+  assert.match(bul("keyword_performance"), /search_terms_report/);
+  assert.match(bul("search_terms_report"), /keyword_performance/);
+  // Reklam grubu negatifi yerine genelde kampanya negatifi doğrudur
+  assert.match(bul("add_keywords"), /add_campaign_negative_keywords/);
+  // Hazır rapor varken ham sorgu yazılmasın
+  assert.match(bul("run_gaql"), /campaign_performance/);
+  // Kampanya kurmakla mevcut kampanyaya ekleme karışmasın
+  assert.match(bul("create_search_campaign"), /add_keywords|create_responsive_search_ad/);
+});
+
+test("para harcatan araçlar açıklamalarında güvenlik kuralını taşır", async () => {
+  const { ctx } = sahteContext();
+  const c = await baglanti(ctx);
+  const { tools }: any = await c.listTools();
+  const bul = (n: string) => tools.find((t: any) => t.name === n).description;
+
+  assert.match(bul("set_campaign_status"), /onay/i);
+  assert.match(bul("update_campaign_budget"), /AZALTMA serbest|ARTIŞ kullanıcı onayı/);
+  assert.match(bul("create_search_campaign"), /PAUSED|duraklatılmış/);
+  // Negatif kelimenin onaysız serbest olduğu ajana açıkça söylenmeli
+  assert.match(bul("add_campaign_negative_keywords"), /onay istemez/);
+  // Site içeriği güvenilmez uyarısı araç açıklamasında da bulunmalı
+  assert.match(bul("analyze_site"), /GÜVENİLMEZ/);
+});
+
 test("okuma araçları readOnlyHint, yazma araçları destructiveHint bildirir", async () => {
   const { ctx } = sahteContext();
   const c = await baglanti(ctx);

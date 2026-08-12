@@ -114,8 +114,12 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "list_accounts",
     {
+      title: "Hesapları listele",
       description:
-        "Bağlı Google hesabının erişebildiği tüm Google Ads müşteri hesaplarını (customer ID) listeler; MCC (yönetici) hesapların alt hesapları da gösterilir. Diğer araçlara vereceğin customerId'yi buradan seç.",
+        "Erişilebilen tüm Google Ads hesaplarını (MCC alt hesapları dahil) listeler. " +
+        "KULLAN: başka bir araca vereceğin customerId'yi bilmiyorsan İLK bunu çağır. " +
+        "KULLANMA: kimliği zaten biliyorsan tekrar çağırma. " +
+        "DİKKAT: MCC (yönetici) hesabında kampanya OLUŞTURULAMAZ — 'reklam hesabı' olanı seç.",
       annotations: READ_ANNOTATIONS,
       outputSchema: HESAP_SEMASI,
     },
@@ -196,8 +200,13 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "run_gaql",
     {
+      title: "Ham GAQL sorgusu",
       description:
-        "Bir hesapta ham GAQL (Google Ads Query Language) sorgusu çalıştırır ve JSON satırları döner. Esnek raporlama için kullan; hazır özet için campaign_performance aracını tercih et.",
+        "Serbest GAQL sorgusu çalıştırır (yalnız okuma). " +
+        "KULLAN: hazır raporların kapsamadığı bir veri gerektiğinde (reklam metinleri, negatif kelimeler, coğrafi hedefler gibi). " +
+        "KULLANMA: kampanya/kelime/arama terimi performansı için — bunların hazır ve daha ucuz araçları var " +
+        "(campaign_performance, keyword_performance, search_terms_report). " +
+        "İPUCU: alan adı uydurma; 'adspilot://gaql-sema' kaynağında doğru alan listesi ve örnekler var. Sorguyu TEK SATIR yaz.",
       annotations: READ_ANNOTATIONS,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID (örn. 1234567890)"),
@@ -238,8 +247,12 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "campaign_performance",
     {
+      title: "Kampanya performansı",
       description:
-        "Hesaptaki kampanyaların son N gündeki performans özetini verir: maliyet, tıklama, gösterim, dönüşüm, CTR, ort. TBM. Hızlı durum fotoğrafı için ilk başvurulacak araç.",
+        "Kampanyaların son N günkü maliyet, tıklama, gösterim, dönüşüm, CTR ve ortalama TBM değerlerini verir. " +
+        "KULLAN: 'nasıl gidiyor', 'ne kadar harcadım', 'hangi kampanya çalışıyor' türü her soruda İLK bunu çağır. " +
+        "KULLANMA: hangi ARAMALARIN para yaktığını bulmak için (search_terms_report), kelime bazlı analiz için (keyword_performance). " +
+        "DİKKAT: bugün dahil DEĞİLDİR (kısmi veri yanıltmasın); yeni yayına alınan kampanya ilk gün burada görünmez.",
       annotations: READ_ANNOTATIONS,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
@@ -301,8 +314,13 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "search_terms_report",
     {
+      title: "Arama terimleri (boşa harcama avı)",
       description:
-        "Reklamları GERÇEKTE tetikleyen arama terimlerini listeler (kullanıcıların yazdığı sorgular — anahtar kelimelerden farklıdır). Tıklama alıp dönüşüm getirmeyen terimleri 'boşa harcama adayı' olarak işaretler. Optimizasyon döngüsü: bu raporu incele → kullanıcıya negatif kelime önerilerini onaylat → add_campaign_negative_keywords ile uygula.",
+        "Reklamları GERÇEKTE tetikleyen arama sorgularını listeler ve dönüşüm getirmeyenleri 'boşa harcama adayı' işaretler. " +
+        "KULLAN: 'para nereye gidiyor', 'israfı bul', 'negatif kelime öner' türü isteklerde. " +
+        "KULLANMA: kendi anahtar kelimelerinin performansı için (keyword_performance) — arama terimi ile anahtar kelime AYNI ŞEY DEĞİLDİR. " +
+        "DÖNGÜ: bu rapor → alakasızları seç → kullanıcıya onaylat → add_campaign_negative_keywords. " +
+        "DİKKAT: dönüşümsüz olmak tek başına 'alakasız' demek değildir; düşük hacimli terimleri aceleyle dışlama.",
       annotations: READ_ANNOTATIONS,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
@@ -396,8 +414,12 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
   server.registerTool(
     "keyword_performance",
     {
+      title: "Anahtar kelime performansı",
       description:
-        "Bir kampanyanın (veya tüm hesabın) anahtar kelime bazlı performansını listeler. Boşa harcanan kelimeleri ve kazananları tespit etmek için kullan.",
+        "SENİN EKLEDİĞİN anahtar kelimelerin performansını listeler (maliyet, tıklama, dönüşüm). " +
+        "KULLAN: hangi kelimenin kazandırdığını/kaybettirdiğini, ölü kelimeleri ve teklif dağılımını incelerken. " +
+        "KULLANMA: kullanıcıların yazdığı GERÇEK aramaları görmek için — o search_terms_report'tur. " +
+        "İPUCU: kampanya bazında daraltmak için campaignId ver.",
       annotations: READ_ANNOTATIONS,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
