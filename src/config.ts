@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Environment parsing that fails safe.
+ *
+ * Flags and numbers are validated rather than coerced: an unrecognised flag value is
+ * treated as off, and an empty numeric variable falls back to its default instead of
+ * becoming zero.
+ */
 import { config as loadDotenv } from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

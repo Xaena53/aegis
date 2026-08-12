@@ -36,10 +36,9 @@ const PORT = parseNumEnv("PORT", process.env.PORT, 8787);
 const PUBLIC_URL = process.env.ADSPILOT_PUBLIC_URL?.trim() || `http://localhost:${PORT}`;
 
 /**
- * BAŞLANGIÇTA HIZLI BAŞARISIZLIK. Eskiden eksik yapılandırma yalnız ilk
- * kullanımda patlıyordu: sunucu ayağa kalkıyor, /health {ok:true} diyor,
- * monitör yeşil yanıyor ve hata ancak ilk gerçek kullanıcı Google'dan
- * dönerken görünüyordu. Bozuk deploy sessiz kalmamalı.
+ * Fail fast at startup. Configuration errors must surface before the process
+ * reports itself healthy — otherwise /health returns ok, monitoring goes green, and
+ * the first real user is the one who discovers the deployment is broken.
  */
 function validateHostedEnv(): void {
   const eksik: string[] = [];

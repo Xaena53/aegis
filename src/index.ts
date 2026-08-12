@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * stdio entry point.
+ *
+ * Single-user mode: credentials come from .env and the process speaks MCP over
+ * stdin/stdout. No sessions, no database, no auth layer — the operator owns the
+ * machine and the credentials.
+ */
 /*
  * AdsPilot — Google Ads MCP sunucusu
  * Copyright (C) 2026 Xaena53 (github.com/Xaena53) ve AdsPilot katkıcıları

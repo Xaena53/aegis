@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Server assembly.
+ *
+ * Builds one MCP server instance from a context provider. In hosted mode this runs
+ * once per session, which is what keeps tenants isolated: the tools registered here
+ * only ever see the context they are handed, never global state.
+ */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerReadTools } from "./tools/read.js";
 import { registerWriteTools } from "./tools/write.js";

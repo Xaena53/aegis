@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * HTML extraction and network-safety predicates.
+ *
+ * All scanning is linear (indexOf, not backtracking regular expressions) so a hostile
+ * page cannot stall the process. Case-insensitive matching uses ASCII-only lowering to
+ * keep string indices aligned for non-ASCII text.
+ */
 /** Saf HTML çıkarım yardımcıları — bağımlılıksız, birim testli. */
 
 export interface PageFacts {

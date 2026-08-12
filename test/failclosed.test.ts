@@ -5,12 +5,12 @@ import { sahteContext, baglanti, cagir } from "./helpers/harness.js";
 import { normalizeGaql, ensureGaqlLimit, formatAdsError } from "../src/util.js";
 
 /**
- * KAPALI ARIZA REGRESYONLARI
+ * Fail-closed regressions.
  *
- * Denetimde bulunan sınıf: para kapıları BELİRSİZLİKTE sessizce AÇILIYORDU.
- * Sorgu boş dönerse, alan eksikse ya da beklenmeyen tipte gelirse "tehlike yok"
- * varsayılıp onay atlanıyordu. Bu dosya, kapıların belirsizlikte KAPANDIĞINI
- * kilitler — çünkü bu davranış hiçbir testle korunmuyordu.
+ * A spend gate must not open when the situation is unclear. These tests pin that
+ * behaviour for every "unknown" shape the API can produce: an empty result, a missing
+ * status field, an unexpected type, an unreadable budget. Each one must lead to an
+ * approval prompt rather than a silent pass.
  */
 
 const M = "1234567890";

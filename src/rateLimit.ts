@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
+ * Per-user sliding-window rate limiter.
+ *
+ * All hosted users share one Google developer token, and the daily operation quota is
+ * enforced per token rather than per account. Without this limiter a single heavy user
+ * can exhaust the quota for everyone.
+ */
+/**
  * Kullanıcı başına kayan pencere sayacı.
  *
  * Neden gerekli: hosted modda TÜM kullanıcılar TEK developer token'ı paylaşır.

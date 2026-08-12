@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Human-in-the-loop approval gate.
+ *
+ * Used by every path that can increase spend. When the client supports MCP
+ * elicitation the server asks the human directly and the agent-supplied confirm flag
+ * is ignored; otherwise it falls back to that flag for compatibility. Every failure
+ * mode — declined, cancelled, timed out, transport error — resolves to "do not
+ * execute".
+ */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 /**
- * ONAY KATMANI — Faz Q / Q1
+ * Rule: approval must be verifiable by the server, not asserted by the agent.
  *
- * Sorun: `confirm=true` bir *şeref sözü*ydü. Araç "önce kullanıcıya sor" diyor
- * ve ajanın gerçekten sorduğuna GÜVENİYORDU. Özensiz ya da kötü niyetli bir
- * ajan aynı çağrıyı `confirm=true` ile tekrarlayıp insana hiç sormadan gerçek
- * para harcatabilirdi; sunucunun bunu doğrulama yolu yoktu.
+ * A confirm flag alone is a claim — the agent decides whether a human was ever
+ * consulted, and nothing checks it. MCP elicitation lets the server ask the human
+ * through the protocol, so consent becomes a fact rather than a claim.
  *
- * Çözüm: MCP `elicitation` ile SUNUCU, istemci üzerinden DOĞRUDAN insana sorar.
- * Onay artık ajanın anlattığı bir hikâye değil, protokol düzeyinde bir olgu.
- *
- * Kritik kural: elicitation mevcutsa ajanın `confirm` değeri DİKKATE ALINMAZ.
- * Aksi halde güçlü kapı, zayıf kapının yanında anlamsız kalırdı.
+ * When elicitation is available the agent confirm value is deliberately ignored;
+ * honouring both would make the strong gate meaningless next to the weak one.
  */
 
 export type OnayKanali = "insan" | "ajan";

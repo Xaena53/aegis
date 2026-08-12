@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * MCP resources: browsable data that costs no tool call.
+ *
+ * The limits resource is intentionally read-only. It reports the guardrails in force so
+ * the agent can explain them, but changing them requires a human browser session.
+ */
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums } from "google-ads-api";
 import { formatAdsError, type ContextProvider } from "./adsClient.js";
 
 
 /**
- * RESOURCES — Faz Q / Q4
+ * Resources let a client read data without spending a tool call, which makes the
+ * account discoverable and keeps repeated lookups cheap.
  *
- * Resources, istemcinin veriyi ARAÇ ÇAĞIRMADAN okumasını sağlar: keşif
- * kolaylaşır, tekrar eden sorgular için token harcanmaz ve kullanıcı neyin
- * mevcut olduğunu görebilir.
- *
- * Buradaki en önemli kaynak `.../limits`: denetimde çıkan boşluktu — kullanıcı
- * hangi kelepçelerle çalıştığını (bütçe tavanı, yazma izni) hiçbir yerden
- * göremiyordu. Not: bu kaynak SALT OKUMADIR; ajan buradan limit değiştiremez.
+ * The limits resource is the guardrail report: it tells the agent (and through it,
+ * the user) which restrictions are in force. It is strictly read-only — changing a
+ * limit requires a human browser session.
  */
 
 function json(uri: string, veri: unknown) {

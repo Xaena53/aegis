@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Google Ads access, scoped to one user.
+ *
+ * AdsContext carries a single user credentials and guardrails. Reads retry on
+ * transient errors; mutations deliberately do not, except for CONCURRENT_MODIFICATION
+ * where the API rejects the write outright and asks for a retry.
+ */
 import { GoogleAdsApi, Customer } from "google-ads-api";
 import { loadConfig, AdsPilotConfig } from "./config.js";
 import { normalizeCustomerId, withRetry, isConcurrentModificationError, normalizeGaql } from "./util.js";
@@ -103,10 +110,9 @@ export class AdsContext {
       }
     }
     /**
-     * NEGATİF ÖNBELLEKLEME YASAK. Eskiden hata durumunda da yazılıyordu:
-     * geçici bir Google 5xx sırasında oluşan BOŞ/EKSİK liste 60 saniye
-     * boyunca sunuluyor, API düzelse bile ajan "hiç hesabın yok" diyordu.
-     * Eksik sonuç önbelleğe alınmaz — sonraki çağrı yeniden dener.
+     * Never cache a partial result. A transient API failure would otherwise pin an
+     * empty account list for the full TTL, and the agent would keep telling the user
+     * they have no Google Ads accounts long after the API recovered.
      */
     if (!hataOldu) this.hesapCache = { zaman: now, liste };
     return liste;

@@ -4,9 +4,11 @@ import { enums } from "google-ads-api";
 import { sahteContext, baglanti, cagir } from "./helpers/harness.js";
 
 /**
- * Q2 — okuma araçları. Buradaki testlerin çoğu, denetimde bulunan SESSİZ
- * hataların regresyon kilitleridir: yanlış veri döndüren bir rapor, ajanı
- * yanlış karara (ör. "harcama yok, bütçeyi artır") sürükler.
+ * Read tools.
+ *
+ * Most of these pin behaviour that fails silently when broken: a report that returns
+ * subtly wrong data leads the agent to a wrong decision ("no spend, raise the budget")
+ * with no error anywhere.
  */
 
 const MUSTERI = "1234567890";
@@ -111,7 +113,7 @@ test("search_terms_report: ADDED_EXCLUDED terimi 'zaten dışlanmış' sayılır
           {
             campaign: { name: "K" },
             ad_group: { id: 1, name: "G" },
-            // Denetimde bulunan hata: kod 'EXCLUDED_AND_ADDED' arıyordu, gerçek ad bu
+            // ADDED_EXCLUDED is the real enum name; a near-miss spelling silently disables this branch
             search_term_view: { search_term: "iş ilanı", status: enums.SearchTermTargetingStatus.ADDED_EXCLUDED },
             metrics: { cost_micros: 1_000_000, clicks: 1, impressions: 10, conversions: 0 },
           },
@@ -150,7 +152,7 @@ test("list_accounts: MCC altındaki alt hesaplar da listelenir", async () => {
   assert.match(out, /\[TEST\]/);
 });
 
-/** Q5 — yapısal çıktı: ajan metni ayrıştırmak zorunda kalmasın. */
+/** Structured output: the agent should never have to parse numbers out of prose. */
 async function yapisal(c: any, name: string, args: Record<string, unknown>) {
   const res: any = await c.callTool({ name, arguments: args });
   return res;
@@ -296,9 +298,11 @@ test("okuma araçlarının hiçbiri yazma yapmaz", async () => {
 });
 
 /**
- * Q6 — AJAN ERGONOMİSİ SÖZLEŞMESİ.
- * Bir MCP'nin kalitesi, LLM'in doğru aracı doğru argümanla seçme oranıdır.
- * Bu testler açıklamaların sessizce fakirleşmesini engeller.
+ * Tool-description contract.
+ *
+ * An MCP server quality is largely how reliably a model picks the right tool, so the
+ * descriptions are treated as an interface: these tests stop them from silently
+ * degrading.
  */
 test("her aracın başlığı ve yeterince açıklayıcı bir tarifi var", async () => {
   const { ctx } = sahteContext();

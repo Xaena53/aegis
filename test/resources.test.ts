@@ -4,9 +4,10 @@ import { enums } from "google-ads-api";
 import { sahteContext, baglanti } from "./helpers/harness.js";
 
 /**
- * Q4 — Resources. İstemcinin araç çağırmadan veri okumasını sağlar.
- * `.../limits` kaynağı denetimde bulunan boşluğu kapatır: kullanıcı hangi
- * kelepçelerle çalıştığını hiçbir yerden göremiyordu.
+ * Resources: data a client can read without spending a tool call.
+ *
+ * The limits resource is the guardrail report — it must reflect the caller live
+ * settings, never hard-coded defaults, and must stay read-only.
  */
 
 const HESAPLI: Array<[RegExp, any[]]> = [

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Write tools — the money path.
+ *
+ * Campaigns are always created paused. Anything that increases spend passes through the
+ * approval gate, and any state that cannot be verified is treated as unsafe.
+ */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums, ResourceNames } from "google-ads-api";
@@ -58,11 +64,9 @@ async function liveCampaignGuard(
      FROM ad_group WHERE ${filter} LIMIT 1`
   );
   /**
-   * KAPALI ARIZA. Bu kapı eskiden üç yolda SESSİZCE açık kalıyordu: sorgu
-   * 0 satır dönerse, durum alanı hiç gelmezse ya da sayı yerine metin gelirse
-   * "kampanya yayında değil" varsayılıp onay atlanıyordu. Para kapısının
-   * belirsizlikte açılması kabul edilemez — kampanyanın PAUSED olduğunu
-   * KANITLAYAMIYORSAK onay isteriz.
+   * Fail closed. Approval is skipped only when the campaign is provably paused.
+   * An empty result, a missing status field or an unexpected type all count as
+   * "unknown", and unknown means ask — a spend gate must not open on ambiguity.
    */
   const ham = rows.length ? rows[0]?.campaign?.status : undefined;
   const durumAdi =

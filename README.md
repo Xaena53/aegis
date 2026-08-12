@@ -1,140 +1,243 @@
-# AdsPilot — Google Ads MCP Sunucusu
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+# AdsPilot
 
-> **Lisans: [AGPL-3.0](LICENSE)** · Copyright (C) 2026 Xaena53 (github.com/Xaena53)
->
-> Her kaynak dosya `SPDX-License-Identifier: AGPL-3.0-only` taşır.
->
-> Bu yazılımı kullanabilir, değiştirebilir ve dağıtabilirsin. **Ancak** değiştirilmiş
-> bir sürümünü ağ üzerinden servis olarak sunuyorsan (AGPL §13), o servisin
-> kullanıcılarına kaynak kodu sunmakla yükümlüsün. Bu yükümlülük bu projenin
-> kendi hosted sürümü için de geçerlidir: `/source` adresi ve her sayfanın
-> altbilgisi kaynağa bağlantı verir.
+**A Google Ads MCP server that lets an AI agent manage real campaigns — without letting it spend your money unsupervised.**
 
+[![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
+[![Tests](https://img.shields.io/badge/tests-154-brightgreen.svg)](test/)
+[![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
-Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: raporlama **ve** güvenlik kapılı kampanya yönetimi. Google'ın resmi MCP'sinden farkı: **yazma erişimi** var (kampanya oluşturma, bütçe, anahtar kelime, RSA reklam), ama her tehlikeli adım korumalı:
+🇹🇷 [Türkçe README](README.tr.md)
 
-- Kampanyalar **her zaman PAUSED** oluşturulur — asla doğrudan yayına çıkmaz.
-- Ülke hedefleme **zorunlu** (`countryCodes`) — dünya-geneli kazara yayın engellenir.
-- Paylaşımlı bütçeye dokunulmaz (çok kampanyayı birden etkileme koruması).
-- Yayına alma (`ENABLED`) açık kullanıcı onayı ister (`confirm=true` kapısı).
-- Günlük bütçe tavanı: `ADSPILOT_MAX_DAILY_BUDGET` üzerindeki istekler reddedilir.
-- Tüm yazma araçları `ADSPILOT_WRITE_ENABLED=0` ile toptan kapatılabilir.
+---
 
-## Araçlar
+Connecting an LLM to an advertising account is easy. Doing it without waking up to a
+drained budget is the hard part. Most write-capable integrations solve this by asking
+the agent to confirm — which means the *agent* decides whether a human was consulted.
 
-| Araç | Tür | Ne yapar |
+AdsPilot moves that decision out of the agent's hands. When your MCP client supports
+[elicitation](https://modelcontextprotocol.io), the server asks **you** directly through
+the protocol, and the agent's own `confirm` flag is ignored entirely. Approval stops
+being a story the agent tells and becomes a fact the server can verify.
+
+## How it compares
+
+| | Google official MCP | AdsPilot |
 |---|---|---|
-| `analyze_site` | okuma | **"Siteni bağla":** URL → başlık/meta/H1-H3/JSON-LD/menü/metin çıkarımı → kelime+RSA üretimi için hammadde (kimlik bilgisi gerektirmez, SSRF korumalı) |
-| `list_accounts` | okuma | Erişilebilir müşteri hesaplarını listeler |
-| `campaign_performance` | okuma | Son N gün kampanya özeti (maliyet, tıklama, dönüşüm, CTR) |
-| `keyword_performance` | okuma | Anahtar kelime bazlı performans |
-| `search_terms_report` | okuma | Gerçek arama terimleri + boşa-harcama işaretleme (negatif önerisi akışı) |
-| `run_gaql` | okuma | Ham GAQL sorgusu |
-| `create_search_campaign` | yazma | Bütçe + kampanya (PAUSED) + ülke hedefleme (zorunlu) + reklam grubu + kelimeler |
-| `create_responsive_search_ad` | yazma | Reklam grubuna RSA ekler |
-| `add_keywords` | yazma | Anahtar kelime / negatif kelime ekler (reklam grubu) |
-| `add_campaign_negative_keywords` | yazma | Kampanya seviyesi negatif kelime (tüm reklam gruplarını kapsar) |
-| `update_campaign_budget` | yazma | Günlük bütçe günceller (tavan kelepçeli) |
-| `set_campaign_status` | yazma | Yayına al / duraklat (ENABLED onay kapılı) |
+| **Campaign writes** | ❌ read-only by design | ✅ create, budget, keywords, ads, enable/pause |
+| **Approval model** | n/a | Human asked via MCP elicitation; agent cannot fabricate consent |
+| **Fail-closed guards** | n/a | Budget ceiling, paused-by-default, mandatory geo targeting, shared-budget protection |
+| **Multi-tenant hosting** | ❌ self-host, single identity | ✅ per-user OAuth, encrypted tokens, session isolation |
+| **Site → campaign** | ❌ | ✅ `analyze_site` turns any URL into campaign raw material |
+| **License** | Apache-2.0 | AGPL-3.0 |
 
-## Kurulum
+> This table compares Google's official server, which is deliberately read-only and
+> therefore solves a different problem. Commercial alternatives (Markifact, Adzviser
+> and others) do offer writes, but their internals aren't publicly auditable, so this
+> table doesn't speculate about them. Verify current details yourself before choosing.
+
+## The safety model
+
+Every write follows the same decision path. The property worth noticing is the branch
+in bold: when elicitation is available, the human's answer is binding and the agent's
+`confirm` is never consulted.
+
+```mermaid
+flowchart TD
+    A["Agent calls a write tool"] --> B{"Writes enabled<br/>for this account?"}
+    B -- no --> R["🚫 Rejected"]
+    B -- yes --> C{"Does this action<br/>increase spend?"}
+    C -- "no — pause, budget cut,<br/>negative keywords" --> E["✅ Executed"]
+    C -- yes --> D{"Client supports<br/>elicitation?"}
+    D -- "YES" --> H["Server asks the human directly<br/>agent's confirm is ignored"]
+    D -- no --> F{"confirm = true?"}
+    H -- approved --> G
+    H -- "declined · cancelled<br/>· timeout · error" --> R
+    F -- no --> R
+    F -- yes --> G{"Budget within ceiling?<br/>Campaign state verifiable?"}
+    G -- no --> R
+    G -- yes --> E
+```
+
+Three properties are worth calling out:
+
+**Campaigns are born paused.** No tool in the system can create a campaign that is
+already serving. Going live is always a separate, approved step.
+
+**Uncertainty fails closed.** If the server cannot prove a campaign is paused — the
+query returned nothing, the status field is missing, the type is unexpected — it asks
+for approval rather than assuming safety.
+
+**The agent cannot loosen its own limits.** Budget ceiling and write permission are
+readable over MCP but writable only from a human browser session; the API key does not
+open that door.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph clients["MCP clients"]
+        CC["Claude Code"]
+        CD["Claude Desktop<br/>Cursor · others"]
+    end
+
+    subgraph server["AdsPilot server"]
+        direction TB
+        T["stdio · Streamable HTTP + Bearer"]
+        M["MCP surface<br/>12 tools · 4 resources · 5 prompts"]
+        SG["Safety gates<br/>approval · ceiling · fail-closed"]
+        AC["AdsContext<br/>one per user, refreshed per request"]
+    end
+
+    DB[("SQLite<br/>refresh tokens<br/>AES-256-GCM")]
+    GA["Google Ads API"]
+    WEB["Any website<br/>SSRF-guarded fetch"]
+
+    CC --> T
+    CD --> T
+    T --> M
+    M --> SG
+    SG --> AC
+    AC --> GA
+    AC -.credentials.-> DB
+    M --> WEB
+```
+
+Two deployment shapes share the same core:
+
+- **Local (stdio)** — one user, credentials from `.env`, zero infrastructure.
+- **Hosted (HTTP)** — many users, each connecting their own Google account via OAuth.
+  Refresh tokens are encrypted at rest, every MCP session is bound to exactly one user,
+  and that user's settings are re-read on every request — so a limit change takes effect
+  immediately, even mid-session.
+
+## Capabilities
+
+**Tools** — 12 total. "Approval" marks actions that can increase spend and therefore
+pass through the gate above.
+
+| Tool | Purpose | Approval |
+|---|---|---|
+| `list_accounts` | Accessible accounts, including MCC sub-accounts | — |
+| `campaign_performance` | Cost, clicks, conversions, CTR, avg. CPC | — |
+| `keyword_performance` | Performance of the keywords you added | — |
+| `search_terms_report` | What people actually searched; flags wasted spend | — |
+| `run_gaql` | Raw GAQL escape hatch (read-only, auto-limited) | — |
+| `analyze_site` | Extracts campaign raw material from any URL | — |
+| `create_search_campaign` | Budget + campaign + geo + ad group + keywords, atomically | born paused ⇒ no |
+| `create_responsive_search_ad` | Adds a responsive search ad to an ad group | if campaign is live |
+| `add_keywords` | Keywords or negatives at ad-group level | positives on live campaigns |
+| `add_campaign_negative_keywords` | Negatives across a whole campaign | no — reduces spend |
+| `update_campaign_budget` | Changes the daily budget | increases only |
+| `set_campaign_status` | Enable or pause | enabling only |
+
+**Resources** — browsable data that costs no tool call: `adspilot://accounts` ·
+`adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (your active
+guardrails) · `adspilot://gaql-sema` (field reference, so the agent stops inventing
+GAQL fields).
+
+**Prompts** — ready-made workflows that appear as slash commands: `/reklam-kur`
+(site → draft campaign) · `/israf-bul` (find and cut wasted spend) · `/haftalik-rapor`
+· `/kampanya-denetle` · `/guvenlik-durumu`.
+
+> The agent-facing surface (tool descriptions, prompts, error messages) is written in
+> Turkish, matching the product's initial market. The protocol, code and these docs are
+> English.
+
+## Quick start
+
+Requires **Node ≥ 22.13** — the hosted mode uses the built-in `node:sqlite`.
 
 ```bash
-npm install
-npm run build
-npm test        # 154 test: birim + entegrasyon (gerçek MCP protokolü) + davranış evalleri
+git clone https://github.com/Xaena53/google-ads-mcp.git adspilot
+cd adspilot
+npm ci && npm run build && npm test
 ```
 
-**Node 22.13+ gerekir** (hosted mod `node:sqlite` kullanır; Node 18/20'de `npm run serve` ilk import'ta çöker).
-
-Geçici API hataları (UNAVAILABLE, kota) okuma yollarında üstel geri çekilmeyle
-otomatik tekrar denenir. **Mutasyonlar ağ hatalarında retry EDİLMEZ** (çift kayıt
-riski); tek istisna `CONCURRENT_MODIFICATION` — Google bu hatada isteği açıkça
-reddeder, yazma uygulanmamıştır, bu yüzden güvenle tekrar denenir.
-
-### 1. Faz 0 — Google tarafı (bir kere yapılır)
-
-1. **MCC (yönetici) hesabı aç:** https://ads.google.com/home/tools/manager-accounts/ — developer token yalnızca MCC'den alınır.
-2. **Developer token al:** MCC > Tools & Settings > API Center. Başlangıçta **Test Access** verilir (sadece test hesaplarında çalışır). Gerçek hesaplar için **Basic Access** başvurusu yap (aynı ekrandan; kullanım amacını dürüst yaz: "kendi hesaplarımın raporlama ve yönetimi"). Onay genelde birkaç gün sürer.
-3. **Google Cloud projesi:** https://console.cloud.google.com → yeni proje → "Google Ads API"yi etkinleştir.
-4. **OAuth istemcisi:** APIs & Services > Credentials > Create Credentials > OAuth client ID > **Desktop app** (yerel stdio için doğrusu budur; hosted mod için AYRI bir **Web application** istemcisi gerekir — bkz. [deploy/README.md](deploy/README.md)). Client ID + Secret'ı al. (Consent screen'de test kullanıcısı olarak kendi Gmail'ini ekle.)
-5. `.env.example` → `.env` kopyala, değerleri doldur.
-6. **Refresh token üret:** `npm run auth` → tarayıcıda izin ver → çıkan satırı `.env`'e yapıştır.
-
-### 2. Claude Code'a bağla
+You need Google Ads API credentials: a developer token from an MCC account, a Google
+Cloud project with the Ads API enabled, and an OAuth client. Copy `.env.example` to
+`.env`, fill it in, then:
 
 ```bash
-claude mcp add adspilot -- node C:/AdsPilot/dist/index.js
+npm run auth                      # opens a browser, writes the refresh token to .env
+claude mcp add adspilot -- node /absolute/path/to/adspilot/dist/index.js
 ```
 
-veya proje kökündeki `.mcp.json` zaten kayıtlı — `C:\AdsPilot` içinde çalışırken otomatik yüklenir.
+Ask Claude *"list my Google Ads accounts"* to confirm the connection.
 
-## İki çalışma modu
+For the multi-user hosted deployment — systemd unit, nginx config, Docker image, and
+the pitfalls that would otherwise cost you an afternoon — see
+**[deploy/README.md](deploy/README.md)**.
 
-**1. Yerel (stdio)** — tek kullanıcı, kimlik `.env`'den:
+## From a URL to a campaign
+
+The flagship workflow. The server extracts *facts*, the client-side model does the
+creative work, and a human approves before anything serves.
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant A as Agent
+    participant S as AdsPilot
+    participant G as Google Ads
+
+    U->>A: /reklam-kur https://example.com
+    A->>S: analyze_site(url)
+    S-->>A: title, meta, headings, JSON-LD, nav<br/>(inside an untrusted-data block)
+    Note over A: Agent drafts keywords and<br/>ad copy from those facts
+    A->>U: Draft: budget, keywords, headlines
+    U-->>A: looks good
+    A->>S: create_search_campaign(...)
+    S->>G: budget + campaign (PAUSED) + geo + keywords
+    A->>S: create_responsive_search_ad(...)
+    A->>S: set_campaign_status(ENABLED)
+    S->>U: Approve going live?<br/>account · budget · geo targeting
+    U-->>S: approve
+    S->>G: campaign → ENABLED
+```
+
+`analyze_site` fetches arbitrary URLs, so it treats every response as hostile:
+private-network and cloud-metadata addresses are blocked at both the hostname and the
+resolved-IP level, every redirect hop is re-validated before the request is made,
+parsing is linear-time (no catastrophic backtracking), and extracted text is returned
+inside a delimited untrusted-data block with forged closing tags stripped.
+
+## Security
+
+The threat model, reporting process, and the five invariants this project holds itself
+to live in **[SECURITY.md](SECURITY.md)**. Two of them in short:
+
+- Uncertainty never resolves in favour of spending money.
+- The agent cannot raise its own budget ceiling or re-enable writes.
+
+Found a hole? Please report it privately through GitHub Security Advisories rather than
+a public issue.
+
+## Development
+
 ```bash
-claude mcp add adspilot -- node C:/AdsPilot/dist/index.js
+npm run build      # compile to dist/
+npm run typecheck  # src + tests, with noUnusedLocals
+npm test           # 154 tests
 ```
 
-**2. Hosted (HTTP)** — çok kullanıcılı, her kullanıcı kendi Google hesabını bağlar:
-```bash
-# .env'e ADSPILOT_MASTER_KEY ve ADSPILOT_PUBLIC_URL ekle, sonra:
-npm run serve
-```
-Kullanıcı `<PUBLIC_URL>/connect` sayfasından Google ile bağlanır → kendisine bir API
-anahtarı verilir → onunla bağlanır:
-```bash
-claude mcp add --transport http adspilot <PUBLIC_URL>/mcp \
-  --header "Authorization: Bearer ap_..."
-```
+Tests run a real MCP client/server pair over `InMemoryTransport` with an injected fake
+Google Ads context, so every guard is exercised through the actual protocol without
+touching a live account. The suite includes fail-closed regressions and adversarial
+scenarios that try to reach a bad outcome by every known route.
 
-Adım adım VPS kurulumu için: **[deploy/README.md](deploy/README.md)**
-(systemd unit, nginx örneği ve Dockerfile `deploy/` altında hazır).
+Design decisions and internals: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+Contributing: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-### VPS dağıtımında ZORUNLU adımlar
+## License
 
-1. **Node 22.13+** kur (apt'ın 18/20 sürümü `node:sqlite` yokluğundan çöker).
-2. **TEK instance** çalıştır. Oturumlar ve hız sınırı sayaçları süreç belleğindedir;
-   pm2 cluster / birden çok worker → istek başka worker'a düşer, `404 session_not_found`
-   döngüsü başlar ve hız sınırı worker sayısınca çarpılır.
-3. **`ADSPILOT_ALLOWED_HOSTS`** ayarla ve nginx'te `proxy_set_header Host $host;`
-   satırını UNUTMA — aksi halde upstream'e `Host: 127.0.0.1` gider, DNS rebinding
-   koruması eşleşmez ve **tüm MCP trafiği 403 alır** (teşhisi zor bir arıza).
-4. **`ADSPILOT_DB`'ye mutlak yol ver.** Boş bırakılırsa geçici bir veritabanı
-   açılır ve her yeniden başlatmada tüm kullanıcı token'ları kaybolur.
-5. `chmod 600 .env adspilot.db*` — master key ve şifreli token'lar taşırlar.
-   WAL modunda `.db-wal`/`.db-shm` yan dosyaları da yedeklenmelidir.
-6. TLS zorunlu; `ADSPILOT_PUBLIC_URL` https:// olmalı (bearer anahtarları ve
-   OAuth kodları düz HTTP'de taşınamaz).
+AGPL-3.0-only. Copyright © 2026 [Xaena53](https://github.com/Xaena53).
 
-Hosted modda **her oturum tek kullanıcıya bağlıdır**: refresh token'lar AES-256-GCM
-ile şifreli saklanır, API anahtarları yalnız hash olarak tutulur, başka kullanıcının
-oturum kimliğiyle gelen istek `403 session_owner_mismatch` ile reddedilir, bütçe
-tavanı ve yazma izni kullanıcı bazlıdır.
-
-## Güvenlik modeli
-
-Yazma zinciri her zaman şu sırayla ilerler:
-
-```
-taslak oluştur (PAUSED) → reklam metni ekle → kullanıcıya özet göster → açık onay → ENABLED
-```
-
-İstemcin MCP *elicitation* destekliyorsa onay **doğrudan insandan** alınır ve ajanın `confirm` değeri dikkate alınmaz — insan reddederse işlem yapılmaz. Desteklemeyen istemcilerde geri uyumluluk için `confirm=true` kapısı geçerlidir (bkz. [SECURITY.md](SECURITY.md), bilinen sınır).
-
-Belirsizlikte **kapalı arıza**: kampanya durumu ya da mevcut bütçe doğrulanamıyorsa onay istenir.
-
-## "Siteni bağla" akışı (Faz 2)
-
-```
-analyze_site(url) → Claude ürün/hizmeti anlar → kelime + RSA metni üretir
-  → kullanıcı onayı → create_search_campaign (PAUSED) → create_responsive_search_ad
-  → son onay → set_campaign_status(ENABLED)
-```
-
-Tasarım ilkesi: MCP sunucusu *gerçek çıkarır*, yaratıcı işi (kelime seçimi, metin yazımı)
-istemci taraftaki model yapar — böylece sunucu deterministik ve test edilebilir kalır.
-
-## Yol haritası
-
-- **Faz 3 — Hosted:** remote MCP (OAuth ile tek tık bağlantı), abonelik, Anthropic connectors dizini, Meta/TikTok genişlemesi.
+You may use, modify and redistribute this software. **If you run a modified version as
+a network service, AGPL §13 requires you to offer its source to that service's users.**
+This project honours that itself: every page footer and the `/source` endpoint link to
+the source, and the MCP `instructions` field carries it too. If you fork and deploy,
+point `ADSPILOT_SOURCE_URL` at *your* repository — the upstream default will not
+satisfy your obligation.

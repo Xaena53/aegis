@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Credential and settings storage for hosted mode.
+ *
+ * Refresh tokens are encrypted with AES-256-GCM; API keys are stored only as hashes.
+ * Tenants are keyed by Google stable subject identifier rather than email, which can
+ * change or be reassigned.
+ */
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, createCipheriv, createDecipheriv, createHash, scryptSync } from "node:crypto";
 
@@ -188,10 +195,9 @@ export class UserStore {
       throw new Error("maxDailyBudget 0'dan büyük bir sayı olmalı.");
     }
     /**
-     * TEK İŞLEM. Eskiden iki ayrı UPDATE vardı ve sıra terstiŕ: önce
-     * write_enabled (tehlikeli yarı), sonra tavan (koruyucu yarı). İkincisi
-     * SQLITE_BUSY ya da disk hatasıyla patlarsa sonuç "yazma AÇIK + tavan
-     * ESKİ/yüksek" oluyordu — yani hata güvenli olmayan tarafa düşüyordu.
+     * Both fields change in one transaction, protective value first. Applying them
+     * separately means a mid-way failure can leave writes enabled with the old, higher
+     * ceiling still in place — the failure landing on the unsafe side.
      */
     this.db.exec("BEGIN IMMEDIATE");
     try {

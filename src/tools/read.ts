@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Read-only reporting tools.
+ *
+ * Each tool returns both a human-readable summary and typed structured output, so the
+ * agent never has to parse numbers out of prose.
+ */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { formatAdsError, type ContextProvider } from "../adsClient.js";
@@ -154,7 +160,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             // MCC ise alt hesapları da ekle — listAccessibleCustomers onları DÖNDÜRMEZ
             if (c.manager) {
               // Not: status filtresi bilerek yok — test hesapları ENABLED dışı status
-              // dönebiliyor ve filtre onları gizliyordu (canlıda görüldü).
+              // return a status other than ENABLED and would be hidden by such a filter.
               const children: any[] = await ctx.queryWithRetry(
                 id,
                 `SELECT customer_client.id, customer_client.descriptive_name,
@@ -220,9 +226,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         let capped = rows.slice(0, limit ?? 100);
 
         /**
-         * Bağlam koruması artık SATIR bazlı. Eskiden JSON metni 20.000 karakterde
-         * KESİLİYORDU ve ajana GEÇERSİZ JSON gidiyordu; yapısal çıktıda bu mümkün
-         * değil — fazla satırı atmak tek doğru yol.
+         * Trim by row, never by character. Cutting the serialised text mid-value would
+         * hand the agent malformed JSON; dropping whole rows keeps the payload valid.
          */
         const CHAR_CAP = 20_000;
         let kesildi = capped.length < rows.length;

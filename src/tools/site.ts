@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Website analysis tool.
+ *
+ * Fetches arbitrary user-supplied URLs, so every response is treated as hostile:
+ * SSRF checks run per redirect hop, the body is capped, and extracted content is
+ * returned inside a delimited untrusted-data block.
+ */
 import { z } from "zod";
 import { lookup } from "node:dns/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * MCP prompts: ready-made workflows exposed as slash commands.
+ *
+ * Prompts do not replace tools; they describe the correct order and the approval steps,
+ * so the model is reminded of the rules at the start of each workflow.
+ */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { completable } from "@modelcontextprotocol/sdk/server/completable.js";
 import type { ContextProvider } from "./adsClient.js";
 
 /**
- * PROMPTS — Faz Q / Q3
+ * Prompts appear as slash commands in MCP clients.
  *
- * MCP prompts, Claude Code'da SLASH KOMUT olarak görünür. Kullanıcı ne
- * yapacağını tarif etmek zorunda kalmaz; iş akışları hazır gelir.
- *
- * Tasarım ilkesi: prompt'lar araçların YERİNE geçmez, onları doğru SIRAYLA
- * ve doğru GÜVENLİK ADIMLARIYLA kullanmayı tarif eder. Onay adımları burada
- * da açıkça yazılır — model kendi başına atlamasın.
+ * They do not replace tools — they describe the correct order and the approval
+ * steps, so safety rules are restated at the start of every workflow rather than
+ * only when a tool refuses.
  */
 
 function metin(text: string) {

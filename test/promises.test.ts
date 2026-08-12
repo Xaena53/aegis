@@ -5,13 +5,14 @@ import { enums } from "google-ads-api";
 import { sahteContext, baglanti, cagir } from "./helpers/harness.js";
 
 /**
- * VERİLEN SÖZLERİN DOĞRULANMASI
+ * Documented guarantees, executed.
  *
- * README, SECURITY.md, araç açıklamaları ve `limits` kaynağı kullanıcıya somut
- * sözler veriyor. Bu dosya her sözü ÇALIŞAN DAVRANIŞLA eşleştirir: bir söz
- * kodda karşılıksız kalırsa test kırmızıya döner.
+ * The README, SECURITY.md, the limits resource and the tool descriptions all make
+ * concrete promises to the user. Each one is mapped here to behaviour that must hold;
+ * if a promise loses its implementation, a test goes red.
  *
- * Belge ile davranışın ayrışması sessiz bir hatadır — kullanıcı yazana güvenir.
+ * Documentation drifting from behaviour is a silent failure — the user trusts what is
+ * written, and nothing else reports the gap.
  */
 
 const M = "1234567890";
@@ -22,7 +23,7 @@ const PAUSED: Array<[RegExp, any[]]> = [
   [/FROM ad_group\b/, [{ campaign: { id: 1, name: "Taslak", status: enums.CampaignStatus.PAUSED } }]],
 ];
 
-test("SÖZ: 'Kampanyalar her zaman duraklatılmış oluşturulur; hiçbir araç kendiliğinden harcama başlatmaz'", async () => {
+test("promise: 'Kampanyalar her zaman duraklatılmış oluşturulur; hiçbir araç kendiliğinden harcama başlatmaz'", async () => {
   const { ctx, rec } = sahteContext();
   const c = await baglanti(ctx);
   await cagir(c, "create_search_campaign", {
@@ -54,7 +55,7 @@ test("SÖZ: 'Kampanyalar her zaman duraklatılmış oluşturulur; hiçbir araç 
   );
 });
 
-test("SÖZ: 'Bütçe azaltma ve negatif kelime onay gerektirmez' (harcamayı düşürür)", async () => {
+test("promise: 'Bütçe azaltma ve negatif kelime onay gerektirmez' (harcamayı düşürür)", async () => {
   const butce: Array<[RegExp, any[]]> = [
     [
       /campaign_budget\.explicitly_shared/,
@@ -83,7 +84,7 @@ test("SÖZ: 'Bütçe azaltma ve negatif kelime onay gerektirmez' (harcamayı dü
   assert.equal(d.rec.mutations.length, 1, "reklam grubu negatifi onaysız geçmeli");
 });
 
-test("SÖZ: 'Ülke hedefleme zorunlu — dünya-geneli kazara yayın engellenir'", async () => {
+test("promise: 'Ülke hedefleme zorunlu — dünya-geneli kazara yayın engellenir'", async () => {
   const { ctx, rec } = sahteContext();
   const c = await baglanti(ctx);
   const res: any = await c.callTool({
@@ -94,7 +95,7 @@ test("SÖZ: 'Ülke hedefleme zorunlu — dünya-geneli kazara yayın engellenir'
   assert.equal(rec.mutations.length, 0);
 });
 
-test("SÖZ: 'Paylaşımlı bütçeye dokunulmaz'", async () => {
+test("promise: 'Paylaşımlı bütçeye dokunulmaz'", async () => {
   const { ctx, rec } = sahteContext({
     queries: [
       [
@@ -108,7 +109,7 @@ test("SÖZ: 'Paylaşımlı bütçeye dokunulmaz'", async () => {
   assert.equal(rec.mutations.length, 0);
 });
 
-test("SÖZ: 'Yazma kapalıysa ajan yalnız rapor okuyabilir'", async () => {
+test("promise: 'Yazma kapalıysa ajan yalnız rapor okuyabilir'", async () => {
   const { ctx, rec } = sahteContext({ writeEnabled: false, queries: [[/.*/, []]] });
   const c = await baglanti(ctx);
   // Okuma çalışmalı
@@ -119,7 +120,7 @@ test("SÖZ: 'Yazma kapalıysa ajan yalnız rapor okuyabilir'", async () => {
   assert.equal(rec.mutations.length, 0);
 });
 
-test("SÖZ: 'limits kaynağındaki her kural gerçekten uygulanıyor'", async () => {
+test("promise: 'limits kaynağındaki her kural gerçekten uygulanıyor'", async () => {
   const { ctx } = sahteContext({ maxDailyBudget: 77, writeEnabled: false });
   const c = await baglanti(ctx);
   const res: any = await c.readResource({ uri: "adspilot://accounts/1466231519/limits" });
@@ -139,7 +140,7 @@ test("SÖZ: 'limits kaynağındaki her kural gerçekten uygulanıyor'", async ()
   assert.match(kurallar, /tek KAMPANYA başınadır/); // → aşağıdaki test
 });
 
-test("SÖZ dürüstlüğü: bütçe tavanı KAMPANYA başınadır, hesap toplamı DEĞİL", async () => {
+test("honesty: bütçe tavanı KAMPANYA başınadır, hesap toplamı DEĞİL", async () => {
   // Bu sınırı kaynakta açıkça yazıyoruz; davranışın da öyle olduğunu kanıtla.
   const { ctx, rec } = sahteContext({ maxDailyBudget: 100 });
   const c = await baglanti(ctx);
@@ -155,7 +156,7 @@ test("SÖZ dürüstlüğü: bütçe tavanı KAMPANYA başınadır, hesap toplam�
   assert.equal(rec.mutations.length, 3, "her biri tavanda 3 kampanya kurulabiliyor (bilinen ve BELGELENEN sınır)");
 });
 
-test("SÖZ: 'analyze_site çıktısı güvenilmez blokta sunulur ve sahte etiket temizlenir'", async () => {
+test("promise: 'analyze_site çıktısı güvenilmez blokta sunulur ve sahte etiket temizlenir'", async () => {
   // Bu sözü PROTOKOL üzerinden doğrula: eval'deki eski test sanitizasyon
   // regex'ini kendi içinde yeniden yazdığı için gerçek kodu ölçmüyordu.
   const { ctx } = sahteContext();
@@ -173,7 +174,7 @@ test("SÖZ: 'analyze_site çıktısı güvenilmez blokta sunulur ve sahte etiket
   assert.match(kaynak, /talimat/i, "ajana 'talimatları uygulama' uyarısı verilmeli");
 });
 
-test("SÖZ: 'mutasyonlar ağ hatasında retry EDİLMEZ; tek istisna CONCURRENT_MODIFICATION'", async () => {
+test("promise: 'mutasyonlar ağ hatasında retry EDİLMEZ; tek istisna CONCURRENT_MODIFICATION'", async () => {
   const { isConcurrentModificationError, isTransientAdsError } = await import("../src/util.js");
   // Ağ hatası: okuma retry'ı için geçici, mutasyon retry'ı için DEĞİL
   assert.equal(isTransientAdsError({ code: 14, message: "UNAVAILABLE" }), true);
@@ -182,7 +183,7 @@ test("SÖZ: 'mutasyonlar ağ hatasında retry EDİLMEZ; tek istisna CONCURRENT_M
   assert.equal(isConcurrentModificationError({ errors: [{ error_code: { database_error: 2 } }] }), true);
 });
 
-test("SÖZ: MCP instructions'taki kurallar araç davranışıyla tutarlı", async () => {
+test("promise: MCP instructions'taki kurallar araç davranışıyla tutarlı", async () => {
   const { ctx } = sahteContext();
   const c = await baglanti(ctx);
   const instructions = (c.getInstructions?.() ?? "") as string;
