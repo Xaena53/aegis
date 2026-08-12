@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-only
 /*
  * AdsPilot — Google Ads MCP sunucusu (hosted mod)
- * Copyright (C) 2026 AdsPilot katkıcıları
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) ve AdsPilot katkıcıları
  *
  * GNU Affero General Public License v3 altında dağıtılır — bkz. LICENSE.
  * AGPL §13 gereği bu servisin kullanıcılarına kaynak kod sunulur (/source).

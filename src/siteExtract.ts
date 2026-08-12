@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /** Saf HTML çıkarım yardımcıları — bağımlılıksız, birim testli. */
 
 export interface PageFacts {

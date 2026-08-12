@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums } from "google-ads-api";
 import { formatAdsError, type ContextProvider } from "./adsClient.js";

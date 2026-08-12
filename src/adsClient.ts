@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { GoogleAdsApi, Customer } from "google-ads-api";
 import { loadConfig, AdsPilotConfig } from "./config.js";
 import { normalizeCustomerId, withRetry, isConcurrentModificationError, normalizeGaql } from "./util.js";

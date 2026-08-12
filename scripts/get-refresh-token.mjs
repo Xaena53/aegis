@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-only
 // Google OAuth refresh token üretici.
 // Kullanım: .env içine GOOGLE_ADS_CLIENT_ID ve GOOGLE_ADS_CLIENT_SECRET yazdıktan sonra `npm run auth`.
 // Tarayıcı açılır, Google hesabınla izin verirsin, refresh token terminale yazılır.

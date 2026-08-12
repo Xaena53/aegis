@@ -1,6 +1,8 @@
 # AdsPilot — Google Ads MCP Sunucusu
 
-> **Lisans: [AGPL-3.0](LICENSE)** · Copyright (C) 2026 AdsPilot katkıcıları
+> **Lisans: [AGPL-3.0](LICENSE)** · Copyright (C) 2026 Xaena53 (github.com/Xaena53)
+>
+> Her kaynak dosya `SPDX-License-Identifier: AGPL-3.0-only` taşır.
 >
 > Bu yazılımı kullanabilir, değiştirebilir ve dağıtabilirsin. **Ancak** değiştirilmiş
 > bir sürümünü ağ üzerinden servis olarak sunuyorsan (AGPL §13), o servisin
@@ -40,7 +42,7 @@ Claude'u (veya herhangi bir MCP istemcisini) Google Ads hesabına bağlar: rapor
 ```bash
 npm install
 npm run build
-npm test        # birim testleri (saf yardımcılar: guard'lar, retry, tarih aralığı)
+npm test        # 154 test: birim + entegrasyon (gerçek MCP protokolü) + davranış evalleri
 ```
 
 **Node 22.13+ gerekir** (hosted mod `node:sqlite` kullanır; Node 18/20'de `npm run serve` ilk import'ta çöker).
@@ -55,7 +57,7 @@ reddeder, yazma uygulanmamıştır, bu yüzden güvenle tekrar denenir.
 1. **MCC (yönetici) hesabı aç:** https://ads.google.com/home/tools/manager-accounts/ — developer token yalnızca MCC'den alınır.
 2. **Developer token al:** MCC > Tools & Settings > API Center. Başlangıçta **Test Access** verilir (sadece test hesaplarında çalışır). Gerçek hesaplar için **Basic Access** başvurusu yap (aynı ekrandan; kullanım amacını dürüst yaz: "kendi hesaplarımın raporlama ve yönetimi"). Onay genelde birkaç gün sürer.
 3. **Google Cloud projesi:** https://console.cloud.google.com → yeni proje → "Google Ads API"yi etkinleştir.
-4. **OAuth istemcisi:** APIs & Services > Credentials > Create Credentials > OAuth client ID > **Desktop app**. Client ID + Secret'ı al. (Consent screen'de test kullanıcısı olarak kendi Gmail'ini ekle.)
+4. **OAuth istemcisi:** APIs & Services > Credentials > Create Credentials > OAuth client ID > **Desktop app** (yerel stdio için doğrusu budur; hosted mod için AYRI bir **Web application** istemcisi gerekir — bkz. [deploy/README.md](deploy/README.md)). Client ID + Secret'ı al. (Consent screen'de test kullanıcısı olarak kendi Gmail'ini ekle.)
 5. `.env.example` → `.env` kopyala, değerleri doldur.
 6. **Refresh token üret:** `npm run auth` → tarayıcıda izin ver → çıkan satırı `.env`'e yapıştır.
 
@@ -118,7 +120,9 @@ Yazma zinciri her zaman şu sırayla ilerler:
 taslak oluştur (PAUSED) → reklam metni ekle → kullanıcıya özet göster → açık onay → ENABLED
 ```
 
-Ajan `set_campaign_status(status=ENABLED)` çağrısını `confirm=true` olmadan yapamaz; araç reddeder ve önce kullanıcıya bütçe/kelime/metin özetini göstermesini söyler.
+İstemcin MCP *elicitation* destekliyorsa onay **doğrudan insandan** alınır ve ajanın `confirm` değeri dikkate alınmaz — insan reddederse işlem yapılmaz. Desteklemeyen istemcilerde geri uyumluluk için `confirm=true` kapısı geçerlidir (bkz. [SECURITY.md](SECURITY.md), bilinen sınır).
+
+Belirsizlikte **kapalı arıza**: kampanya durumu ya da mevcut bütçe doğrulanamıyorsa onay istenir.
 
 ## "Siteni bağla" akışı (Faz 2)
 

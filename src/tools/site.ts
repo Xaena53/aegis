@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { z } from "zod";
 import { lookup } from "node:dns/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
