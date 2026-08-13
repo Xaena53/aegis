@@ -292,5 +292,6 @@ src/
   resources.ts    browsable data
   prompts.ts      slash-command workflows
 deploy/           systemd, nginx, and a step-by-step VPS guide
-docs/history/     earlier planning documents, kept for provenance
+scripts/          OAuth helper, and the live smoke test
+test/             offline suite + fake-API harness
 ```
