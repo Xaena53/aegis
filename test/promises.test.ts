@@ -38,16 +38,16 @@ test("promise: 'Kampanyalar her zaman duraklatılmış oluşturulur; hiçbir ara
   assert.equal(kampanya.status, enums.CampaignStatus.PAUSED);
 
   /**
-   * Sözün ikinci yarısı: harcamayı KAMPANYA durumu belirler. Reklam grubu ve
-   * kelimeler ENABLED doğar — bu doğrudur ve gereklidir: duraklatılmış bir
-   * kampanya içindeki ENABLED reklam grubu yayın YAPMAZ, ama kampanya onayla
-   * açıldığı anda çalışır hâlde olmalıdır. Kritik olan tek şey, kurulum
-   * akışının hiçbir KAMPANYA'yı yayına almamasıdır.
+   * The second half of the promise: spending is governed by the campaign status.
+   * Ad groups and keywords are created ENABLED, which is both correct and necessary —
+   * an ENABLED ad group inside a paused campaign serves nothing, yet it has to be ready
+   * to run the moment the campaign is approved. The one thing that matters is that the
+   * setup flow never enables a campaign.
    */
   const kampanyaOps = ops.filter((o) => o.entity === "campaign");
   assert.equal(kampanyaOps.length, 1);
   assert.notEqual(kampanyaOps[0].resource.status, enums.CampaignStatus.ENABLED);
-  // Ve kurulum akışı hiçbir yerde kampanya durumu GÜNCELLEMEZ
+  // And the setup flow never touches a campaign status anywhere
   assert.equal(
     rec.mutations.filter((m) => m.kind === "campaigns").length,
     0,
@@ -112,10 +112,10 @@ test("promise: 'Paylaşımlı bütçeye dokunulmaz'", async () => {
 test("promise: 'Yazma kapalıysa ajan yalnız rapor okuyabilir'", async () => {
   const { ctx, rec } = sahteContext({ writeEnabled: false, queries: [[/.*/, []]] });
   const c = await baglanti(ctx);
-  // Okuma çalışmalı
+  // Reads go through
   assert.doesNotMatch(await cagir(c, "campaign_performance", { customerId: M }), /devre dışı/);
   assert.doesNotMatch(await cagir(c, "search_terms_report", { customerId: M }), /devre dışı/);
-  // Yazma engellenmeli
+  // Writes are blocked
   assert.match(await cagir(c, "add_campaign_negative_keywords", { customerId: M, campaignId: K, keywords: ["x"] }), /devre dışı/);
   assert.equal(rec.mutations.length, 0);
 });
@@ -126,22 +126,22 @@ test("promise: 'limits kaynağındaki her kural gerçekten uygulanıyor'", async
   const res: any = await c.readResource({ uri: "adspilot://accounts/1466231519/limits" });
   const veri = JSON.parse(res.contents[0].text);
 
-  // Kaynağın bildirdiği değerler gerçek context'ten gelmeli
+  // The values the resource reports come from the live context, not from defaults
   assert.equal(veri.gunlukButceTavani, 77);
   assert.equal(veri.yazmaIzni, false);
 
-  // Her kural cümlesinin bu dosyada karşılığı olan bir testi var:
+  // Every rule sentence is backed by a test:
   const kurallar = veri.kurallar.join(" ");
-  assert.match(kurallar, /duraklatılmış/); // → 1. test
+  assert.match(kurallar, /duraklatılmış/); // → first test in this file
   assert.match(kurallar, /Yayına alma ve bütçe ARTIŞI/); // → failclosed.test.ts
   assert.match(kurallar, /YAYINDAKİ/); // → failclosed.test.ts
-  assert.match(kurallar, /negatif anahtar kelime ekleme onay gerektirmez/); // → 2. test
+  assert.match(kurallar, /negatif anahtar kelime ekleme onay gerektirmez/); // → second test in this file
   assert.match(kurallar, /ajan kendi limitini değiştiremez/); // → http.test.ts
-  assert.match(kurallar, /tek KAMPANYA başınadır/); // → aşağıdaki test
+  assert.match(kurallar, /tek KAMPANYA başınadır/); // → the test below
 });
 
 test("honesty: bütçe tavanı KAMPANYA başınadır, hesap toplamı DEĞİL", async () => {
-  // Bu sınırı kaynakta açıkça yazıyoruz; davranışın da öyle olduğunu kanıtla.
+  // The limits resource states this boundary outright, so the behaviour must match it.
   const { ctx, rec } = sahteContext({ maxDailyBudget: 100 });
   const c = await baglanti(ctx);
   for (let i = 0; i < 3; i++) {
@@ -157,18 +157,18 @@ test("honesty: bütçe tavanı KAMPANYA başınadır, hesap toplamı DEĞİL", a
 });
 
 test("promise: 'analyze_site çıktısı güvenilmez blokta sunulur ve sahte etiket temizlenir'", async () => {
-  // Bu sözü PROTOKOL üzerinden doğrula: eval'deki eski test sanitizasyon
-  // regex'ini kendi içinde yeniden yazdığı için gerçek kodu ölçmüyordu.
+  // The promise is checked over the protocol and against the shipped source. A test that
+  // re-implements the sanitization regex inline only measures its own copy of it.
   const { ctx } = sahteContext();
   const c = await baglanti(ctx);
   const kaynak = readFileSync("src/tools/site.ts", "utf8");
 
-  // Araç açıklaması sözü veriyor mu?
+  // Does the tool description make the promise?
   const { tools }: any = await c.listTools();
   const site = tools.find((t: any) => t.name === "analyze_site");
   assert.match(site.description, /GÜVENİLMEZ/);
 
-  // Kod bu sözü uyguluyor mu? (ağa çıkmadan: sanitizasyonun varlığı + blok sınırları)
+  // Does the code keep it? Checked without network access: sanitization plus block delimiters
   assert.match(kaynak, /<site-verisi>/, "güvenilmez veri bloğu açılmalı");
   assert.match(kaynak, /<\\s\*\\\/\?\\s\*site-verisi\[\^>\]\{0,200\}>/, "sahte kapanış etiketi gevşek desenle temizlenmeli");
   assert.match(kaynak, /talimat/i, "ajana 'talimatları uygulama' uyarısı verilmeli");
@@ -176,10 +176,10 @@ test("promise: 'analyze_site çıktısı güvenilmez blokta sunulur ve sahte eti
 
 test("promise: 'mutasyonlar ağ hatasında retry EDİLMEZ; tek istisna CONCURRENT_MODIFICATION'", async () => {
   const { isConcurrentModificationError, isTransientAdsError } = await import("../src/util.js");
-  // Ağ hatası: okuma retry'ı için geçici, mutasyon retry'ı için DEĞİL
+  // A network error is transient enough to retry a read, but never a mutation
   assert.equal(isTransientAdsError({ code: 14, message: "UNAVAILABLE" }), true);
   assert.equal(isConcurrentModificationError({ code: 14, message: "UNAVAILABLE" }), false);
-  // CONCURRENT_MODIFICATION: mutasyonda güvenle tekrarlanabilir
+  // CONCURRENT_MODIFICATION is the single class that is safe to replay on a mutation
   assert.equal(isConcurrentModificationError({ errors: [{ error_code: { database_error: 2 } }] }), true);
 });
 
@@ -187,11 +187,11 @@ test("promise: MCP instructions'taki kurallar araç davranışıyla tutarlı", a
   const { ctx } = sahteContext();
   const c = await baglanti(ctx);
   const instructions = (c.getInstructions?.() ?? "") as string;
-  if (!instructions) return; // istemci sürümü desteklemiyorsa atla
+  if (!instructions) return; // skip when the client version does not expose them
 
   assert.match(instructions, /DURAKLATILMIŞ/);
   assert.match(instructions, /onay/i);
   assert.match(instructions, /GÜVENİLMEZ/);
-  // AGPL §13: kaynak bağlantısı MCP yüzeyinde de sunulmalı
+  // AGPL §13: the source link has to be offered on the MCP surface too
   assert.match(instructions, /https?:\/\//, "kaynak kod adresi bildirilmeli");
 });

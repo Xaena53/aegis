@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
+/*
+ * AdsPilot — Google Ads MCP server
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
+ *
+ * This program is free software: you may redistribute it and/or modify it under the
+ * terms of the GNU Affero General Public License version 3 as published by the Free
+ * Software Foundation. See the LICENSE file for details.
+ *
+ * AGPL §13: if you modify this program and offer it as a service over a network, you
+ * must offer its users access to the Corresponding Source.
+ */
+
 /**
  * stdio entry point.
  *
  * Single-user mode: credentials come from .env and the process speaks MCP over
  * stdin/stdout. No sessions, no database, no auth layer — the operator owns the
  * machine and the credentials.
- */
-/*
- * AdsPilot — Google Ads MCP sunucusu
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) ve AdsPilot katkıcıları
- *
- * Bu program özgür yazılımdır: Free Software Foundation tarafından yayımlanan
- * GNU Affero General Public License sürüm 3 koşulları altında yeniden
- * dağıtabilir ve/veya değiştirebilirsiniz. Ayrıntılar için LICENSE dosyasına bakın.
- *
- * AGPL §13: Bu programı değiştirip ağ üzerinden servis olarak sunuyorsanız,
- * kullanıcılarına Karşılık Gelen Kaynağı sunmakla yükümlüsünüz.
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildServer } from "./server.js";
@@ -30,13 +31,13 @@ const server = buildServer(getEnvContext);
 
 const missing = missingCredentials();
 if (missing.length) {
-  // Sunucu yine de ayağa kalkar; araçlar çağrıldığında anlaşılır hata döner.
+  // The server still starts; the tools return a clear error when they are called.
   console.error(
     `[adspilot] Uyarı: eksik kimlik bilgileri: ${missing.join(", ")} — araçlar kimlik doğrulanana kadar hata dönecek.`
   );
 }
 
-// Beklenmeyen hatalar stdout'a değil stderr'e — stdout MCP JSON-RPC kanalıdır
+// Unexpected errors go to stderr, never stdout — stdout is the MCP JSON-RPC channel
 process.on("uncaughtException", (e) => console.error("[adspilot] uncaughtException:", e));
 process.on("unhandledRejection", (e) => console.error("[adspilot] unhandledRejection:", e));
 

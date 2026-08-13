@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { RateLimiter } from "../src/rateLimit.js";
 
-/** Kontrollü saat: gerçek zamana bağlı kalmadan pencere davranışını test eder. */
+/** Controlled clock: exercises window behaviour without depending on real time. */
 function clock(start = 1_000_000) {
   let t = start;
   return { now: () => t, advance: (ms: number) => (t += ms) };
@@ -28,7 +28,7 @@ test("reddedilen istek sayacı ARTIRMAZ (ceza uzamaz)", () => {
   rl.check(1);
   for (let i = 0; i < 50; i++) assert.equal(rl.check(1).allowed, false);
   c.advance(60_000);
-  // 50 reddedilen istek sayaca yazılsaydı burada hâlâ bloklu olurdu
+  // Had the 50 rejected requests been counted, this would still be blocked
   assert.equal(rl.check(1).allowed, true);
 });
 
@@ -47,7 +47,7 @@ test("günlük kota dakikalık pencereden bağımsız uygulanır", () => {
   const rl = new RateLimiter({ perMinute: 10, perDay: 5 }, c.now);
   for (let i = 0; i < 5; i++) {
     assert.equal(rl.check(1).allowed, true);
-    c.advance(61_000); // her seferinde dakikalık pencere sıfırlanır
+    c.advance(61_000); // resets the per-minute window each time
   }
   const blocked = rl.check(1);
   assert.equal(blocked.allowed, false);
@@ -80,6 +80,6 @@ test("sweep süresi geçmiş pencereleri temizler (bellek)", () => {
   for (let u = 1; u <= 100; u++) rl.check(u);
   c.advance(24 * 60 * 60_000 + 1);
   rl.sweep();
-  // Temizlik sonrası yeni pencere: tam hak
+  // A fresh window after the sweep grants the full allowance
   assert.deepEqual(rl.remaining(1), { minute: 5, day: 10 });
 });

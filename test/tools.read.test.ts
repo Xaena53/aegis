@@ -252,7 +252,7 @@ test("run_gaql çıktıyı SATIR atarak sınırlar (geçersiz JSON üretmez)", a
   assert.equal(s.satirSayisi, 400);
   assert.ok(s.gosterilen < 400, "büyük çıktı kısılmalı");
   assert.equal(s.kesildi, true);
-  // Eski davranış JSON metnini ortadan kesiyordu; artık satırlar tam nesneler
+  // Cutting the JSON text mid-string would emit unparseable output, so rows stay whole objects
   assert.equal(s.satirlar.length, s.gosterilen);
   assert.doesNotThrow(() => JSON.parse(JSON.stringify(s.satirlar)));
 });
@@ -321,14 +321,14 @@ test("karıştırılması kolay araç çiftleri birbirine YÖNLENDİRİR", async
   const { tools }: any = await c.listTools();
   const bul = (n: string) => tools.find((t: any) => t.name === n).description;
 
-  // Arama terimi ≠ anahtar kelime: en sık yapılan kavram hatası
+  // Search term ≠ keyword: the most common conceptual mix-up
   assert.match(bul("keyword_performance"), /search_terms_report/);
   assert.match(bul("search_terms_report"), /keyword_performance/);
-  // Reklam grubu negatifi yerine genelde kampanya negatifi doğrudur
+  // A campaign-level negative is usually the right choice over an ad-group one
   assert.match(bul("add_keywords"), /add_campaign_negative_keywords/);
-  // Hazır rapor varken ham sorgu yazılmasın
+  // A raw query should not be written when a ready-made report exists
   assert.match(bul("run_gaql"), /campaign_performance/);
-  // Kampanya kurmakla mevcut kampanyaya ekleme karışmasın
+  // Creating a campaign must not be confused with adding to an existing one
   assert.match(bul("create_search_campaign"), /add_keywords|create_responsive_search_ad/);
 });
 
@@ -341,9 +341,9 @@ test("para harcatan araçlar açıklamalarında güvenlik kuralını taşır", a
   assert.match(bul("set_campaign_status"), /onay/i);
   assert.match(bul("update_campaign_budget"), /AZALTMA serbest|ARTIŞ kullanıcı onayı/);
   assert.match(bul("create_search_campaign"), /PAUSED|duraklatılmış/);
-  // Negatif kelimenin onaysız serbest olduğu ajana açıkça söylenmeli
+  // The agent is told plainly that negative keywords need no approval
   assert.match(bul("add_campaign_negative_keywords"), /onay istemez/);
-  // Site içeriği güvenilmez uyarısı araç açıklamasında da bulunmalı
+  // The untrusted-page-content warning appears in the tool description as well
   assert.match(bul("analyze_site"), /GÜVENİLMEZ/);
 });
 
@@ -359,10 +359,10 @@ test("okuma araçları readOnlyHint, yazma araçları destructiveHint bildirir",
   assert.equal(bul("set_campaign_status").annotations.destructiveHint, true);
   assert.equal(bul("update_campaign_budget").annotations.destructiveHint, true);
   assert.equal(bul("create_search_campaign").annotations.readOnlyHint, false);
-  // Canlı kampanyaya yazan araçlar da yıkıcı sayılır: kodun kendi risk modeli
-  // bunları "yayına almakla aynı ağırlıkta" diyor, anotasyon da öyle demeli.
+  // Tools that write into a live campaign count as destructive: the code's own risk model
+  // weighs them the same as enabling a campaign, and the annotation must agree.
   assert.equal(bul("create_responsive_search_ad").annotations.destructiveHint, true);
-  // Taslak kampanya kurmak duraklatılmış doğduğu için yıkıcı DEĞİL
+  // Creating a draft campaign is not destructive, because it is born paused
   assert.equal(bul("create_search_campaign").annotations.destructiveHint, false);
   assert.equal(tools.length, 12, "araç sayısı sözleşmesi");
 });

@@ -5,8 +5,9 @@
  * All scanning is linear (indexOf, not backtracking regular expressions) so a hostile
  * page cannot stall the process. Case-insensitive matching uses ASCII-only lowering to
  * keep string indices aligned for non-ASCII text.
+ *
+ * Dependency-free and directly unit-tested.
  */
-/** Saf HTML çıkarım yardımcıları — bağımlılıksız, birim testli. */
 
 export interface PageFacts {
   title?: string;
@@ -46,31 +47,31 @@ function clean(s: string | undefined): string | undefined {
   return t || undefined;
 }
 
-/** Etiket içinden öznitelik değeri — açan tırnağın AYNISIYLA kapanır (içteki ' veya " değeri bölmez). */
+/** Attribute value from a tag — closed by the SAME quote that opened it, so a nested ' or " does not split the value. */
 function attrValue(tag: string, attr: string): string | undefined {
   const m = new RegExp(`\\b${attr}\\s*=\\s*("([^"]*)"|'([^']*)')`, "i").exec(tag);
   return m ? (m[2] ?? m[3]) : undefined;
 }
 
 /**
- * ── DOĞRUSAL TARAYICILAR ────────────────────────────────────────────────
- * Buradaki hiçbir işlev regex geri izlemesine dayanmaz.
+ * ── LINEAR SCANNERS ─────────────────────────────────────────────────────
+ * None of the functions below rely on regex backtracking.
  *
- * NEDEN: `<[^>]+>` / `<x[^>]*>([\s\S]*?)</x>` kalıpları, sonlandırıcı hiç
- * gelmediğinde her başlangıç konumundan sona kadar tarayıp geri izler → O(n²).
- * Ölçüldü: 80 KB'lık `"<"` yığını 2 saniye, 1.5 MB (gövde tavanı) dakikalar
- * sürüyordu. Node tek iş parçacıklı olduğu için bu, TEK bir istekle tüm
- * kiracıların servisini dondurmak demekti. indexOf tabanlı tarama doğrusaldır.
+ * WHY: patterns such as `<[^>]+>` and `<x[^>]*>([\s\S]*?)</x>` scan to the end of the
+ * input from every start position and backtrack whenever the terminator never arrives
+ * → O(n²). Measured: 80 KB of `"<"` takes 2 seconds, 1.5 MB (the body ceiling) takes
+ * minutes. Node is single-threaded, so ONE such request freezes the service for every
+ * tenant. indexOf-based scanning stays linear.
  */
 
-const MAX_TAG_LEN = 8192; // aşırı uzun tek etiket (kötü niyetli) atlanır
+const MAX_TAG_LEN = 8192; // skip a single absurdly long (hostile) tag
 
 /**
- * SADECE ASCII küçültme — uzunluğu korur.
- * `toLowerCase()` KULLANILAMAZ: Türkçe 'İ' (U+0130) iki koda ("i" + birleşik
- * nokta) açılır ve dizge uzar; indeksler ham HTML ile hizasını kaybeder,
- * dilimleme bir karakter kayar (canlıda başlığın sonuna '<' sızmasıyla yakalandı).
- * HTML etiket adları zaten ASCII olduğu için bu dönüşüm yeterlidir.
+ * ASCII-ONLY lowering — preserves length.
+ * `toLowerCase()` MUST NOT be used here: Turkish 'İ' (U+0130) expands to two code
+ * points ("i" plus a combining dot) and the string grows, so indices drift out of
+ * alignment with the raw HTML and every slice shifts by one character, leaking a
+ * stray '<' into the title. HTML tag names are ASCII anyway, so this is enough.
  */
 function asciiLower(s: string): string {
   return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
@@ -81,7 +82,7 @@ function isTagBoundary(code: number): boolean {
   return code === 62 || code === 32 || code === 9 || code === 10 || code === 13 || code === 47;
 }
 
-/** Açılış etiketlerini (ör. `<meta ...>`) doğrusal olarak toplar. */
+/** Collects opening tags (e.g. `<meta ...>`) in a linear scan. */
 function findTags(html: string, tag: string, max: number): string[] {
   const lower = asciiLower(html);
   const open = `<${tag}`;
@@ -102,7 +103,7 @@ function findTags(html: string, tag: string, max: number): string[] {
   return out;
 }
 
-/** `<tag ...>iç</tag>` bloklarını doğrusal olarak toplar. */
+/** Collects `<tag ...>inner</tag>` blocks in a linear scan. */
 function findElements(html: string, tag: string, max: number): Array<{ openTag: string; inner: string }> {
   const lower = asciiLower(html);
   const open = `<${tag}`;
@@ -129,7 +130,7 @@ function findElements(html: string, tag: string, max: number): Array<{ openTag: 
   return out;
 }
 
-/** Başlangıç/bitiş belirteçleri arasını doğrusal olarak siler (script/style/yorum). */
+/** Deletes everything between a start and end token in a linear scan (script/style/comment). */
 function removeBetween(html: string, startTok: string, endTok: string): string {
   const lower = asciiLower(html);
   let out = "";
@@ -142,13 +143,13 @@ function removeBetween(html: string, startTok: string, endTok: string): string {
     }
     out += html.slice(i, s) + " ";
     const e = lower.indexOf(endTok, s + startTok.length);
-    if (e < 0) break; // kapanmayan blok: gerisi atılır
+    if (e < 0) break; // unclosed block: the remainder is dropped
     i = e + endTok.length;
   }
   return out;
 }
 
-/** Etiketleri doğrusal olarak söker. */
+/** Strips tags in a linear scan. */
 function stripTags(s: string): string {
   let out = "";
   let i = 0;
@@ -160,7 +161,7 @@ function stripTags(s: string): string {
     }
     out += s.slice(i, lt) + " ";
     const gt = s.indexOf(">", lt + 1);
-    if (gt < 0) break; // kapanmayan etiket: gerisi atılır
+    if (gt < 0) break; // unclosed tag: the remainder is dropped
     i = gt + 1;
   }
   return out;
@@ -175,7 +176,7 @@ function metaContent(html: string, attr: "name" | "property", key: string): stri
   return undefined;
 }
 
-/** Alan uzunluk tavanı — tek bir sayfa ajanın bağlamını şişiremesin. */
+/** Per-field length ceiling — one page must not be able to bloat the agent's context. */
 const FIELD_MAX = 300;
 function cap(s: string | undefined, n = FIELD_MAX): string | undefined {
   return s === undefined ? undefined : s.length > n ? s.slice(0, n) + "…" : s;
@@ -192,29 +193,29 @@ function headings(html: string, tag: string, max: number): string[] {
 
 export function extractPageFacts(rawHtml: string, opts: { textChars?: number } = {}): PageFacts {
   const textChars = opts.textChars ?? 2500;
-  // Yorumlar her çıkarımdan önce sökülür — yorum içi başlık/link/metin sinyal değildir
+  // Comments are stripped before any extraction — headings, links and text inside a comment are not signal
   const html = removeBetween(rawHtml, "<!--", "-->");
 
   const title = cap(clean(findElements(html, "title", 1)[0]?.inner));
   const htmlTag = findTags(html, "html", 1)[0];
   const lang = htmlTag ? cap(clean(attrValue(htmlTag, "lang")), 20) : undefined;
 
-  // JSON-LD blokları (schema.org — ürün/hizmet/fiyat sinyali)
+  // JSON-LD blocks (schema.org — product/service/price signal)
   const jsonLd: string[] = [];
-  const JSONLD_MAX = 20; // tek sayfa binlerce @graph öğesiyle bağlamı şişiremesin
+  const JSONLD_MAX = 20; // one page must not bloat the context with thousands of @graph items
   for (const el of findElements(html, "script", 20)) {
     if (jsonLd.length >= JSONLD_MAX) break;
     const type = attrValue(el.openTag, "type") ?? "";
     if (!/application\/ld\+json/i.test(type)) continue;
     try {
-      // CDATA sarmalayıcıları ve JS yorum önekleri yaygın
+      // CDATA wrappers and JS comment prefixes are common here
       const raw = el.inner.replace(/^\s*(?:\/\/)?\s*<!\[CDATA\[/i, "").replace(/\]\]>\s*(?:\/\/)?\s*$/i, "").trim();
       const parsed = JSON.parse(raw);
       const top = Array.isArray(parsed) ? parsed : [parsed];
       const items = top.flatMap((p: any) => (Array.isArray(p?.["@graph"]) ? p["@graph"] : [p]));
       for (const it of items) {
         if (jsonLd.length >= JSONLD_MAX) break;
-        if (!it || typeof it !== "object") continue; // dizide null tüm bloğu düşürmesin
+        if (!it || typeof it !== "object") continue; // a null in the array must not discard the whole block
         const offer = Array.isArray(it.offers) ? it.offers[0] : it.offers;
         const summary = {
           type: it["@type"],
@@ -226,11 +227,11 @@ export function extractPageFacts(rawHtml: string, opts: { textChars?: number } =
         if (summary.type || summary.name) jsonLd.push(JSON.stringify(summary).slice(0, 500));
       }
     } catch {
-      /* bozuk JSON-LD atla */
+      /* skip malformed JSON-LD */
     }
   }
 
-  // nav/menü link metinleri — hizmet/kategori sinyali
+  // nav/menu link text — service/category signal
   const navTexts: string[] = [];
   const navBlock = findElements(html, "nav", 1)[0]?.inner ?? html;
   const seen = new Set<string>();
@@ -243,7 +244,7 @@ export function extractPageFacts(rawHtml: string, opts: { textChars?: number } =
     }
   }
 
-  // Görünür metin: script/style/noscript dışı, etiketler sökülür (hepsi doğrusal)
+  // Visible text: script/style/noscript removed, then tags stripped (all linear)
   let body = removeBetween(html, "<script", "</script>");
   body = removeBetween(body, "<style", "</style>");
   body = removeBetween(body, "<noscript", "</noscript>");
@@ -266,8 +267,9 @@ export function extractPageFacts(rawHtml: string, opts: { textChars?: number } =
 }
 
 /**
- * Charset tespiti: önce Content-Type başlığı, sonra gövde başındaki <meta charset>
- * / http-equiv. Bulunamazsa utf-8. (Türkçe legacy siteler windows-1254/iso-8859-9 kullanır.)
+ * Charset detection: the Content-Type header first, then <meta charset> / http-equiv
+ * near the start of the body. Falls back to utf-8 when neither is present. (Legacy
+ * Turkish sites use windows-1254 / iso-8859-9.)
  */
 export function sniffCharset(contentTypeHeader: string | null, bodyPrefix: string): string {
   const fromHeader = /charset=["']?([\w-]+)/i.exec(contentTypeHeader ?? "")?.[1];
@@ -279,7 +281,7 @@ export function sniffCharset(contentTypeHeader: string | null, bodyPrefix: strin
   return "utf-8";
 }
 
-/** SSRF koruması: localhost / özel IP / iç ağ isimlerini reddet (hostname bazlı). */
+/** SSRF guard: reject localhost, private IPs and internal network names (hostname-based). */
 export function isPrivateHostname(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, "");
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
@@ -308,7 +310,7 @@ export function isPrivateHostname(hostname: string): boolean {
   return false;
 }
 
-/** URL'i analiz için doğrula: yalnız http(s) + özel olmayan host. Hata mesajı ya da null döner. */
+/** Validates a URL for analysis: http(s) only, non-private host. Returns an error message, or null when the URL is acceptable. */
 export function validateAnalyzeUrl(raw: string): string | null {
   let u: URL;
   try {
@@ -322,7 +324,7 @@ export function validateAnalyzeUrl(raw: string): string | null {
   if (isPrivateHostname(u.hostname)) {
     return `Reddedildi: '${u.hostname}' yerel/özel ağ adresi — SSRF koruması.`;
   }
-  // Ayrıcalıklı portlara (SMTP/SSH vb.) çapraz-protokol isteği engelle
+  // Block cross-protocol requests to privileged ports (SMTP, SSH, ...)
   if (u.port) {
     const p = Number(u.port);
     if (p < 1024 && p !== 80 && p !== 443) {

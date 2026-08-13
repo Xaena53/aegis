@@ -34,17 +34,17 @@ function writesDisabled() {
   );
 }
 
-/** Bütçe kelepçesi — tavan çağıran kullanıcının context'inden. */
+/** Budget clamp — the ceiling comes from the calling user's own context. */
 function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: number): string | null {
   return budgetGuardPure(amount, ctx.config.maxDailyBudget);
 }
 
 /**
- * CANLI KAMPANYA KORUMASI. Yayındaki bir kampanyaya reklam/anahtar kelime
- * eklemek anında gerçek para harcatır — bu, kampanyayı yayına almakla aynı
- * ağırlıkta bir eylemdir ve aynı açık onayı gerektirir. Kampanya PAUSED ise
- * (normal taslak akışı) onay istenmez.
- * Dönen değer: engelleme mesajı ya da null (devam edilebilir).
+ * Live-campaign guard. Adding an ad or a keyword to a serving campaign starts
+ * spending real money immediately, which carries the same weight as enabling the
+ * campaign and therefore demands the same explicit approval. A PAUSED campaign is
+ * the ordinary draft flow and needs no approval.
+ * Returns a blocking message, or null when the caller may proceed.
  */
 async function liveCampaignGuard(
   server: McpServer,
@@ -72,7 +72,7 @@ async function liveCampaignGuard(
   const durumAdi =
     typeof ham === "number" ? String((enums.CampaignStatus as any)[ham] ?? "") : typeof ham === "string" ? ham : "";
   const kesinTaslak = durumAdi !== "" && durumAdi !== "ENABLED" && durumAdi !== "UNKNOWN" && durumAdi !== "UNSPECIFIED";
-  if (kesinTaslak) return null; // taslak akışı: onay istenmez
+  if (kesinTaslak) return null; // draft flow: no approval needed
 
   const kampanyaAdi = rows.length ? String(rows[0]?.campaign?.name ?? "(adsız)") : "(bulunamadı)";
   const belirsiz = durumAdi === "" ? " (kampanya durumu doğrulanamadı — güvenli tarafa geçildi)" : "";
@@ -89,8 +89,8 @@ async function liveCampaignGuard(
   return onay.onaylandi ? null : onay.mesaj!;
 }
 
-// Yazma araçları: openWorld (dış API), idempotent değil.
-// destructiveHint: para harcamasını/mevcut durumu değiştirenlerde true.
+// Write tools hit an external API, so they are openWorld and never idempotent.
+// destructiveHint is true for anything that changes spend or existing state.
 const WRITE_SAFE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
 const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 
@@ -166,13 +166,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               resource_name: campaignResourceName,
               name,
               advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
-              status: enums.CampaignStatus.PAUSED, // güvenlik: asla ENABLED oluşturma
-              // AB DSA gereği zorunlu beyan (canlı testte REQUIRED döndü). Bu araç
-              // ticari kampanya kurar; siyasi reklam bu araçla OLUŞTURULMAZ.
+              status: enums.CampaignStatus.PAUSED, // safety: never create as ENABLED
+              // The EU DSA declaration is required by the API. This tool only builds
+              // commercial campaigns; political advertising is out of scope here.
               contains_eu_political_advertising:
                 enums.EuPoliticalAdvertisingStatus.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING,
               campaign_budget: budgetResourceName,
-              // eCPC API v17+'da kaldırıldı; sade Manual CPC ile başla
+              // eCPC was removed in API v17+, so start with plain Manual CPC
               manual_cpc: {},
               network_settings: {
                 target_google_search: true,
@@ -192,7 +192,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               status: enums.AdGroupStatus.ENABLED,
             },
           },
-          // Coğrafi hedefleme: verilen ülkelerle sınırla (yoksa Google dünya geneli yayınlar)
+          // Geo targeting: restrict to the given countries — without it Google serves worldwide
           ...geoIds.map((gid) => ({
             entity: "campaign_criterion",
             operation: "create" as const,
@@ -257,7 +257,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       const idErr = invalidId("reklam grubu ID", adGroupId);
       if (idErr) return text(idErr);
       if (!/^https?:\/\//i.test(finalUrl)) return text("Reddedildi: finalUrl yalnız http/https olabilir.");
-      // Google tekrar eden varlıkları reddeder — burada anlaşılır mesajla yakala
+      // Google rejects duplicate assets — catch it here with a readable message
       const uh = dedupe(headlines);
       const ud = dedupe(descriptions);
       if (uh.length < 3)
@@ -344,11 +344,10 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         }
         const oldBudget = Number(row.campaign_budget?.amount_micros) / 1e6;
         /**
-         * KAPALI ARIZA. `amount_micros` eksikse oldBudget NaN olur ve
-         * `yeni > NaN` HER ZAMAN false döner — yani artış onayı TAMAMEN
-         * atlanıyordu (kullanıcıya "NaN → 400 güncellendi" yazılıyordu).
-         * Mevcut bütçeyi bilmiyorsak artış olup olmadığını da bilemeyiz:
-         * onay isteriz.
+         * Fail closed. A missing `amount_micros` makes oldBudget NaN, and
+         * `new > NaN` is always false, which would silently skip the increase
+         * approval entirely. If the current budget is unknown we cannot tell
+         * whether this is an increase, so we ask.
          */
         const eskiBilinmiyor = !Number.isFinite(oldBudget);
         if (eskiBilinmiyor || newDailyBudget > oldBudget) {
@@ -418,7 +417,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       const unique = dedupe(keywords);
       if (!unique.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
       try {
-        // Negatif kelime harcamayı AZALTIR — onay gerektirmez; pozitif kelime artırır.
+        // Negative keywords reduce spend, so they need no approval; positive ones increase it.
         if (!negative) {
           const live = await liveCampaignGuard(server, ctx, customerId, { adGroupId }, confirm, "anahtar kelime eklemek", [
             `Eşleme türü: ${matchType ?? "PHRASE"}`,
@@ -432,7 +431,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         await ctx.mutateWithRetry(() => customer.adGroupCriteria.create(
           unique.map((kw) => ({
             ad_group: ResourceNames.adGroup(cid, cleanId(adGroupId)),
-            // negatif kriterlerde status gönderilmez
+            // negative criteria must not carry a status field
             ...(negative ? { negative: true } : { status: enums.AdGroupCriterionStatus.ENABLED }),
             keyword: { text: kw, match_type: mt },
           }))
@@ -531,9 +530,9 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         const customer = ctx.getCustomer(customerId);
         const cid = normalizeCustomerId(customerId);
         if (status === "ENABLED") {
-          // 1) Yayına alınacak kampanyanın bütçesi de güvenlik tavanına tabidir.
-          //    (Kullanıcının arayüzde kurduğu 10.000 TL'lik kampanya bu kapı
-          //    olmadan tavanın kat kat üstünde yayına girebiliyordu.)
+          // 1) The safety ceiling also applies to the budget of a campaign being enabled.
+          //    Without this gate, a campaign built elsewhere (e.g. in the Google Ads UI)
+          //    could go live at many times the configured cap.
           const [row]: any[] = await ctx.queryWithRetry(
             customerId,
             `SELECT campaign.name, campaign_budget.amount_micros
@@ -548,7 +547,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               `Reddedildi: "${row.campaign.name}" kampanyasının günlük bütçesi ${daily} — ${capMsg}`
             );
           }
-          // 2) Gösterim yapabilecek durumda mı? (yayınlanamayan reklam kapıyı geçmesin)
+          // 2) Can it actually serve? Do not enable a campaign with no eligible ad.
           const ads = await ctx.queryWithRetry(
             customerId,
             `SELECT ad_group_ad.ad.id FROM ad_group_ad
@@ -561,8 +560,8 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             );
           }
 
-          // 3) ONAY — elicitation varsa doğrudan İNSANA sorulur; ajanın
-          //    confirm'ü o durumda dikkate alınmaz (sahte onay üretilemesin).
+          // 3) Approval. When elicitation is available the human is asked directly and the
+          //    agent's own confirm flag is ignored, so consent cannot be fabricated.
           const hedefler = await ctx.queryWithRetry(
             customerId,
             `SELECT campaign_criterion.location.geo_target_constant
@@ -574,8 +573,8 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             {
               eylem: `"${row.campaign.name}" kampanyası YAYINA ALINACAK — bu andan itibaren gerçek para harcanır.`,
               satirlar: [
-                // Hangi hesabın parasının harcanacağı özette YOKTU; MCC altında
-                // düzinelerce hesabı olan kullanıcı bunu göremiyordu.
+                // The summary must name the account whose money is at stake: a user with
+                // dozens of accounts under an MCC cannot judge the request without it.
                 `Hesap: ${normalizeCustomerId(customerId)} · Kampanya: ${cleanId(campaignId)}`,
                 `Günlük bütçe: ${daily} (hesabın para biriminde; Google günlük bütçenin katlarını harcayabilir)`,
                 hedefler.length

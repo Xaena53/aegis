@@ -26,7 +26,8 @@ const RSA = {
 };
 
 test("canlı-kampanya kapısı: sorgu BOŞ dönerse onay ister (fail-open değil)", async () => {
-  // Eskiden `if (!rows.length) return null` ile kapı sessizce açılıyordu
+  // An empty result must not be read as "not live"; the gate has to stay closed when
+  // the state is unknown.
   const { ctx, rec } = sahteContext({ queries: [[/FROM ad_group\b/, []]] });
   const c = await baglanti(ctx);
   const out = await cagir(c, "create_responsive_search_ad", RSA);
@@ -45,8 +46,8 @@ test("canlı-kampanya kapısı: durum alanı EKSİKSE onay ister", async () => {
 });
 
 test("canlı-kampanya kapısı: durum METİN gelirse doğru yorumlanır", async () => {
-  // enums.CampaignStatus["ENABLED"] sayı döndürdüğü için eski karşılaştırma
-  // metin durumda hep false oluyordu → kapı açık kalıyordu
+  // enums.CampaignStatus["ENABLED"] is numeric, so a numeric-only comparison never
+  // matches a textual status and would leave the gate open.
   const canli = sahteContext({ queries: [[/FROM ad_group\b/, [{ campaign: { id: 1, name: "K", status: "ENABLED" } }]]] });
   const c1 = await baglanti(canli.ctx);
   assert.match(await cagir(c1, "create_responsive_search_ad", RSA), /Reddedildi|İşlem yapılmadı/);
@@ -68,7 +69,8 @@ test("canlı-kampanya kapısı: PAUSED (sayı) hâlâ onaysız akar", async () =
 });
 
 test("bütçe: mevcut tutar OKUNAMAZSA artış onayı atlanmaz", async () => {
-  // Eskiden Number(undefined)=NaN → `yeni > NaN` hep false → onay TAMAMEN atlanıyordu
+  // An unreadable current amount becomes NaN, and every comparison against NaN is
+  // false — an unknown budget must trigger approval, not skip it.
   const { ctx, rec } = sahteContext({
     queries: [
       [
@@ -95,7 +97,8 @@ test("onay özetleri HANGİ HESAP olduğunu içerir", async () => {
   const c = await baglanti(ctx);
   const out = await cagir(c, "set_campaign_status", { customerId: M, campaignId: K, status: "ENABLED" });
   assert.match(out, new RegExp(`Hesap: ${M}`), "kimin parası harcanacak, özette olmalı");
-  // Coğrafi hedefi olmayan kampanya dünya geneli yayınlanır — nötr dille geçiştirilmemeli
+  // A campaign with no geo target serves worldwide, and the summary has to say so
+  // in plain words rather than neutral phrasing
   assert.match(out, /DÜNYA GENELİ/);
 });
 
@@ -130,7 +133,8 @@ test("tek bozuk satır TÜM raporu düşürmez", async () => {
 });
 
 test("normalizeGaql metin sabitlerinin İÇİNDEKİ boşluğu korur", async () => {
-  // Ham sıkıştırma kampanya adını sessizce değiştirip sorguyu eşleşmez yapıyordu
+  // Collapsing whitespace blindly would rewrite the campaign name and make the query
+  // match nothing
   const q = "SELECT campaign.name FROM campaign\n  WHERE campaign.name = 'Yaz  İndirimi'";
   const n = normalizeGaql(q);
   assert.match(n, /'Yaz  İndirimi'/, "sabitin içi bozulmamalı");

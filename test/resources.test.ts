@@ -6,7 +6,7 @@ import { sahteContext, baglanti } from "./helpers/harness.js";
 /**
  * Resources: data a client can read without spending a tool call.
  *
- * The limits resource is the guardrail report — it must reflect the caller live
+ * The limits resource is the guardrail report — it must reflect the caller's live
  * settings, never hard-coded defaults, and must stay read-only.
  */
 
@@ -91,8 +91,8 @@ test("campaigns kaynağı enum'ları ada çevirir ve micros'u böler", async () 
   assert.equal(veri.kampanyalar[0].kanal, "SEARCH");
   assert.equal(veri.kampanyalar[0].gunlukButce, 60);
   assert.match(rec.queries.at(-1)!, /LIMIT 200/, "sorgu sınırsız olmamalı");
-  // Katalog kaynağı TARİH FİLTRESİ İÇERMEMELİ: istatistiği olmayan yeni
-  // taslaklar listeden düşüyor ve ajan "kampanya oluşmadı" sanıyordu.
+  // The catalog must not carry a date filter: fresh drafts have no stats yet, so they
+  // would drop out of the list and the agent would conclude the campaign was never created.
   assert.doesNotMatch(rec.queries.at(-1)!, /segments\.date/, "katalog dönemsel filtre kullanmamalı");
 });
 
@@ -100,7 +100,7 @@ test("campaigns kaynağı URI'den gelen customerId'yi TEMİZLEYEREK kullanır", 
   const { ctx, rec } = sahteContext({ queries: [[/FROM campaign\b/, []]] });
   const c = await baglanti(ctx);
   await oku(c, "adspilot://accounts/14662abc31519/campaigns");
-  // URI serbest metindir; API'ye giden hesap kimliği yalnız rakamlardan oluşmalı
+  // The URI is free text; the customer id that reaches the API must be digits only
   assert.equal(rec.customerIds.at(-1), "1466231519");
 });
 

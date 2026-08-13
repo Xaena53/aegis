@@ -1,55 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Human-in-the-loop approval gate.
+ * Human-in-the-loop approval gate, used by every path that can increase spend.
  *
- * Used by every path that can increase spend. When the client supports MCP
- * elicitation the server asks the human directly and the agent-supplied confirm flag
- * is ignored; otherwise it falls back to that flag for compatibility. Every failure
- * mode — declined, cancelled, timed out, transport error — resolves to "do not
- * execute".
+ * A `confirm` flag on its own is only a claim: the agent decides whether a human was
+ * ever consulted and nothing verifies it. MCP elicitation lets the server ask the
+ * human through the protocol, which turns consent into something observable.
+ *
+ * When elicitation is available the agent's `confirm` value is deliberately ignored —
+ * honouring both would make the strong gate meaningless next to the weak one. Clients
+ * without elicitation fall back to `confirm` for compatibility.
+ *
+ * Every failure mode — declined, cancelled, timed out, transport error — resolves to
+ * "do not execute".
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-
-/**
- * Rule: approval must be verifiable by the server, not asserted by the agent.
- *
- * A confirm flag alone is a claim — the agent decides whether a human was ever
- * consulted, and nothing checks it. MCP elicitation lets the server ask the human
- * through the protocol, so consent becomes a fact rather than a claim.
- *
- * When elicitation is available the agent confirm value is deliberately ignored;
- * honouring both would make the strong gate meaningless next to the weak one.
- */
 
 export type OnayKanali = "insan" | "ajan";
 
 export interface OnaySonucu {
   onaylandi: boolean;
   kanal: OnayKanali;
-  /** Reddedildiyse ajana gösterilecek gerekçe. */
+  /** Reason shown to the agent when the request is refused. */
   mesaj?: string;
 }
 
 export interface OnayOzeti {
-  /** "Kampanya yayına alınacak" gibi tek cümlelik eylem. */
+  /** The action as a single sentence, e.g. "the campaign will go live". */
   eylem: string;
-  /** Kullanıcının karar vermek için görmesi gereken somut satırlar. */
+  /** The concrete lines the user needs to see in order to decide. */
   satirlar: string[];
-  /** Onay kutusunun etiketi. */
+  /** Label of the confirmation checkbox. */
   soru?: string;
 }
 
 /**
- * FORM modu şart: SDK `elicitInput`'un form çağrısı `elicitation.form`
- * yeteneğini arar. Yalnız `elicitation` nesnesinin varlığına bakmak, url-modu
- * destekleyen bir istemcide güçlü dalı seçip her onayın hata vermesine ve
- * kullanıcının HİÇBİR ZAMAN kampanya yayına alamamasına yol açıyordu.
+ * FORM mode is required: the SDK's `elicitInput` form call looks for the
+ * `elicitation.form` capability. Testing only for the presence of an `elicitation`
+ * object takes the strong branch on a url-mode-only client, where every approval
+ * then errors out and the user can NEVER launch a campaign.
  */
 function elicitationVar(server: McpServer): boolean {
   try {
     const e: any = server.server.getClientCapabilities()?.elicitation;
     if (!e) return false;
-    // Alt-yetenek bildirilmemişse (eski istemciler) form varsayılır.
+    // No sub-capabilities advertised (older clients): assume form support.
     if (typeof e !== "object") return true;
     const altlar = Object.keys(e);
     return altlar.length === 0 || "form" in e;
@@ -59,9 +53,9 @@ function elicitationVar(server: McpServer): boolean {
 }
 
 /**
- * Tehlikeli (para harcatan) bir işlem için onay alır.
- * @param agentConfirm Ajanın gönderdiği confirm — YALNIZCA elicitation
- *   desteklenmeyen istemcilerde geçerlidir (geri uyumluluk).
+ * Obtains approval for a dangerous (money-spending) operation.
+ * @param agentConfirm The confirm flag sent by the agent — honoured ONLY on clients
+ *   without elicitation support (backwards compatibility).
  */
 export async function onayAl(
   server: McpServer,
@@ -69,7 +63,7 @@ export async function onayAl(
   agentConfirm: boolean | undefined
 ): Promise<OnaySonucu> {
   if (!elicitationVar(server)) {
-    // Eski/kısıtlı istemci: ajan-aracılı kapıya düş (bugünkü davranış korunur)
+    // Old or limited client: fall back to the agent-mediated gate
     if (agentConfirm === true) return { onaylandi: true, kanal: "ajan" };
     return {
       onaylandi: false,
@@ -81,7 +75,7 @@ export async function onayAl(
     };
   }
 
-  // Güçlü yol: insana doğrudan sor
+  // Strong path: ask the human directly
   const metin = `${ozet.eylem}\n\n${ozet.satirlar.map((s) => `• ${s}`).join("\n")}`;
   try {
     const cevap = await server.server.elicitInput(
@@ -100,9 +94,10 @@ export async function onayAl(
         },
       },
       /**
-       * SDK varsayılanı 60 saniye — insan için çok kısa. Kullanıcı Google Ads'i
-       * başka sekmede kontrol etmeye gidip döndüğünde sunucu çoktan vazgeçmiş
-       * oluyor; kullanıcı "Onayla"ya basıyor ama hiçbir şey olmuyor.
+       * The SDK default of 60 seconds is far too short for a human. If the user
+       * switches to Google Ads in another tab to check something, the server has
+       * already given up by the time they return: they press "Approve" and nothing
+       * happens.
        */
       { timeout: 10 * 60_000, resetTimeoutOnProgress: true }
     );
@@ -118,7 +113,7 @@ export async function onayAl(
       mesaj: `İşlem yapılmadı: ${neden}. Kullanıcının kararına saygı göster; aynı işlemi tekrar denemeden önce ona danış.`,
     };
   } catch (e: any) {
-    // KAPALI ARIZA: onay alınamadıysa işlem YAPILMAZ
+    // Fail closed: if consent cannot be obtained, the operation does NOT run
     return {
       onaylandi: false,
       kanal: "insan",

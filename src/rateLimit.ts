@@ -3,21 +3,13 @@
  * Per-user sliding-window rate limiter.
  *
  * All hosted users share one Google developer token, and the daily operation quota is
- * enforced per token rather than per account. Without this limiter a single heavy user
- * can exhaust the quota for everyone.
- */
-/**
- * Kullanıcı başına kayan pencere sayacı.
+ * enforced per token rather than per account (15,000/day on Basic Access). Without this
+ * limiter a single heavy user can exhaust the quota for everyone else.
  *
- * Neden gerekli: hosted modda TÜM kullanıcılar TEK developer token'ı paylaşır.
- * Google'ın günlük işlem kotası (Basic Access'te 15.000) hesap başına değil
- * TOKEN başına uygulanır — tek bir aşırı kullanıcı diğer herkesin servisini
- * durdurabilir. Bu sınırlayıcı o paylaşılan kaynağı korur.
- *
- * Bellekte tutulur: süreç yeniden başlarsa sayaçlar sıfırlanır. Tek sunuculu
- * dağıtım için yeterli; yatay ölçeklemede Redis'e taşınmalı.
+ * Counters live in process memory and reset on restart, which is sufficient for a
+ * single-instance deployment. Scaling horizontally requires moving them to shared
+ * storage such as Redis.
  */
-
 export interface RateLimitConfig {
   perMinute: number;
   perDay: number;
@@ -46,7 +38,7 @@ export class RateLimiter {
     private now: () => number = Date.now
   ) {}
 
-  /** Pencereyi tazeler ve mevcut sayımı döner (artırmaz). */
+  /** Refreshes the window and returns the current count (does not increment it). */
   private peek(map: Map<number, Window>, userId: number, spanMs: number): Window {
     const t = this.now();
     let w = map.get(userId);
@@ -58,8 +50,8 @@ export class RateLimiter {
   }
 
   /**
-   * Sınır kontrolü. Reddedilen istek sayaçları ARTIRMAZ — aksi halde sınırı
-   * aşan bir istemci kendi cezasını sürekli uzatırdı.
+   * Limit check. A rejected request does NOT increment the counters — otherwise a
+   * client over the limit would keep extending its own penalty.
    */
   check(userId: number): RateLimitResult {
     const t = this.now();
@@ -84,14 +76,14 @@ export class RateLimiter {
     return { allowed: true };
   }
 
-  /** Süresi geçmiş pencereleri atar (bellek sızıntısı koruması). */
+  /** Drops expired windows (memory-leak guard). */
   sweep(): void {
     const t = this.now();
     for (const [id, w] of this.minute) if (t - w.start >= MINUTE_MS) this.minute.delete(id);
     for (const [id, w] of this.day) if (t - w.start >= DAY_MS) this.day.delete(id);
   }
 
-  /** Tanılama: kullanıcının kalan hakkı. */
+  /** Diagnostics: the user's remaining allowance. */
   remaining(userId: number): { minute: number; day: number } {
     return {
       minute: Math.max(0, this.cfg.perMinute - this.peek(this.minute, userId, MINUTE_MS).count),

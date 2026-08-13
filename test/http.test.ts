@@ -6,18 +6,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Q2 — hosted HTTP katmanı. Çok kiracılı izolasyonun tek kapısı burada;
- * gerçek bir sunucu süreci başlatılıp protokolün tamamı üzerinden test edilir
- * (http.ts bir betik olduğu için içeri import edilemez).
+ * Hosted HTTP layer — where multi-tenant isolation is enforced.
  *
- * Google kimlik bilgileri SAHTE: hiçbir test Google'a çıkmaz, yalnız kimlik
- * doğrulama / oturum / hız sınırı / OAuth-state kapıları sınanır.
+ * A real server process is started and driven over the wire, because http.ts is an
+ * entry point rather than an importable module. Google credentials are fake: nothing
+ * here reaches Google, only the auth, session, rate-limit and OAuth-state gates.
  */
 
 const PORT = 8800 + (process.pid % 500);
 const BASE = `http://localhost:${PORT}`;
 const DB = join(tmpdir(), `adspilot-http-${process.pid}.db`);
-const MASTER = "a".repeat(64); // 64-hex → doğrudan anahtar
+const MASTER = "a".repeat(64); // 64 hex chars → used directly as the key
 const KABUL = "application/json, text/event-stream";
 
 let sunucu: ChildProcess;
@@ -46,7 +45,7 @@ before(async () => {
       const r = await fetch(`${BASE}/health`);
       if (r.ok) return;
     } catch {
-      /* henüz ayakta değil */
+      /* not listening yet */
     }
     await bekle(100);
   }
@@ -59,12 +58,12 @@ after(() => {
     try {
       rmSync(DB + ek, { force: true });
     } catch {
-      /* Windows kilidi */
+      /* file still locked on Windows */
     }
   }
 });
 
-/** Depoya doğrudan kullanıcı ekler (OAuth akışını taklit etmeden). */
+/** Inserts a user straight into the store, bypassing the OAuth flow. */
 async function kullaniciEkle(email: string, subject: string): Promise<string> {
   process.env.ADSPILOT_MASTER_KEY = MASTER;
   const { UserStore } = await import("../src/store.js");
@@ -117,7 +116,7 @@ test("KİRACI İZOLASYONU: başka kullanıcının oturumu 403 ile reddedilir", a
   const sid = acilis.headers.get("mcp-session-id")!;
   assert.ok(sid, "oturum kimliği dönmeli");
 
-  // B, A'nın oturum kimliğini ele geçirmiş gibi davranır
+  // B behaves as though it had stolen A's session id
   const kacirma = await mcp(b, { jsonrpc: "2.0", id: 2, method: "tools/list" }, sid);
   assert.equal(kacirma.status, 403);
   assert.match(JSON.stringify(await kacirma.json()), /session_owner_mismatch/);
@@ -178,11 +177,11 @@ test("OAuth CSRF: çerezsiz ya da uydurma state ile callback 403", async () => {
   const connect = await fetch(`${BASE}/connect`);
   const state = /adspilot_state=([^;]+)/.exec(connect.headers.get("set-cookie") ?? "")![1];
 
-  // Saldırgan kurbana linki tıklatır ama kurbanın tarayıcısında çerez yok
+  // The attacker gets the victim to follow the link, but the victim's browser holds no cookie
   const cerezsiz = await fetch(`${BASE}/oauth/callback?code=x&state=${state}`, { redirect: "manual" });
   assert.equal(cerezsiz.status, 403);
 
-  // İmzası tutmayan uydurma state
+  // A forged state whose signature does not verify
   const uydurma = await fetch(`${BASE}/oauth/callback?code=x&state=uydurma.1.abc`, {
     headers: { Cookie: "adspilot_state=uydurma.1.abc" },
   });
@@ -190,9 +189,10 @@ test("OAuth CSRF: çerezsiz ya da uydurma state ile callback 403", async () => {
 });
 
 /**
- * Q7 — KELEPÇE YÖNETİMİ.
- * Değişmez kural: ajan kendi bütçe tavanını/yazma iznini DEĞİŞTİREMEZ.
- * Okuma MCP'den (resource), yazma yalnız insan tarayıcı oturumundan.
+ * Guardrail management.
+ *
+ * The invariant: an agent can read its budget ceiling and write permission but never
+ * change them. Reads go through MCP; writes require a human browser session.
  */
 test("ayarlar sayfası oturumsuz erişime KAPALI", async () => {
   const get = await fetch(`${BASE}/settings`, { redirect: "manual" });
@@ -208,7 +208,7 @@ test("ayarlar sayfası oturumsuz erişime KAPALI", async () => {
 
 test("API ANAHTARI ayar sayfasına giriş için KULLANILAMAZ (ajan kelepçeyi gevşetemez)", async () => {
   const key = await kullaniciEkle("kelepce@ornek.com", "sub-kelepce");
-  // Ajanın elindeki tek kimlik API anahtarıdır; onu her yolla denesin
+  // The API key is the only credential an agent holds, so try it every possible way
   const bearer = await fetch(`${BASE}/settings`, { headers: { Authorization: `Bearer ${key}` } });
   assert.equal(bearer.status, 401, "bearer ile ayar sayfası açılmamalı");
 
@@ -236,11 +236,11 @@ test("MCP tarafında kelepçe değiştiren HİÇBİR araç yok (yalnız okunur)"
   const liste = await mcp(key, { jsonrpc: "2.0", id: 2, method: "tools/list" }, sid);
   const govde = await liste.text();
 
-  // Ayar/limit değiştirmeye benzeyen bir araç adı bulunmamalı
+  // No tool name may even look like it changes a setting or a limit
   assert.doesNotMatch(govde, /"name":"[a-z_]*(settings|limit|cap|tavan)[a-z_]*"/i);
 });
 
-/** Sunucunun ürettiğiyle aynı imzalı oturum çerezi (insan tarayıcısını taklit eder). */
+/** A signed session cookie identical to the server's own, standing in for a human browser. */
 async function insanOturumu(userId: number): Promise<string> {
   const { createHmac } = await import("node:crypto");
   const ts = Date.now();
@@ -258,23 +258,23 @@ test("İNSAN oturumuyla ayar değişir ve MCP tarafına ANINDA yansır", async (
 
   const cookie = await insanOturumu(userId);
 
-  // 1) Sayfa açılıyor ve mevcut değerleri gösteriyor
+  // 1) The page loads and shows the current values
   const sayfa = await fetch(`${BASE}/settings`, { headers: { Cookie: cookie } });
   assert.equal(sayfa.status, 200);
   const html = await sayfa.text();
   assert.match(html, /ayar@ornek\.com/);
   assert.match(html, /değiştiremez/, "ajanın değiştiremeyeceği sayfada yazmalı");
 
-  // 2) Tavanı düşür ve yazmayı kapat
+  // 2) Lower the ceiling and switch writes off
   const kaydet = await fetch(`${BASE}/settings`, {
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
-    body: "tavan=25", // 'yazma' gönderilmiyor → kapalı
+    body: "tavan=25", // 'yazma' is omitted → writes off
   });
   assert.equal(kaydet.status, 200);
   assert.match(await kaydet.text(), /yazma KAPALI/);
 
-  // 3) MCP tarafı yeni ayarı görüyor mu? (bayat context olmamalı)
+  // 3) The MCP side must observe the new setting immediately — no stale context
   const init = await mcp(apiKey, INIT);
   const sid = init.headers.get("mcp-session-id")!;
   await mcp(apiKey, { jsonrpc: "2.0", method: "notifications/initialized" }, sid);

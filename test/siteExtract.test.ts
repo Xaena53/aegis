@@ -28,7 +28,7 @@ test("extractPageFacts temel alanları çıkarır", () => {
   assert.equal(f.title, "Gül Gelinlik & Moda — Isparta");
   assert.equal(f.lang, "tr");
   assert.match(f.metaDescription!, /gelinlik, nişanlık/);
-  assert.equal(f.metaKeywords, "gelinlik, abiye"); // content-önce sırası da yakalanmalı
+  assert.equal(f.metaKeywords, "gelinlik, abiye"); // attribute order with content first is caught too
   assert.equal(f.ogTitle, "Gül Gelinlik");
   assert.deepEqual(f.h1, ["Isparta Gelinlik Mağazası"]);
   assert.deepEqual(f.h2, ["2026 Koleksiyonu", "Özel Dikim"]);
@@ -39,14 +39,14 @@ test("extractPageFacts JSON-LD ve nav'ı özetler", () => {
   assert.equal(f.jsonLd.length, 1);
   assert.match(f.jsonLd[0], /LocalBusiness/);
   assert.match(f.jsonLd[0], /5000/);
-  assert.deepEqual(f.navTexts, ["Gelinlik Modelleri", "Abiye"]); // iç etiket sökülür, tekrar ayıklanır
+  assert.deepEqual(f.navTexts, ["Gelinlik Modelleri", "Abiye"]); // inner tags stripped, duplicates dropped
 });
 
 test("extractPageFacts script/style görünür metne sızmaz", () => {
   const f = extractPageFacts(SAMPLE);
   assert.doesNotMatch(f.visibleText, /gizli|color:red/);
   assert.match(f.visibleText, /Hayalinizdeki gelinliği/);
-  assert.match(f.visibleText, /İletişime/); // &#304; entity çözümü
+  assert.match(f.visibleText, /İletişime/); // &#304; entity decoding
 });
 
 test("extractPageFacts textChars sınırı", () => {
@@ -105,7 +105,7 @@ test("sniffCharset başlık > meta > utf-8 önceliği", () => {
     "iso-8859-9"
   );
   assert.equal(sniffCharset(null, "<html>"), "utf-8");
-  // başlık meta'yı ezer
+  // the header wins over the meta tag
   assert.equal(sniffCharset("text/html; charset=utf-8", `<meta charset="windows-1254">`), "utf-8");
 });
 
@@ -118,8 +118,8 @@ test("validateAnalyzeUrl şema ve host kontrolü", () => {
 });
 
 test("ReDoS: patolojik girdiler DOĞRUSAL sürede ayrıştırılır", () => {
-  // Eskiden karesel davranıyordu: 1.5MB (gövde tavanı) DAKİKALARCA sürüp
-  // tek iş parçacıklı sunucuyu tüm kiracılar için donduruyordu.
+  // Parsing has to stay linear. Quadratic behaviour on a 1.5MB body — the size cap —
+  // would occupy the single-threaded server for minutes and freeze every tenant with it.
   const N = 300_000;
   const yukler: Array<[string, string]> = [
     ["kapanmayan <", "<".repeat(N)],
@@ -137,7 +137,7 @@ test("ReDoS: patolojik girdiler DOĞRUSAL sürede ayrıştırılır", () => {
 });
 
 test("alan uzunlukları sınırlı: tek sayfa ajan bağlamını şişiremez", () => {
-  // Makul ama büyük içerik: kırpılmalı
+  // Large but plausible content: truncated
   const buyuk = "A".repeat(5_000);
   const f = extractPageFacts(
     `<html><head><title>${buyuk}</title>
@@ -148,7 +148,7 @@ test("alan uzunlukları sınırlı: tek sayfa ajan bağlamını şişiremez", ()
   assert.ok(f.metaDescription!.length <= 400, `meta ${f.metaDescription!.length}`);
   assert.ok(f.metaKeywords!.length <= 400);
 
-  // Absürt uzunlukta tek etiket (200KB) tamamen atılır — çıktıya hiç girmez
+  // A single absurdly long tag (200KB) is dropped outright and never reaches the output
   const absurt = "A".repeat(200_000);
   const f2 = extractPageFacts(`<html><head><title>${absurt}</title><meta name="description" content="${absurt}"></head></html>`);
   assert.ok((f2.title?.length ?? 0) <= 400);
@@ -160,14 +160,14 @@ test("JSON-LD: @graph binlerce öğeyle şişiremez, bozuk öğe bloğu düşür
   const f = extractPageFacts(`<script type="application/ld+json">${cok}</script>`);
   assert.ok(f.jsonLd.length <= 20, `girdi sayısı ${f.jsonLd.length}`);
 
-  // Dizide null varken geçerli öğeler KAYBOLMAMALI (eskiden tüm blok düşüyordu)
+  // A null inside the array must not take the valid entries down with it
   const f2 = extractPageFacts(
     `<script type="application/ld+json">[null,{"@type":"Product","name":"Gecerli Urun"}]</script>`
   );
   assert.equal(f2.jsonLd.length, 1);
   assert.match(f2.jsonLd[0], /Gecerli Urun/);
 
-  // offers DİZİ olduğunda fiyat kaybolmamalı
+  // The price survives when `offers` is an array rather than an object
   const f3 = extractPageFacts(
     `<script type="application/ld+json">{"@type":"Product","name":"X","offers":[{"price":"99","priceCurrency":"TRY"}]}</script>`
   );
@@ -176,8 +176,8 @@ test("JSON-LD: @graph binlerce öğeyle şişiremez, bozuk öğe bloğu düşür
 });
 
 test("Türkçe karakterler indeks hizasını bozmaz (İ → i+nokta tuzağı)", () => {
-  // toLowerCase() 'İ'yi İKİ koda açar; indeks tabanlı dilimleme kayar ve
-  // kapanış etiketinin '<' karakteri içeriğe sızardı (canlıda yakalandı).
+  // toLowerCase() expands 'İ' into two code units, so index-based slicing drifts and the
+  // '<' of the closing tag leaks into the extracted content.
   const f = extractPageFacts(
     `<html lang="tr"><head><title>AnimeRank | Türkiye'nin İlk Platformu — Erken Erişim</title></head>
      <body><h1>İSTANBUL ŞİŞLİ ÖĞÜT</h1><h2>ĞÜŞİÖÇ</h2></body></html>`
@@ -199,6 +199,6 @@ test("validateAnalyzeUrl port kısıtı: ayrıcalıklı portlar reddedilir", () 
   assert.match(validateAnalyzeUrl("http://example.com:22/")!, /22 portu/); // SSH
   assert.equal(validateAnalyzeUrl("http://example.com:80/"), null);
   assert.equal(validateAnalyzeUrl("https://example.com:443/"), null);
-  assert.equal(validateAnalyzeUrl("http://example.com:8000/"), null); // 1024+ serbest
+  assert.equal(validateAnalyzeUrl("http://example.com:8000/"), null); // 1024+ allowed
   assert.equal(validateAnalyzeUrl("http://example.com:3000/"), null);
 });

@@ -4,21 +4,22 @@ import { enums } from "google-ads-api";
 import { sahteContext, baglanti, cagir } from "./helpers/harness.js";
 
 /**
- * Q2 — ÜRÜNÜN PARA GÜVENLİĞİ SÖZLEŞMESİ.
- * Buradaki her test, README'de kullanıcıya verilen bir sözün karşılığıdır.
- * Biri kırmızıya dönerse gerçek para riski doğmuş demektir.
+ * The spend-safety contract.
+ *
+ * Every test here corresponds to a guarantee made to the user in the README. If one
+ * goes red, a path to unsupervised spending has opened.
  */
 
 const MUSTERI = "1234567890";
 const REKLAM_GRUBU = "200057393038";
 const KAMPANYA = "24120539226";
 
-/** Sorgulanan reklam grubunun bağlı olduğu kampanya PAUSED (normal taslak akışı). */
+/** The queried ad group belongs to a PAUSED campaign — the normal draft flow. */
 const PAUSED_KAMPANYA: Array<[RegExp, any[]]> = [
   [/FROM ad_group\b/, [{ campaign: { id: 1, name: "Taslak", status: enums.CampaignStatus.PAUSED } }]],
 ];
 
-/** Aynı sorgu, ama kampanya YAYINDA. */
+/** The same query, except the campaign is live. */
 const CANLI_KAMPANYA: Array<[RegExp, any[]]> = [
   [/FROM ad_group\b/, [{ campaign: { id: 1, name: "Canlı Kampanya", status: enums.CampaignStatus.ENABLED } }]],
 ];
@@ -43,7 +44,7 @@ test("yazma kilidi: writeEnabled=false iken ALTI yazma aracının hepsi reddeder
   assert.equal(rec.mutations.length, 0, "kilitliyken HİÇBİR mutasyon gitmemeli");
 });
 
-/** Yayına alma yolunun ön kontrollerini geçen (uygun bütçe + yayınlanabilir reklam) hesap. */
+/** An account that clears the pre-checks on the enable path: budget within the ceiling plus a servable ad. */
 const YAYINA_HAZIR: Array<[RegExp, any[]]> = [
   [/campaign_budget\.amount_micros/, [{ campaign: { name: "Hazır" }, campaign_budget: { amount_micros: 50_000_000 } }]],
   [/FROM ad_group_ad/, [{ ad_group_ad: { ad: { id: 1 } } }]],
@@ -105,7 +106,7 @@ test("yayına almada BÜTÇE TAVANI uygulanır (arayüzde kurulmuş dev bütçe 
   const { ctx, rec } = sahteContext({
     maxDailyBudget: 500,
     queries: [
-      // Kullanıcının Google arayüzünde kurduğu 10.000 TL'lik kampanya
+      // A 10,000 TL campaign the user set up in the Google UI
       [/campaign_budget\.amount_micros/, [{ campaign: { name: "Pahalı" }, campaign_budget: { amount_micros: 10_000_000_000 } }]],
     ],
   });
@@ -125,7 +126,7 @@ test("yayına almada YAYINLANABİLİR REKLAM şartı aranır", async () => {
   const { ctx, rec } = sahteContext({
     queries: [
       [/campaign_budget\.amount_micros/, [{ campaign: { name: "Uygun" }, campaign_budget: { amount_micros: 50_000_000 } }]],
-      [/FROM ad_group_ad/, []], // yayınlanabilir reklam YOK
+      [/FROM ad_group_ad/, []], // no servable ad
     ],
   });
   const c = await baglanti(ctx);
@@ -147,7 +148,7 @@ test("kampanya PAUSED ve KAMPANYAYA ÖZEL bütçeyle kurulur, geo hedefi eklenir
     customerId: MUSTERI,
     name: "Test",
     dailyBudget: 50,
-    keywords: ["anime izle", "ANIME IZLE"], // tekilleştirme de doğrulanır
+    keywords: ["anime izle", "ANIME IZLE"], // also verifies de-duplication
     countryCodes: ["TR"],
   });
   assert.match(out, /PAUSED/);
@@ -197,7 +198,7 @@ test("ülke hedefi ZORUNLU ve bilinmeyen kod reddedilir (dünya-geneli yayın ko
   assert.match(out, /Reddedildi/);
   assert.equal(rec.mutations.length, 0);
 
-  // countryCodes hiç verilmezse şema düzeyinde reddedilmeli
+  // Omitting countryCodes entirely is rejected at the schema level
   const eksik: any = await (await baglanti(ctx)).callTool({
     name: "create_search_campaign",
     arguments: { customerId: MUSTERI, name: "T", dailyBudget: 10, keywords: ["a"] },
@@ -248,7 +249,7 @@ test("CANLI kampanyaya onaysız POZİTİF kelime eklenemez; NEGATİF kelime muaf
   assert.match(red, /YAYINDA/);
   assert.equal(rec.mutations.length, 0);
 
-  // Negatif kelime harcamayı AZALTIR → onay gerekmez
+  // A negative keyword reduces spend → no approval required
   const neg = await cagir(c, "add_keywords", {
     customerId: MUSTERI,
     adGroupId: REKLAM_GRUBU,
@@ -302,7 +303,7 @@ test("finalUrl yalnız http/https olabilir", async () => {
       descriptions: ["Aciklama bir", "Aciklama iki"],
     },
   });
-  // Zod url() ya da kendi kontrolümüz reddetmeli — her hâlükârda yazma olmamalı
+  // Either Zod's url() or our own check rejects it — no write may happen either way
   const metin = String(res.content?.[0]?.text ?? "");
   assert.ok(res.isError === true || /Reddedildi/.test(metin), "javascript: şeması geçmemeli");
   assert.equal(rec.mutations.length, 0);

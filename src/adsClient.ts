@@ -14,9 +14,9 @@ export { normalizeCustomerId, formatAdsError } from "./util.js";
 export type { AdsPilotConfig } from "./config.js";
 
 /**
- * Kullanıcıya bağlı Google Ads bağlamı. Çok-kullanıcılı (hosted) modda her
- * kullanıcının kendi context'i olur; stdio modda env'den tek context üretilir.
- * Araçlar global config'e DEĞİL, kendilerine verilen context'e konuşur.
+ * Per-user Google Ads context. In hosted (multi-user) mode every user gets their
+ * own context; in stdio mode a single context is built from the environment.
+ * Tools talk to the context they are handed, never to global config.
  */
 export class AdsContext {
   private api: GoogleAdsApi;
@@ -51,18 +51,18 @@ export class AdsContext {
   }
 
   /**
-   * Erişilebilir TÜM hesaplar (MCC alt hesapları dahil), kısa süreli önbellekli.
+   * Every accessible account (MCC sub-accounts included), briefly cached.
    *
-   * `listAccessibleCustomers` yalnız üst düzey hesapları döner; kullanıcının
-   * fiilen kampanya kurduğu alt hesaplar orada YOKTUR. Otomatik tamamlama ve
-   * kaynak listeleri bu düzleştirilmiş listeye ihtiyaç duyar. Önbellek, her
-   * tuş vuruşunda API'ye çıkılmasını engeller.
+   * `listAccessibleCustomers` returns top-level accounts only, so the sub-accounts
+   * where campaigns actually live are missing from it. Completions and resource
+   * listings need this flattened view, and the cache keeps a keystroke from
+   * turning into an API round trip.
    */
   async tumHesaplar(): Promise<Array<{ id: string; ad: string; yonetici: boolean }>> {
     const now = Date.now();
     if (this.hesapCache && now - this.hesapCache.zaman < 60_000) return this.hesapCache.liste;
-    // Uçuştaki isteği paylaş: eşzamanlı tamamlamalar (her tuş vuruşu bir istek)
-    // aynı hasadı defalarca yapıp paylaşılan Google kotasını tüketmesin.
+    // Share the in-flight request: concurrent completions (one per keystroke) must
+    // not repeat the same harvest and drain the shared Google quota.
     if (this.hesapBekleyen) return this.hesapBekleyen;
     this.hesapBekleyen = this.hesaplariTopla(now).finally(() => {
       this.hesapBekleyen = undefined;
@@ -74,7 +74,7 @@ export class AdsContext {
     const liste: Array<{ id: string; ad: string; yonetici: boolean }> = [];
     const gorulen = new Set<string>();
     let hataOldu = false;
-    // Üst hesap tavanı: tavansız döngü tek tamamlamada yüzlerce sorgu üretebiliyordu
+    // Cap the parent accounts: uncapped, a single completion fans out into hundreds of queries
     const ustHesaplar = (await this.listAccessibleCustomers()).slice(0, 30);
     for (const id of ustHesaplar) {
       try {
@@ -105,7 +105,7 @@ export class AdsContext {
           }
         }
       } catch {
-        // Tek hesap okunamazsa listeyi tamamen düşürme, ama EKSİK olduğunu işaretle
+        // One unreadable account must not sink the whole list, but mark the result INCOMPLETE
         hataOldu = true;
       }
     }
@@ -122,9 +122,9 @@ export class AdsContext {
   private hesapBekleyen?: Promise<Array<{ id: string; ad: string; yonetici: boolean }>>;
 
   /**
-   * Retry'lı GAQL sorgusu — tüm OKUMA yolları bunu kullanmalı.
-   * normalizeGaql ZORUNLU: çok satırlı sorgularda istemci ayrıştırıcısı
-   * SELECT listesinin son alanını bozar ve değeri sessizce null döner.
+   * GAQL read with retry — every READ path must go through here.
+   * normalizeGaql is mandatory: on multi-line queries the client parser mangles the
+   * last field of the SELECT list and silently returns null for it.
    */
   async queryWithRetry(customerId: string, gaql: string): Promise<any[]> {
     const q = normalizeGaql(gaql);
@@ -132,21 +132,21 @@ export class AdsContext {
   }
 
   /**
-   * Mutasyon sarmalayıcısı: genel ağ hatalarında RETRY YOK (çift kayıt riski),
-   * yalnız CONCURRENT_MODIFICATION'da tekrar dener — o hatada istek açıkça
-   * reddedilmiştir, yazma uygulanmamıştır.
+   * Mutation wrapper: NO retry on generic network errors (risk of duplicate writes),
+   * only on CONCURRENT_MODIFICATION — there the API rejected the request outright,
+   * so the write was never applied.
    */
   async mutateWithRetry<T>(fn: () => Promise<T>): Promise<T> {
     return withRetry(fn, { tries: 4, baseMs: 600, isTransient: isConcurrentModificationError });
   }
 }
 
-/** Araç kayıtları çağrı anında context ister — hata mesajları çağrıda üretilsin diye. */
+/** Tool registrations resolve the context at call time, so errors surface per call. */
 export type ContextProvider = () => AdsContext;
 
 let envCtx: AdsContext | undefined;
 
-/** stdio modu: .env'den tek kullanıcılı context (tembel — sunucu kimliksiz de ayağa kalkar). */
+/** stdio mode: single-user context from .env (lazy — the server starts without credentials too). */
 export function getEnvContext(): AdsContext {
   if (!envCtx) envCtx = new AdsContext(loadConfig());
   return envCtx;

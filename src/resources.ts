@@ -9,16 +9,6 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { enums } from "google-ads-api";
 import { formatAdsError, type ContextProvider } from "./adsClient.js";
 
-
-/**
- * Resources let a client read data without spending a tool call, which makes the
- * account discoverable and keeps repeated lookups cheap.
- *
- * The limits resource is the guardrail report: it tells the agent (and through it,
- * the user) which restrictions are in force. It is strictly read-only — changing a
- * limit requires a human browser session.
- */
-
 function json(uri: string, veri: unknown) {
   return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(veri, null, 2) }] };
 }
@@ -28,9 +18,9 @@ function markdown(uri: string, metin: string) {
 }
 
 /**
- * Kaynak okuma hatalarını ARAÇLARLA AYNI dille sunar.
- * Aksi halde kullanıcı araç yolundan "hesabını yeniden bağla" ipucunu alırken
- * kaynak yolundan ham `invalid_grant` görüyor ve ne yapacağını bilemiyordu.
+ * Reports resource read failures in the SAME language the tools use.
+ * Otherwise the tool path tells the user to reconnect their account while the
+ * resource path shows a raw `invalid_grant`, leaving them with no idea what to do.
  */
 async function kaynakGuvenli<T>(uri: string, isi: () => Promise<T>): Promise<T> {
   try {
@@ -40,7 +30,7 @@ async function kaynakGuvenli<T>(uri: string, isi: () => Promise<T>): Promise<T> 
   }
 }
 
-/** Kampanya kurulabilen (yönetici olmayan) hesapları döner. */
+/** Returns the accounts campaigns can be created in (non-manager accounts). */
 async function reklamHesaplari(getCtx: ContextProvider): Promise<string[]> {
   try {
     return (await getCtx().tumHesaplar()).filter((h) => !h.yonetici).map((h) => h.id);
@@ -117,11 +107,11 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
       kaynakGuvenli(uri.href, async () => {
       const cid = String(customerId).replace(/\D/g, "");
       /**
-       * segments.date FİLTRESİ YOK — bilinçli. Tarih filtresi eklendiğinde
-       * son 30 günde istatistiği olmayan kampanyalar HİÇ dönmüyordu; yeni
-       * kurulan bir taslak listede görünmüyor ve ajan "oluşmadı" sanıp
-       * ikinci kampanya kurabiliyordu. Bu kaynak KATALOGDUR; dönemsel
-       * performans için campaign_performance aracı var.
+       * NO segments.date filter — deliberate. With a date filter, campaigns without
+       * stats in the window are not returned at all: a freshly created draft is
+       * missing from the list, so the agent concludes it was never created and
+       * builds a second campaign. This resource is a CATALOGUE; use the
+       * campaign_performance tool for period performance.
        */
       const satirlar = await getCtx().queryWithRetry(
         cid,

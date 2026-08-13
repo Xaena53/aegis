@@ -10,9 +10,9 @@ import { config as loadDotenv } from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// .env'i CWD'den değil, her zaman proje kökünden (dist/../.env) yükle:
-// MCP istemcileri sunucuyu rastgele bir çalışma dizininden başlatabilir.
-// quiet: dotenv'in stdout'a log basması MCP stdio (JSON-RPC) akışını bozar.
+// Always load .env from the project root (dist/../.env), never from the CWD:
+// MCP clients may start the server from an arbitrary working directory.
+// quiet: dotenv logging to stdout would corrupt the MCP stdio (JSON-RPC) stream.
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 loadDotenv({ path: path.join(projectRoot, ".env"), quiet: true });
 
@@ -57,10 +57,10 @@ export function loadConfig(): AdsPilotConfig {
 }
 
 /**
- * Bayrak okuma — GÜVENLİ TARAFA yanılır.
- * Eski hâli yalnız tam "0" değerini kapalı sayıyordu; `=false`, `=no`, `=off`
- * yazan kullanıcı yazmayı kapattığını sanıp gerçek para harcatabilen araçları
- * açık bırakıyordu. Tanınmayan değer de kapalı kabul edilir.
+ * Flag parsing that errs on the SAFE side.
+ * Accepting only a literal "0" as off is not enough: a user who writes `=false`,
+ * `=no` or `=off` believes writes are disabled while the tools that spend real
+ * money stay enabled. Any unrecognised value is treated as off as well.
  */
 export function parseBool(raw: string | undefined, varsayilan: boolean): boolean {
   if (raw === undefined || raw.trim() === "") return varsayilan;
@@ -72,8 +72,8 @@ export function parseBool(raw: string | undefined, varsayilan: boolean): boolean
 }
 
 /**
- * Sayısal ortam değişkeni. Boş string `Number("")===0` verdiği için sessizce
- * 0'a düşerdi (hız sınırında "her istek 429" demek) — burada reddedilir.
+ * Numeric environment variable. An empty string must never fall through
+ * `Number("") === 0`, which in the rate limiter means "every request is a 429".
  */
 export function parseNumEnv(name: string, raw: string | undefined, varsayilan: number): number {
   if (raw === undefined || raw.trim() === "") return varsayilan;
@@ -86,8 +86,8 @@ export function parseNumEnv(name: string, raw: string | undefined, varsayilan: n
 }
 
 /**
- * Tavan değeri doğrulanır: NaN/negatif/sıfır girilirse guard SESSİZCE devre dışı
- * kalmasın diye varsayılana (500) düşülür ve stderr'e uyarı yazılır.
+ * The cap is validated: NaN, a negative value or zero must not disable the guard
+ * SILENTLY, so it falls back to the default (500) and warns on stderr.
  */
 function parseBudgetCap(raw: string | undefined): number {
   const DEFAULT = 500;

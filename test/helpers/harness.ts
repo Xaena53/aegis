@@ -4,31 +4,31 @@ import { buildServer } from "../../src/server.js";
 import { AdsContext } from "../../src/adsClient.js";
 
 /**
- * Entegrasyon test koşum takımı.
+ * Integration test harness.
  *
- * Gerçek bir MCP istemci↔sunucu çifti kurar (InMemoryTransport) ve araçlara
- * SAHTE bir AdsContext enjekte eder. Böylece güvenlik kapıları — onay, bütçe
- * tavanı, PAUSED-varsayılan, canlı kampanya koruması — Google API'ye tek istek
- * atmadan, protokolün tamamı üzerinden test edilir.
+ * Wires a real MCP client↔server pair over InMemoryTransport and injects a fake
+ * AdsContext into the tools. The safety gates — approval, budget ceiling,
+ * PAUSED-by-default, live-campaign protection — are therefore exercised across the
+ * whole protocol without a single request reaching the Google API.
  *
- * `buildServer(getCtx)` zaten context sağlayıcı aldığı için ek refactor gerekmez.
+ * `buildServer(getCtx)` already takes a context provider, so no extra refactor is needed.
  */
 
 export interface SahteAyar {
   writeEnabled?: boolean;
   maxDailyBudget?: number;
-  /** GAQL metnine göre yanıt; ilk eşleşen desen kazanır. */
+  /** Canned response keyed by GAQL text; the first matching pattern wins. */
   queries?: Array<[RegExp, any[]]>;
-  /** listAccessibleCustomers'ın döneceği üst düzey hesaplar. */
+  /** Top-level accounts that listAccessibleCustomers will return. */
   hesaplar?: string[];
 }
 
 export interface Kayit {
-  /** Yapılan tüm mutasyonlar (yazma) — hiç yazma olmamalıysa boş kalmalı. */
+  /** Every mutation (write) that was issued — stays empty when no write is expected. */
   mutations: Array<{ kind: string; payload: any }>;
-  /** Çalıştırılan GAQL metinleri. */
+  /** GAQL statements that were executed. */
   queries: string[];
-  /** Her sorgunun HANGİ hesapta çalıştırıldığı (queries ile aynı sırada). */
+  /** Which account each query ran against, in the same order as `queries`. */
   customerIds: string[];
 }
 
@@ -58,10 +58,9 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
   };
 
   /**
-   * Gerçek AdsContext prototipinden türetilir: yalnız AĞA ÇIKAN yöntemler
-   * değiştirilir. Böylece `tumHesaplar` gibi saf iş mantığı (alt hesap
-   * düzleştirme, önbellek) SAHTE bir kopya değil, ÜRETİMDEKİ kod olarak
-   * test edilir.
+   * Derived from the real AdsContext prototype: only the methods that reach the
+   * network are replaced. Pure logic such as `tumHesaplar` (sub-account flattening,
+   * caching) is therefore exercised as production code rather than a stand-in copy.
    */
   const ctx: any = Object.create(AdsContext.prototype);
   ctx.config = {
@@ -80,7 +79,7 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
   return { ctx, rec };
 }
 
-/** Sahte context'e bağlı, gerçek protokol üzerinden konuşan bir MCP istemcisi. */
+/** An MCP client bound to the fake context, speaking over the real protocol. */
 export async function baglanti(ctx: any): Promise<Client> {
   const server = buildServer(() => ctx);
   const [istemciTasima, sunucuTasima] = InMemoryTransport.createLinkedPair();
@@ -90,7 +89,7 @@ export async function baglanti(ctx: any): Promise<Client> {
   return client;
 }
 
-/** Araç çağırır ve metin çıktısını döner (test okunabilirliği için). */
+/** Calls a tool and returns its text output, which keeps the tests readable. */
 export async function cagir(client: Client, name: string, args: Record<string, unknown>): Promise<string> {
   const res: any = await client.callTool({ name, arguments: args });
   return String(res.content?.[0]?.text ?? "");

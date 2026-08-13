@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
 /*
- * AdsPilot — Google Ads MCP sunucusu (hosted mod)
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) ve AdsPilot katkıcıları
+ * AdsPilot — Google Ads MCP server (hosted mode)
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
  *
- * GNU Affero General Public License v3 altında dağıtılır — bkz. LICENSE.
- * AGPL §13 gereği bu servisin kullanıcılarına kaynak kod sunulur (/source).
+ * Distributed under the GNU Affero General Public License v3 — see LICENSE.
+ * Per AGPL §13, the source is offered to the users of this service at /source.
  */
 import "dotenv/config";
 import http from "node:http";
@@ -20,15 +20,14 @@ import { setRuntimeMode } from "./util.js";
 import { parseNumEnv } from "./config.js";
 
 /**
- * AGPL-3.0 BÖLÜM 13 UYUMU.
+ * AGPL-3.0 SECTION 13 COMPLIANCE.
  *
- * "Ağ üzerinden etkileşen kullanıcılara Karşılık Gelen Kaynak sunulmalıdır."
- * AdsPilot bir ağ servisi olduğu için bu yükümlülük İŞLETMECİYİ (bu sunucuyu
- * çalıştıran kişiyi) bağlar. Bağlantı her sayfanın altbilgisinde ve /source
- * adresinde sunulur.
+ * "Users interacting with the program over a network must be offered the Corresponding
+ * Source." AdsPilot is a network service, so the obligation binds the OPERATOR — whoever
+ * runs this server. The link is served in every page footer and at /source.
  *
- * DİKKAT: Bu adres GERÇEKTEN erişilebilir olmalı. Depo private iken dışarıya
- * açık bir servis çalıştırmak lisans ihlalidir.
+ * This URL must genuinely resolve: running a publicly reachable service while the
+ * repository is private violates the license.
  */
 const SOURCE_URL = process.env.ADSPILOT_SOURCE_URL?.trim() || "https://github.com/Xaena53/google-ads-mcp";
 
@@ -70,7 +69,7 @@ function validateHostedEnv(): void {
 validateHostedEnv();
 
 const store = new UserStore();
-// Şifreleme anahtarını hemen dene: bozuksa ilk kullanıcıda değil ŞİMDİ patlasın
+// Exercise the encryption key immediately: a broken key must fail here, not on the first user.
 try {
   encryptSecret("baslangic-dogrulamasi");
 } catch (e: any) {
@@ -78,27 +77,28 @@ try {
   process.exit(1);
 }
 
-// ── Sınırlar (bellek tükenmesine karşı) ──────────────────────────────────
-const SESSION_IDLE_MS = 30 * 60_000; // 30 dk hareketsiz oturum kapatılır
-const OAUTH_STATE_TTL_MS = 10 * 60_000; // OAuth state 10 dk geçerli
+// ── Limits (guards against memory exhaustion) ────────────────────────────
+const SESSION_IDLE_MS = 30 * 60_000; // idle sessions are dropped after 30 min
+const OAUTH_STATE_TTL_MS = 10 * 60_000; // an OAuth state stays valid for 10 min
 const MAX_SESSIONS = 1_000;
-const MAX_SESSIONS_PER_USER = 10; // tek kullanıcı havuzu tüketemesin
+const MAX_SESSIONS_PER_USER = 10; // a single user must not drain the pool
 const SWEEP_MS = 60_000;
 
-// Paylaşılan Google Ads kotasını koruyan kullanıcı-başı hız sınırı
+// Per-user rate limit that protects the shared Google Ads quota
 const limiter = new RateLimiter({
-  // parseNumEnv şart: boş string Number("")===0 verip "her istek 429" yapardı
+  // parseNumEnv is required: an empty env var gives Number("") === 0, which would 429 every request
   perMinute: parseNumEnv("ADSPILOT_RATE_PER_MINUTE", process.env.ADSPILOT_RATE_PER_MINUTE, 120),
   perDay: parseNumEnv("ADSPILOT_RATE_PER_DAY", process.env.ADSPILOT_RATE_PER_DAY, 2000),
 });
 
-// Hosted modda hata ipuçları ".env düzenle" değil "yeniden bağlan" demeli
+// In hosted mode an error hint must say "reconnect", never "edit your .env"
 setRuntimeMode("hosted", `${PUBLIC_URL}/connect`);
 
 /**
- * DNS rebinding koruması için izinli Host/Origin listesi (MCP spec gereği).
- * Yerel adreslerde 127.0.0.1/localhost varyantları birlikte kabul edilir;
- * ek isimler ADSPILOT_ALLOWED_HOSTS ile virgüllü verilebilir (nginx/proxy arkası).
+ * Host/Origin allow list for DNS rebinding protection, as the MCP spec requires.
+ * For local addresses the 127.0.0.1 and localhost variants are accepted together;
+ * extra names come from ADSPILOT_ALLOWED_HOSTS as a comma-separated list, which is what
+ * a deployment behind nginx or another proxy needs.
  */
 function allowList(): { hosts: string[]; origins: string[] } {
   const pub = new URL(PUBLIC_URL);
@@ -120,7 +120,7 @@ function allowList(): { hosts: string[]; origins: string[] } {
   return { hosts: [...hosts], origins: [...origins] };
 }
 
-/** Sunucunun kendi OAuth istemcisi (hosted modda kullanıcılar bunu paylaşır). */
+/** The server's own OAuth client — in hosted mode every user shares it. */
 function oauthClient() {
   const id = process.env.GOOGLE_ADS_CLIENT_ID;
   const secret = process.env.GOOGLE_ADS_CLIENT_SECRET;
@@ -132,10 +132,10 @@ function oauthClient() {
 }
 
 /**
- * Kullanıcı ayarlarına göre memoize edilmiş context. Anahtar kullanıcının
- * TÜM etkin alanlarını içerir: ayar değişince (token yenilenmesi, yazma
- * izninin kapatılması, tavan düşürülmesi) yeni context üretilir — açık
- * oturumlar eski/gevşek ayarlarla çalışmaya devam edemez.
+ * Contexts memoized per user settings. The cache key covers EVERY setting that is in
+ * force, so any change — a refreshed token, writes switched off, a lowered ceiling —
+ * produces a new context. Open sessions can never keep running against the old,
+ * looser settings.
  */
 const ctxCache = new Map<string, AdsContext>();
 
@@ -153,29 +153,29 @@ function contextFor(user: StoredUser): AdsContext {
       writeEnabled: user.writeEnabled,
       maxDailyBudget: user.maxDailyBudget,
     });
-    if (ctxCache.size > 500) ctxCache.clear(); // sınırsız büyümeyi engelle
+    if (ctxCache.size > 500) ctxCache.clear(); // bound unlimited growth
     ctxCache.set(key, ctx);
   }
   return ctx;
 }
 
-// ── Oturum yönetimi: her MCP oturumu TEK kullanıcıya bağlı ────────────────
+// ── Sessions: every MCP session belongs to exactly ONE user ───────────────
 interface Session {
   transport: StreamableHTTPServerTransport;
   userId: number;
   /**
-   * Paylaşılan kutu: her istekte DB'den tazelenir. Araç context sağlayıcısı
-   * AYNI nesneyi okuduğu için ayar değişiklikleri açık oturuma da yansır.
+   * Shared box, refreshed from the database on every request. The tool context provider
+   * reads this same object, so a settings change reaches sessions that are already open.
    */
   live: { user: StoredUser };
   lastSeen: number;
 }
 const sessions = new Map<string, Session>();
 
-/** Kurulmakta olan (henüz kaydedilmemiş) oturumlar — tavan yarışını kapatır. */
+/** Sessions being established but not yet registered — closes the per-user cap race. */
 const pendingSessions = new Map<number, number>();
 
-/** Süresi geçen oturum ve OAuth state'lerini temizler (bellek DoS koruması). */
+/** Drops expired sessions and OAuth state (memory-exhaustion DoS protection). */
 function sweep(): void {
   const now = Date.now();
   for (const [sid, s] of sessions) {
@@ -184,7 +184,7 @@ function sweep(): void {
       try {
         void s.transport.close();
       } catch {
-        /* kapanış hatası önemsiz */
+        /* a failed close is harmless here */
       }
     }
   }
@@ -207,7 +207,7 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 function html(res: http.ServerResponse, status: number, body: string, extraHeaders: Record<string, string> = {}) {
   res.writeHead(status, {
     "Content-Type": "text/html; charset=utf-8",
-    // API anahtarı içeren sayfa önbelleğe/proxy'ye yazılmasın, referrer sızmasın
+    // These pages can carry an API key: keep them out of caches and proxies, and out of the referrer
     "Cache-Control": "no-store, max-age=0",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
@@ -217,7 +217,7 @@ function html(res: http.ServerResponse, status: number, body: string, extraHeade
   res.end(body);
 }
 
-/** HTML'e gömülecek her dış veri buradan geçer (XSS savunması). */
+/** Every piece of external data embedded into HTML goes through here (XSS defense). */
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
@@ -244,12 +244,12 @@ AGPL-3.0 lisanslıdır: bu servisi kullanan herkes kaynağa erişme hakkına sah
 
 // ── OAuth: /connect → Google → /oauth/callback ────────────────────────────
 /**
- * OAuth state'i TARAYICIYA bağlar (imzalı çerez). İki sorunu birden çözer:
- *  1) Sunucu tarafı `pendingStates` havuzu yoktu edilir → kimliksiz istekle
- *     doldurulup tüm yeni kullanıcılara 503 verdirme yolu kapanır.
- *  2) "state eşleşti" artık "bu tarayıcı üretti" demek olur → saldırganın
- *     kendi Google hesabını kurbanın tarayıcısına bağlatması (login CSRF)
- *     engellenir; aksi halde kurbanın kampanyaları saldırganın hesabına yazardı.
+ * Binds the OAuth state to the BROWSER via a signed cookie. That closes two holes at once:
+ *  1) There is no server-side `pendingStates` pool to fill up, so unauthenticated requests
+ *     cannot flood it and make every new user get a 503.
+ *  2) "the state matches" now also means "this browser produced it", which blocks login
+ *     CSRF — an attacker binding their own Google account to the victim's browser, after
+ *     which the victim's campaigns would be written into the attacker's account.
  */
 function signState(nonce: string, ts: number): string {
   const body = `${nonce}.${ts}`;
@@ -271,14 +271,13 @@ function verifyState(value: string | undefined): boolean {
 }
 
 /**
- * Q7 — İNSAN OTURUMU (ayar sayfası için).
+ * Browser session for the settings page.
  *
- * Değişmez kural: AJAN KENDİ KELEPÇESİNİ GEVŞETEMEZ. Bütçe tavanı ve yazma
- * izni MCP üzerinden yalnız OKUNUR (adspilot://accounts/{id}/limits); değişiklik
- * yalnız insanın tarayıcısındaki bu oturumla yapılır. API anahtarı bu iş için
- * kullanılamaz — ajan da o anahtara sahip olduğundan kapı anlamsız kalırdı.
+ * Guardrails are readable over MCP but writable only here. The API key deliberately
+ * does not open this door: the agent holds that key, so a key-protected settings page
+ * would be no protection at all.
  */
-const OTURUM_TTL_MS = 2 * 60 * 60_000; // 2 saat
+const OTURUM_TTL_MS = 2 * 60 * 60_000; // 2 hours
 
 function signSession(userId: number, ts: number): string {
   const body = `${userId}.${ts}`;
@@ -300,7 +299,7 @@ function verifySession(value: string | undefined): number | undefined {
 
 function oturumCerezi(userId: number): string {
   const secure = PUBLIC_URL.startsWith("https://") ? "; Secure" : "";
-  // SameSite=Strict: ayar değişikliği başka siteden tetiklenemesin
+  // SameSite=Strict so a settings change cannot be triggered from another site
   return `adspilot_session=${encodeURIComponent(signSession(userId, Date.now()))}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${OTURUM_TTL_MS / 1000}${secure}`;
 }
 
@@ -310,12 +309,12 @@ function readCookie(req: http.IncomingMessage, name: string): string | undefined
   for (const part of raw.split(";")) {
     const [k, ...v] = part.trim().split("=");
     if (k === name) {
-      // Bozuk yüzde dizisi (ör. "%") URIError fırlatır. Çerez tamamen
-      // saldırgan kontrolündedir; kimliksiz bir istekle sunucu düşmemeli.
+      // A malformed percent-escape (e.g. a bare "%") throws URIError. The cookie is
+      // entirely attacker-controlled, so an unauthenticated request must not crash the server.
       try {
         return decodeURIComponent(v.join("="));
       } catch {
-        return undefined; // geçersiz çerez = çerez yok
+        return undefined; // an invalid cookie counts as no cookie
       }
     }
   }
@@ -331,7 +330,7 @@ function handleConnect(res: http.ServerResponse) {
       client_id: id,
       redirect_uri: `${PUBLIC_URL}/oauth/callback`,
       response_type: "code",
-      // openid ZORUNLU: onsuz Google id_token döndürmez, e-posta hiç çözülemezdi
+      // openid is mandatory: without it Google returns no id_token and the identity cannot be resolved
       scope: "openid email https://www.googleapis.com/auth/adwords",
       access_type: "offline",
       prompt: "consent",
@@ -356,7 +355,7 @@ function handleConnect(res: http.ServerResponse) {
 async function handleCallback(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const state = url.searchParams.get("state") ?? "";
   const cookieState = readCookie(req, "adspilot_state");
-  // state hem imzalı+taze olmalı HEM DE bu tarayıcının çerezindekiyle aynı olmalı
+  // The state must be signed and fresh AND match what this browser has in its cookie
   if (!verifyState(state) || cookieState !== state) {
     return html(
       res,
@@ -391,8 +390,8 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
     );
   }
 
-  // Kimlik: id_token'ın `sub` claim'i (imza doğrulaması gerekmez — token
-  // doğrudan Google'dan TLS üzerinden geldi). `sub` DEĞİŞMEZ; e-posta değil.
+  // Identity is the id_token's `sub` claim. No signature check is needed — the token came
+  // straight from Google over TLS. `sub` is immutable; the email address is not.
   let subject: string | undefined;
   let email = "bilinmiyor";
   try {
@@ -400,12 +399,12 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
     if (payload.sub) subject = String(payload.sub);
     if (payload.email) email = String(payload.email);
   } catch {
-    /* aşağıda kapalı-arıza */
+    /* handled by the fail-closed check below */
   }
 
-  // KAPALI ARIZA: kimlik çözülemezse kullanıcıyı PAYLAŞILAN bir satıra yazma.
-  // Aksi halde iki farklı kişi aynı kayda düşer, biri diğerinin API anahtarını
-  // ve Google token'ını sessizce geçersizleştirir.
+  // FAIL CLOSED: never write a user into a SHARED row when the identity cannot be resolved.
+  // Two different people would land on the same record, and one would silently invalidate
+  // the other's API key and Google token.
   if (!subject) {
     return html(
       res,
@@ -438,13 +437,13 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
        <p>Yazma iznini ve günlük bütçe tavanını <a href="/settings">ayarlar sayfasından</a> yönetebilirsin.
        Claude bu değerleri okuyabilir ama <strong>değiştiremez</strong>.</p>`
     ),
-    // İnsan oturumu: ayar sayfası API anahtarıyla DEĞİL bununla korunur
+    // The human session: the settings page is guarded by this cookie, NOT by the API key
     { "Set-Cookie": oturumCerezi(userId) }
   );
 }
 
-// ── Ayarlar (yalnız insan oturumu) ────────────────────────────────────────
-const MUTLAK_BUTCE_TAVANI = 100_000; // yazım hatasına karşı emniyet
+// ── Settings (human session only) ─────────────────────────────────────────
+const MUTLAK_BUTCE_TAVANI = 100_000; // backstop against a typo
 
 function ayarSayfasi(user: StoredUser, mesaj?: { tur: "ok" | "hata"; metin: string }): string {
   const bildirim = mesaj
@@ -494,13 +493,13 @@ async function handleSettings(req: http.IncomingMessage, res: http.ServerRespons
 
   if (req.method === "POST") {
     /**
-     * CSRF: SameSite=Strict tek başına YETMEZ. SameSite "kayıt edilebilir alan"
-     * (eTLD+1) bazlıdır; adspilot.ornek.com kurulumunda ornek.com altındaki
-     * HERHANGİ bir alt alan (pazarlama sitesi, ele geçirilmiş eski uygulama)
-     * "same-site" sayılır ve çerez gönderilir. Oradan gelen otomatik bir form
-     * gönderimi yazmayı açıp tavanı sonuna kadar yükseltebilirdi — yani
-     * "kelepçeyi yalnız insan gevşetebilir" iddiası tam burada kırılıyordu.
-     * Origin doğrulaması bu yolu kapatır (izin listesi zaten mevcut).
+     * CSRF: SameSite=Strict alone is NOT enough. SameSite works at registrable-domain
+     * (eTLD+1) granularity, so on an adspilot.example.com deployment ANY subdomain of
+     * example.com — the marketing site, a compromised legacy app — counts as same-site and
+     * receives the cookie. An auto-submitted form from there could switch writes on and
+     * raise the ceiling to its maximum, which is exactly where the "only a human can
+     * loosen the guardrails" guarantee would break. Origin validation closes that path,
+     * reusing the allow list that already exists.
      */
     const origin = req.headers.origin;
     if (origin && !allowList().origins.includes(origin)) {
@@ -567,7 +566,7 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   const user = store.findByApiKey(key);
   if (!user) return json(res, 401, { error: "invalid_api_key" });
 
-  // Paylaşılan Google Ads kotasını ve sunucuyu koruyan kullanıcı-başı sınır
+  // Per-user limit that protects both the shared Google Ads quota and this server
   const rl = limiter.check(user.id);
   if (!rl.allowed) {
     res.writeHead(429, {
@@ -580,12 +579,12 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const session = sessionId ? sessions.get(sessionId) : undefined;
 
-  // Oturum kaçırma koruması: mevcut oturum başka kullanıcıya aitse reddet
+  // Session hijacking guard: refuse when the existing session belongs to another user
   if (session && session.userId !== user.id) return json(res, 403, { error: "session_owner_mismatch" });
 
-  // Bilinmeyen/süresi dolmuş oturum kimliği: spec gereği 404 (istemci yeniden
-  // initialize eder). Sessizce yeni sunucu kurmak, rastgele oturum kimlikleriyle
-  // sınırsız nesne üretimine (DoS) yol açardı.
+  // Unknown or expired session id: the spec requires a 404 so the client re-initializes.
+  // Quietly standing up a new server instead would let random session ids drive unbounded
+  // object creation (DoS).
   if (sessionId && !session) {
     return json(res, 404, { error: "session_not_found", hint: "Oturum düştü — yeniden initialize et." });
   }
@@ -598,13 +597,13 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   if (session) {
-    // Ayarlar bayatlamasın: kullanıcıyı her istekte DB'den tazele
+    // Re-read the user from the database on every request so settings never go stale
     session.live.user = store.findById(session.userId) ?? session.live.user;
     session.lastSeen = Date.now();
     return await session.transport.handleRequest(req, res, body);
   }
 
-  // Oturum kimliği yok → yalnız initialize isteği yeni oturum açabilir
+  // No session id → only an initialize request may open a new session
   if (!isInitializeRequest(body)) {
     return json(res, 400, { error: "invalid_request", hint: "Önce initialize çağır (mcp-session-id yok)." });
   }
@@ -612,9 +611,10 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
     sweep();
     if (sessions.size >= MAX_SESSIONS) return json(res, 503, { error: "too_many_sessions" });
   }
-  // Tek kullanıcı oturum havuzunu tüketip diğerlerini kilitleyemesin.
-  // YER AYIRMA senkron yapılır: kontrol ile kaydın arasında `await` var ve
-  // eşzamanlı initialize istekleri tavanı hep "0 oturum" görüp aşabiliyordu.
+  // One user must not drain the session pool and lock everyone else out.
+  // The slot is RESERVED synchronously: there is an `await` between the check and the
+  // registration, so concurrent initialize requests would each see "0 sessions" and
+  // sail past the cap together.
   if (sessionCountFor(user.id) + (pendingSessions.get(user.id) ?? 0) >= MAX_SESSIONS_PER_USER) {
     sweep();
     if (sessionCountFor(user.id) + (pendingSessions.get(user.id) ?? 0) >= MAX_SESSIONS_PER_USER) {
@@ -626,12 +626,12 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   pendingSessions.set(user.id, (pendingSessions.get(user.id) ?? 0) + 1);
 
-  // Paylaşılan kutu: hem oturum kaydı hem araç context sağlayıcısı bunu okur
+  // Shared box: the session record and the tool context provider both read it
   const live: { user: StoredUser } = { user };
   const { hosts, origins } = allowList();
   const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
-    // MCP spec: DNS rebinding'e karşı Host/Origin doğrulaması
+    // MCP spec: Host/Origin validation against DNS rebinding
     enableDnsRebindingProtection: true,
     allowedHosts: hosts,
     allowedOrigins: origins,
@@ -643,7 +643,7 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
     if (transport.sessionId) sessions.delete(transport.sessionId);
   };
 
-  // Bu oturumun araçları YALNIZ bu kullanıcının GÜNCEL context'ini görür
+  // The tools of this session only ever see this one user's CURRENT context
   try {
     const server = buildServer(() => contextFor(live.user));
     await server.connect(transport);
@@ -661,12 +661,12 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", PUBLIC_URL);
     if (url.pathname === "/health") return json(res, 200, { ok: true, sessions: sessions.size });
     if (url.pathname === "/connect" && req.method === "GET") return handleConnect(res);
-    // `await` ŞART: await'siz `return` edilen bir async fonksiyonun reddi bu
-    // try/catch'e HİÇ uğramaz, en üste sızar ve süreci öldürür. Kimliksiz tek
-    // bir istekle tüm sunucunun düştüğü uzaktan servis-dışı bırakma açığıydı.
+    // `await` is mandatory here: a rejection from an async function that is returned without
+    // being awaited never reaches this try/catch. It escapes to the top level and kills the
+    // process — a remote denial of service from a single unauthenticated request.
     if (url.pathname === "/oauth/callback" && req.method === "GET") return await handleCallback(req, res, url);
     if (url.pathname === "/settings") return await handleSettings(req, res);
-    // AGPL §13: kaynak kod teklifi — makine tarafından da bulunabilir olsun
+    // AGPL §13: the source offer, kept machine-discoverable as well
     if (url.pathname === "/source") {
       res.writeHead(302, { Location: SOURCE_URL, "Cache-Control": "no-store" });
       return res.end();
@@ -676,31 +676,30 @@ const server = http.createServer(async (req, res) => {
       return html(res, 200, page("AdsPilot", `<h1>AdsPilot</h1><p>Google Ads MCP sunucusu. <a href="/connect">Hesabını bağla</a>.</p>`));
     json(res, 404, { error: "not_found" });
   } catch (e: any) {
-    // Ayrıntı yalnız sunucu loguna; istemciye iç hata metni sızdırma
+    // Details go to the server log only; never leak internal error text to the client
     console.error("[adspilot-http] hata:", e);
     if (!res.headersSent) json(res, 500, { error: "internal" });
   }
 });
 
 /**
- * SON EMNİYET AĞI. Tek bir isteğin işlenmesi sırasındaki beklenmeyen bir hata
- * TÜM kullanıcıların servisini düşürmemeli: süreç ölünce bellekteki bütün MCP
- * oturumları da kaybolur ve herkes `404 session_not_found` alır.
- * Hata loglanır, süreç ayakta kalır. (stdio modunda index.ts'te zaten vardı;
- * hosted modda eksikti.)
+ * LAST-RESORT SAFETY NET. An unexpected error while handling one request must not take
+ * the service down for everyone: when the process dies, every in-memory MCP session dies
+ * with it and all clients start getting `404 session_not_found`. Log the error and stay
+ * up. Both entry points need this — stdio mode installs the same handlers in index.ts.
  */
 process.on("unhandledRejection", (e) => console.error("[adspilot-http] unhandledRejection:", e));
 process.on("uncaughtException", (e) => console.error("[adspilot-http] uncaughtException:", e));
 
-// Yavaş-istemci (slowloris) savunması: başlık ve gövde için üst sınırlar
+// Slow-client (slowloris) defense: upper bounds for headers and bodies
 server.headersTimeout = 20_000;
 server.requestTimeout = 60_000;
 server.keepAliveTimeout = 30_000;
 server.maxConnections = 512;
 
-// Düzgün kapanma: açık oturumları ve veritabanını temiz bırak (deploy/restart).
-// NOT: Windows SIGTERM teslimini desteklemez (süreç doğrudan sonlandırılır);
-// bu yol yalnız Linux/VPS dağıtımında etkindir — yerelde doğrulanamaz.
+// Graceful shutdown: leave open sessions and the database clean across deploys/restarts.
+// NOTE: Windows does not deliver SIGTERM (the process is terminated outright), so this
+// path is only live on Linux/VPS deployments and cannot be verified locally.
 let shuttingDown = false;
 for (const sig of ["SIGTERM", "SIGINT"] as const) {
   process.on(sig, () => {
@@ -712,18 +711,18 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
         try {
           void s.transport.close();
         } catch {
-          /* yoksay */
+          /* ignore */
         }
       }
       sessions.clear();
       try {
         store.close();
       } catch {
-        /* yoksay */
+        /* ignore */
       }
       process.exit(0);
     });
-    // Takılan bağlantılar kapanışı sonsuza dek bekletmesin
+    // Don't let stuck connections hold shutdown open forever
     setTimeout(() => process.exit(0), 10_000).unref();
   });
 }

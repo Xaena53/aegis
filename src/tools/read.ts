@@ -12,18 +12,19 @@ import { enums } from "google-ads-api";
 import { dateRange, ensureGaqlLimit } from "../util.js";
 
 /**
- * Q5 — YAPISAL ÇIKTI.
- * outputSchema tanımlı araçlar HEM insan-okur metin HEM tipli veri döner.
- * Ajan artık metni ayrıştırmak zorunda değil; sayılar sayı olarak gelir.
+ * Dual output: a human-readable summary plus typed structured data.
+ *
+ * The agent never has to parse numbers out of prose — amounts arrive already divided
+ * out of micros, enums as names, rates as numbers.
  */
 function ikili(ozet: string, veri: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: ozet }], structuredContent: veri };
 }
 
 /**
- * Hatalı GİRDİ yanıtı. `isError: true` şart: SDK, outputSchema tanımlı bir
- * araçta hata olmayan her yanıtta structuredContent bekler ve yoksa protokol
- * hatası fırlatır. Geçersiz girdi zaten semantik olarak hatadır.
+ * Invalid-input response. `isError: true` is mandatory: for a tool that declares an
+ * outputSchema, the SDK expects structuredContent on every non-error response and
+ * throws a protocol error without it. Invalid input is semantically an error anyway.
  */
 function girdiHatasi(mesaj: string) {
   return { content: [{ type: "text" as const, text: mesaj }], isError: true };
@@ -35,7 +36,7 @@ function err(e: unknown) {
 
 const READ_ANNOTATIONS = { readOnlyHint: true, openWorldHint: true };
 
-// ── Çıktı şemaları (ajan bunlara göre tip güvenli okur) ──────────────────
+// ── Output schemas: what the agent reads type-safely ─────────────────────
 const HESAP_SEMASI = {
   hesaplar: z
     .array(
@@ -157,10 +158,10 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               paraBirimi: c.currency_code ? String(c.currency_code) : undefined,
               yonetici: Boolean(c.manager),
             });
-            // MCC ise alt hesapları da ekle — listAccessibleCustomers onları DÖNDÜRMEZ
+            // For an MCC, also list its child accounts — listAccessibleCustomers omits them
             if (c.manager) {
-              // Not: status filtresi bilerek yok — test hesapları ENABLED dışı status
-              // return a status other than ENABLED and would be hidden by such a filter.
+              // No status filter, deliberately: test accounts can report a status other
+              // than ENABLED and such a filter would hide them.
               const children: any[] = await ctx.queryWithRetry(
                 id,
                 `SELECT customer_client.id, customer_client.descriptive_name,
@@ -221,7 +222,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
     },
     async ({ customerId, query, limit }) => {
       try {
-        // LIMIT'siz sorgu Opteo'da TÜM sayfaları belleğe çeker — yoksa ekle
+        // A query without LIMIT pulls every page into memory — add one if it is missing
         const rows = await getCtx().queryWithRetry(customerId, ensureGaqlLimit(query, limit ?? 100));
         let capped = rows.slice(0, limit ?? 100);
 
@@ -377,9 +378,9 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           const israfAdayi = conv === 0 && cost > 0;
           if (israfAdayi) wastedCost += cost;
           const stName = (enums.SearchTermTargetingStatus as any)[r.search_term_view?.status] ?? r.search_term_view?.status;
-          // Gerçek enum adı ADDED_EXCLUDED'dır; 'EXCLUDED_AND_ADDED' diye bir
-          // değer yok — o dal hiç çalışmıyordu ve zaten dışlanmış terimler
-          // "boşa harcama adayı" olarak tekrar tekrar öneriliyordu.
+          // The real enum name is ADDED_EXCLUDED; there is no 'EXCLUDED_AND_ADDED' value.
+          // Match the exact names, otherwise already-excluded terms keep coming back as
+          // waste candidates.
           return {
             terim: String(r.search_term_view.search_term),
             kampanyaId: String(r.campaign.id),

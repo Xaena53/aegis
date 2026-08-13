@@ -7,12 +7,11 @@ import { buildServer } from "../src/server.js";
 import { sahteContext } from "./helpers/harness.js";
 
 /**
- * Q1 — ONAYIN AJANDAN İNSANA GEÇİŞİ.
+ * Human-in-the-loop approval.
  *
- * Buradaki en önemli test şu: elicitation destekleyen bir istemcide ajan
- * `confirm: true` GÖNDERSE BİLE, insan reddederse işlem YAPILMAMALI.
- * Eski modelde ajan onayı uydurabiliyordu; bu testler o kapının kapandığını
- * kanıtlar.
+ * The central assertion: with an elicitation-capable client, a human decline must
+ * override the agent — even when the agent sends confirm: true. Consent has to be
+ * something the server observes, not something the agent claims.
  */
 
 const MUSTERI = "1234567890";
@@ -26,7 +25,7 @@ const YAYINA_HAZIR: Array<[RegExp, any[]]> = [
 
 type InsanKarari = "accept" | "decline" | "cancel" | "hata";
 
-/** Elicitation yeteneği BİLDİREN ve insan kararını taklit eden istemci. */
+/** A client that advertises the elicitation capability and plays back a human decision. */
 async function elicitationliIstemci(ctx: any, karar: InsanKarari, onayDegeri = true) {
   const sorulanlar: string[] = [];
   const client = new Client(
@@ -61,7 +60,7 @@ test("KRİTİK: insan REDDEDERSE ajan confirm=true göndermiş olsa bile yayına
     customerId: MUSTERI,
     campaignId: KAMPANYA,
     status: "ENABLED",
-    confirm: true, // ajan onay uydurmaya çalışıyor
+    confirm: true, // the agent is fabricating consent
   });
 
   assert.match(out, /İşlem yapılmadı/);
@@ -118,7 +117,7 @@ test("insan ONAYLARSA ajan confirm GÖNDERMESE BİLE yayına alınır", async ()
     customerId: MUSTERI,
     campaignId: KAMPANYA,
     status: "ENABLED",
-    // confirm YOK — insan onayı tek başına yeterli
+    // no confirm — human approval on its own is enough
   });
   assert.match(out, /YAYINDA/);
   assert.equal(rec.mutations.filter((m) => m.kind === "campaigns").length, 1);

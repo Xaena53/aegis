@@ -21,14 +21,15 @@ function text(s: string) {
 }
 
 const FETCH_TIMEOUT_MS = 12_000;
-const MAX_BODY_BYTES = 1_500_000; // 1.5MB — dev sayfalara karşı tavan
+const MAX_BODY_BYTES = 1_500_000; // 1.5MB ceiling against oversized pages
 const MAX_REDIRECTS = 5;
 
 /**
- * DNS-rebinding/decimal-IP guard'ı: hostname'in ÇÖZÜMLENDİĞİ adresler de özel olamaz.
- * (örn. http://2130706433/ → 127.0.0.1, ya da evil.com A-kaydı 192.168.1.1)
- * Not: çözüm ile bağlantı arasında TOCTOU penceresi kalır (undici IP sabitlemeye izin
- * vermiyor); self-hosted yerel kullanım için kabul edilen kalıntı risk.
+ * DNS-rebinding and decimal-IP guard: the addresses a hostname RESOLVES to must be
+ * public too, not just the literal name (e.g. http://2130706433/ → 127.0.0.1, or an
+ * evil.com A record pointing at 192.168.1.1).
+ * A TOCTOU window remains between resolution and connection because undici offers no
+ * way to pin the IP; that is accepted residual risk for self-hosted local use.
  */
 async function assertPublicHost(hostname: string): Promise<void> {
   if (isPrivateHostname(hostname)) {
@@ -53,7 +54,7 @@ async function fetchPage(url: string): Promise<{ finalUrl: string; html: string;
   try {
     let current = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      // Her durak (ilk URL + tüm yönlendirmeler) hem isim hem DNS düzeyinde doğrulanır
+      // Every hop — the initial URL and each redirect — is validated by name and by DNS
       const invalid = validateAnalyzeUrl(current);
       if (invalid) throw new Error(invalid);
       await assertPublicHost(new URL(current).hostname);
@@ -76,8 +77,8 @@ async function fetchPage(url: string): Promise<{ finalUrl: string; html: string;
         continue;
       }
 
-      // Yalnız MEDYA TÜRÜ üzerinde eşleştir: tüm başlığa bakmak
-      // "application/octet-stream; note=xml" gibi parametrelerle atlatılabiliyordu.
+      // Match on the media type alone: testing the whole header lets a crafted parameter
+      // such as "application/octet-stream; note=xml" slip past the check.
       const contentType = res.headers.get("content-type");
       const mediaType = (contentType ?? "").split(";")[0].trim().toLowerCase();
       if (mediaType && !/^(text\/html|application\/xhtml\+xml|text\/plain|(application|text)\/xml)$/.test(mediaType)) {
@@ -100,7 +101,7 @@ async function fetchPage(url: string): Promise<{ finalUrl: string; html: string;
         }
       }
       const buf = Buffer.concat(chunks);
-      // Charset: başlık > meta sniff > utf-8 (Türkçe legacy: windows-1254/iso-8859-9)
+      // Charset precedence: header > meta sniff > utf-8 (Turkish legacy: windows-1254/iso-8859-9)
       const charset = sniffCharset(contentType, buf.subarray(0, 4096).toString("latin1"));
       let html: string;
       try {
@@ -172,9 +173,9 @@ export function registerSiteTools(server: McpServer) {
         if (f.jsonLd.length) site.push(`**Yapılandırılmış veri (JSON-LD):**\n${f.jsonLd.map((j) => `- ${j}`).join("\n")}`);
         if (f.navTexts.length) site.push(`**Menü/linkler:** ${f.navTexts.join(" · ")}`);
         if (f.visibleText) site.push("", "**Görünür metin (kısaltılmış):**", f.visibleText);
-        // Sınırlayıcı kaçışını engelle. Desen BİLEREK gevşek: clean() boşlukları
-        // sıkıştırdığı için sayfa "&lt;/site-verisi&#9;&gt;" yazarak çıktıda
-        // "</site-verisi >" üretebiliyor ve dar desen bunu kaçırıyordu.
+        // Stop the page from escaping the delimiter. The pattern is loose on purpose:
+        // clean() collapses whitespace, so a page writing "&lt;/site-verisi&#9;&gt;" can
+        // emit "</site-verisi >" in the output, which a strict pattern would miss.
         lines.push(site.join("\n").replace(/<\s*\/?\s*site-verisi[^>]{0,200}>/gi, "[etiket-temizlendi]"));
 
         lines.push(

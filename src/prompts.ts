@@ -10,37 +10,29 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { completable } from "@modelcontextprotocol/sdk/server/completable.js";
 import type { ContextProvider } from "./adsClient.js";
 
-/**
- * Prompts appear as slash commands in MCP clients.
- *
- * They do not replace tools — they describe the correct order and the approval
- * steps, so safety rules are restated at the start of every workflow rather than
- * only when a tool refuses.
- */
-
 function metin(text: string) {
   return { messages: [{ role: "user" as const, content: { type: "text" as const, text } }] };
 }
 
 export function registerPrompts(server: McpServer, getCtx: ContextProvider): void {
   /**
-   * Hesap ID argümanı — canlı otomatik tamamlamalı. Kullanıcının 10 haneli
-   * müşteri ID'sini ezberlemesi ya da önce list_accounts çağırması gerekmez;
-   * istemci yazarken gerçek hesapları önerir.
+   * Account ID argument with live completion. The user never has to memorise the
+   * 10-digit customer ID or call list_accounts first — the client suggests real
+   * accounts as they type.
    */
   const hesapArg = completable(
     z.string().describe("Google Ads müşteri ID (10 hane). Yazmaya başla, hesapların önerilir."),
     async (deger: string) => {
       try {
-        // Alt hesaplar dahil TÜM hesaplar (kullanıcı genelde bir alt hesapta çalışır)
+        // ALL accounts including sub-accounts (users usually work in a sub-account)
         const hesaplar = await getCtx().tumHesaplar();
         const onek = deger.replace(/\D/g, "");
         return hesaplar
-          .filter((h) => !h.yonetici && h.id.startsWith(onek)) // MCC'ye kampanya kurulamaz
+          .filter((h) => !h.yonetici && h.id.startsWith(onek)) // campaigns cannot be created in an MCC
           .map((h) => h.id)
           .slice(0, 20);
       } catch {
-        return []; // kimlik yoksa/hata varsa tamamlama sessizce boş döner
+        return []; // missing credentials or any error: completion stays silent and returns nothing
       }
     }
   );

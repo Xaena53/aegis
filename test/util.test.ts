@@ -37,7 +37,7 @@ test("dedupe harf duyarsız, sıra korur, boşları atar", () => {
 });
 
 test("dedupe Türkçe İ/ı varyantlarını yakalar", () => {
-  assert.deepEqual(dedupe(["ÜCRETSİZ", "ücretsiz"]), ["ÜCRETSİZ"]); // düz toLowerCase bunu KAÇIRIYORDU
+  assert.deepEqual(dedupe(["ÜCRETSİZ", "ücretsiz"]), ["ÜCRETSİZ"]); // a plain toLowerCase misses this pair
   assert.deepEqual(dedupe(["ISPARTA", "ısparta"]), ["ISPARTA"]);
   assert.deepEqual(dedupe(["İzmir", "izmir"]), ["İzmir"]);
 });
@@ -65,7 +65,7 @@ test("budgetGuard bozuk tavanda sessizce geçirmez", () => {
 });
 
 test("toMicrosInt float artığı bırakmaz", () => {
-  assert.equal(toMicrosInt(0.07), 70000); // 0.07*1e6 = 70000.00000000001 olurdu
+  assert.equal(toMicrosInt(0.07), 70000); // 0.07*1e6 would land on 70000.00000000001
   assert.equal(toMicrosInt(50), 50_000_000);
   assert.equal(toMicrosInt(10.5555555), 10_555_556);
   assert.ok(Number.isInteger(toMicrosInt(123.456789)));
@@ -77,7 +77,7 @@ test("ensureGaqlLimit: yoksa ekler, küçük LIMIT'e dokunmaz, büyüğünü KIR
     "SELECT campaign.name FROM campaign LIMIT 100"
   );
   assert.equal(ensureGaqlLimit("SELECT x FROM y LIMIT 5", 100), "SELECT x FROM y LIMIT 5");
-  // Kullanıcının verdiği devasa LIMIT süreç belleğini tüketebilir → tavana çekilir
+  // A huge caller-supplied LIMIT can exhaust process memory, so it is clamped to the cap
   assert.equal(ensureGaqlLimit("SELECT x FROM y LIMIT 500000", 100), "SELECT x FROM y LIMIT 100");
   assert.equal(
     ensureGaqlLimit("SELECT x FROM y ORDER BY x LIMIT 250", 100),
@@ -97,7 +97,7 @@ test("ensureGaqlLimit: PARAMETERS yan tümcesi LIMIT'ten SONRA kalmalı", () => 
 });
 
 test("ensureGaqlLimit: metin sabiti içindeki LIMIT yanıltmaz", () => {
-  // Tırnak içindeki "LIMIT 5" gerçek LIMIT sanılırsa sorgu sınırsız kalırdı
+  // Mistaking the quoted "LIMIT 5" for a real clause would leave the query unbounded
   const q = "SELECT x FROM y WHERE campaign.name LIKE '%LIMIT 5%'";
   assert.equal(ensureGaqlLimit(q, 100), `${q} LIMIT 100`);
 });
@@ -106,17 +106,17 @@ test("normalizeGaql çok satırlı sorguyu tek satıra indirir (sessiz veri kayb
   const multi = "SELECT campaign.name,\n  metrics.cost_micros\nFROM campaign\nWHERE x = 1";
   assert.equal(normalizeGaql(multi), "SELECT campaign.name, metrics.cost_micros FROM campaign WHERE x = 1");
   assert.doesNotMatch(normalizeGaql(multi), /\n/);
-  // ensureGaqlLimit de normalize etmeli (tek giriş noktası garantisi)
+  // ensureGaqlLimit normalizes as well, so there is a single entry point
   assert.doesNotMatch(ensureGaqlLimit(multi, 10), /\n/);
 });
 
 test("cleanId doğrulanan değerle kaynak adında kullanılan değeri eşitler", () => {
   assert.equal(invalidId("x", " 123 "), null);
-  assert.equal(cleanId(" 123 "), "123"); // trim'siz kullanılsa "adGroups/ 123" olurdu
+  assert.equal(cleanId(" 123 "), "123"); // without the trim this would build "adGroups/ 123"
 });
 
 test("dateRange bugünü dışlar, N gün kapsar", () => {
-  // Sabit tarih: 2026-08-11 (yerel)
+  // Fixed local date: 2026-08-11
   const now = new Date(2026, 7, 11, 15, 30);
   assert.equal(
     dateRange(7, now),
@@ -126,7 +126,7 @@ test("dateRange bugünü dışlar, N gün kapsar", () => {
     dateRange(1, now),
     "segments.date BETWEEN '2026-08-10' AND '2026-08-10'"
   );
-  // Ay sınırı geçişi
+  // Crossing a month boundary
   assert.equal(
     dateRange(30, new Date(2026, 2, 5)),
     "segments.date BETWEEN '2026-02-03' AND '2026-03-04'"
@@ -143,7 +143,7 @@ test("formatAdsError kod adı + mesaj birleştirir", () => {
   const s = formatAdsError(e);
   assert.match(s, /query_error=UNRECOGNIZED_FIELD \| alan yok/);
   assert.match(s, /ikinci/);
-  // field_path varsa suçlu alan gösterilir
+  // when field_path is present the offending field is surfaced
   const withPath = formatAdsError({
     errors: [{ error_code: { field_error: "REQUIRED" }, message: "eksik",
       location: { field_path_elements: [{ field_name: "mutate_operations", index: 1 }, { field_name: "create" }] } }],
@@ -181,7 +181,7 @@ test("isConcurrentModificationError yalnız o hata sınıfını yakalar", () => 
     true
   );
   assert.equal(isConcurrentModificationError({ errors: [{ error_code: { field_error: 2 } }] }), false);
-  assert.equal(isConcurrentModificationError(new Error("UNAVAILABLE")), false); // ağ hatası mutasyonda retry EDİLMEZ
+  assert.equal(isConcurrentModificationError(new Error("UNAVAILABLE")), false); // network errors are not retried on mutations
 });
 
 test("withRetry geçici hatada tekrar dener, kalıcıda denemez", async () => {

@@ -18,13 +18,13 @@ after(() => {
   try {
     rmSync(DB, { force: true });
   } catch {
-    /* Windows'ta kilit kalabilir */
+    /* the file may still be locked on Windows */
   }
 });
 
 test("şifreleme gidiş-dönüş, her seferinde farklı şifre metni", () => {
-  // Test verisi GERÇEK bir kimlik bilgisinden TÜRETİLMEZ (önek dahil) —
-  // sahte olsa bile gerçek sırrın parçası repoya girmemeli.
+  // Test data is never derived from a real credential, prefix included: no fragment of a
+  // real secret belongs in the repository, not even inside a fake value.
   const secret = "TEST-ONLY-refresh-token-sabiti-0000";
   const a = encryptSecret(secret);
   const b = encryptSecret(secret);
@@ -47,7 +47,7 @@ test("API anahtarı: ap_ önekli, yalnız hash saklanır", () => {
   assert.equal(hash, hashApiKey(plain));
   assert.notEqual(plain, hash);
   assert.notEqual(hashApiKey(plain), hashApiKey("ap_baska"));
-  // İki üretim asla çakışmamalı (32 bayt entropi)
+  // Two generations must never collide (32 bytes of entropy)
   assert.notEqual(generateApiKey().plain, generateApiKey().plain);
 });
 
@@ -87,7 +87,7 @@ test("updateSettings: ayarlar anında yazılır, geçersiz tavan reddedilir", ()
   const u = store.findByApiKey(apiKey)!;
   assert.equal(u.maxDailyBudget, 25);
   assert.equal(u.writeEnabled, false);
-  // findById aynı sonucu vermeli (oturum tazeleme yolu)
+  // findById has to agree — this is the session-refresh path
   assert.equal(store.findById(userId)?.maxDailyBudget, 25);
   assert.equal(store.findById(userId)?.refreshToken, "token-E");
   assert.throws(() => store.updateSettings(userId, { maxDailyBudget: 0 }));

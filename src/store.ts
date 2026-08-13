@@ -2,21 +2,17 @@
 /**
  * Credential and settings storage for hosted mode.
  *
- * Refresh tokens are encrypted with AES-256-GCM; API keys are stored only as hashes.
- * Tenants are keyed by Google stable subject identifier rather than email, which can
- * change or be reassigned.
+ * Refresh tokens are encrypted with AES-256-GCM; API keys are stored only as hashes, so
+ * the plaintext key exists exactly once — on the page shown at registration. Tenants are
+ * keyed by Google's stable subject identifier rather than email, which can change or be
+ * reassigned.
  */
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, createCipheriv, createDecipheriv, createHash, scryptSync } from "node:crypto";
 
-/**
- * Hosted mod kullanıcı deposu. Refresh token'lar AES-256-GCM ile şifreli saklanır;
- * API anahtarları yalnız hash olarak tutulur (düz metin tek kez, kayıt anında gösterilir).
- */
-
 export interface StoredUser {
   id: number;
-  /** Google'ın değişmez kullanıcı kimliği (id_token `sub`). Kiracı anahtarı budur. */
+  /** Google's immutable user identifier (the id_token `sub`). This is the tenant key. */
   googleSub?: string;
   email: string;
   refreshToken: string;
@@ -29,12 +25,13 @@ export interface StoredUser {
 let cachedMasterKey: Buffer | undefined;
 
 /**
- * Şifreleme anahtarı türetimi:
- * - 64 hex karakter (önerilen, makine üretimi) → doğrudan 32 baytlık anahtar
- * - başka her şey (insan parolası) → scrypt ile türetilir; düz SHA-256 parola
- *   girdisi için zayıftır, scrypt kaba kuvvete CPU/bellek maliyeti ekler.
- * Sabit salt bilinçli: tek uygulama sırrı var, kullanıcılar arası rainbow-table
- * riski yok; salt'ı DB'de saklamak anahtar rotasyonunu gereksiz yere karmaşıklaştırırdı.
+ * Encryption key derivation:
+ * - 64 hex characters (recommended, machine-generated) → used directly as the 32-byte key
+ * - anything else (a human-chosen passphrase) → derived with scrypt; plain SHA-256 is too
+ *   weak for passphrase input, whereas scrypt puts a CPU and memory cost on brute force.
+ * The fixed salt is deliberate: there is a single application secret, so there is no
+ * cross-user rainbow-table exposure, and keeping a salt in the database would complicate
+ * key rotation for no gain.
  */
 function masterKey(): Buffer {
   if (cachedMasterKey) return cachedMasterKey;
@@ -66,7 +63,7 @@ export function decryptSecret(packed: string): string {
   return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64")), decipher.final()]).toString("utf8");
 }
 
-/** API anahtarı üret: düz metin (bir kez gösterilir) + saklanacak hash. */
+/** Mints an API key: the plaintext (shown once) plus the hash that gets stored. */
 export function generateApiKey(): { plain: string; hash: string } {
   const plain = "ap_" + randomBytes(32).toString("base64url");
   return { plain, hash: hashApiKey(plain) };
@@ -79,9 +76,9 @@ export function hashApiKey(plain: string): string {
 export class UserStore {
   private db: DatabaseSync;
 
-  // DİKKAT: `??` boş string'i geçirir ve DatabaseSync("") sessizce GEÇİCİ bir
-  // veritabanı açar — her yeniden başlatmada tüm kullanıcı token'ları yok olur,
-  // tek hata bile vermeden. Bu yüzden `||` (boş string'i de yakalar) şart.
+  // `||` rather than `??`: `??` lets an empty string through, and DatabaseSync("") silently
+  // opens a TEMPORARY database — every restart would then wipe all user tokens without
+  // raising a single error.
   constructor(path = process.env.ADSPILOT_DB || "adspilot.db") {
     try {
       this.db = new DatabaseSync(path);
@@ -91,8 +88,8 @@ export class UserStore {
           `Klasör var mı ve yazılabilir mi? ADSPILOT_DB ile başka bir yol verebilirsin.`
       );
     }
-    // Eşzamanlılık: varsayılan busy_timeout=0 → aynı anda gelen iki istek
-    // SQLITE_BUSY ile SERT hata verir. WAL + bekleme süresi bunu giderir.
+    // Concurrency: the default busy_timeout=0 makes two simultaneous requests fail hard
+    // with SQLITE_BUSY. WAL plus a wait timeout is what keeps them from colliding.
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA busy_timeout = 5000;
@@ -112,9 +109,9 @@ export class UserStore {
       );
       CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key_hash);
     `);
-    // Kalıcı kimlik: Google'ın `sub` claim'i. E-posta kiracı anahtarı OLAMAZ —
-    // değişebilir, Workspace'te yeniden atanabilir ve çözülemediğinde herkesi
-    // tek bir satırda birleştirir. Mevcut kurulumlar için eklemeli geçiş.
+    // Durable identity is Google's `sub` claim. Email CANNOT serve as the tenant key: it
+    // can change, Workspace can reassign it, and when it fails to resolve it collapses
+    // everyone into a single row. Added as an additive migration for existing installs.
     const cols = this.db.prepare("PRAGMA table_info(users)").all() as any[];
     if (!cols.some((c) => String(c.name) === "google_sub")) {
       this.db.exec("ALTER TABLE users ADD COLUMN google_sub TEXT");
@@ -123,11 +120,12 @@ export class UserStore {
   }
 
   /**
-   * Kullanıcıyı kaydeder/yeniler ve YENİ bir API anahtarı döner.
-   * `subject` (Google `sub`) verildiyse kiracı anahtarı odur; yoksa e-postaya
-   * düşülür (yalnız stdio/test yolu — hosted akış subject'i ZORUNLU kılar).
-   * Tamamı tek işlemde: eşzamanlı iki callback yarışıp UNIQUE ihlaliyle
-   * kullanıcının taze refresh token'ını kaybettiremesin.
+   * Inserts or refreshes the user and returns a NEW API key.
+   * When `subject` (Google's `sub`) is present it is the tenant key; otherwise the email
+   * is the fallback, a path that exists only for stdio and tests since the hosted flow
+   * requires a subject.
+   * Everything runs in one transaction so two concurrent callbacks cannot race into a
+   * UNIQUE violation and lose the user's fresh refresh token.
    */
   upsertUser(input: {
     subject?: string;
@@ -186,11 +184,11 @@ export class UserStore {
   }
 
   /**
-   * Kullanıcının güvenlik ayarlarını günceller. Açık MCP oturumları bir sonraki
-   * istekte tazelendiği için değişiklik anında etkili olur (bayat ayar kalmaz).
+   * Updates the user's guardrails. Open MCP sessions re-read the user on their next
+   * request, so a change takes effect immediately and no session keeps a stale value.
    */
   updateSettings(userId: number, s: { writeEnabled?: boolean; maxDailyBudget?: number }): void {
-    // Doğrulama YAZMADAN ÖNCE: yarım uygulanmış ayar kalmasın.
+    // Validate BEFORE writing anything, so a rejected value cannot leave a half-applied setting.
     if (s.maxDailyBudget !== undefined && (!Number.isFinite(s.maxDailyBudget) || s.maxDailyBudget <= 0)) {
       throw new Error("maxDailyBudget 0'dan büyük bir sayı olmalı.");
     }
@@ -214,7 +212,7 @@ export class UserStore {
     }
   }
 
-  /** Kullanıcıyı id ile tazeler — açık oturumların ayarları bayatlamasın diye. */
+  /** Re-reads the user by id — this is how open sessions avoid running on stale settings. */
   findById(id: number): StoredUser | undefined {
     const row = this.db
       .prepare(
@@ -225,7 +223,7 @@ export class UserStore {
     return row ? this.rowToUser(row) : undefined;
   }
 
-  /** API anahtarından kullanıcıyı çözer; bulunamazsa undefined. */
+  /** Resolves a user from an API key; undefined when nothing matches. */
   findByApiKey(apiKeyPlain: string): StoredUser | undefined {
     const row = this.db
       .prepare(
