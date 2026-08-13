@@ -6,7 +6,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-154-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-155-brightgreen.svg)](test/)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -220,13 +220,41 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 154 tests
+npm test           # 155 offline tests
+npm run smoke      # live checks against your real Google Ads account
 ```
 
 Tests run a real MCP client/server pair over `InMemoryTransport` with an injected fake
 Google Ads context, so every guard is exercised through the actual protocol without
 touching a live account. The suite includes fail-closed regressions and adversarial
 scenarios that try to reach a bad outcome by every known route.
+
+### Live smoke test
+
+An offline suite can only prove the server is correct against the API *as modelled*.
+`npm run smoke` closes that gap: it launches the real stdio binary, speaks MCP exactly as
+Claude Desktop does, and verifies each guarantee against Google's live servers.
+
+| Verified | How |
+|---|---|
+| Server states its rules to the agent | `instructions` non-empty and carries the PAUSED rule |
+| Accounts resolve | every ID is 10 digits; unreadable accounts are skipped, not guessed |
+| Reports are typed | `structuredContent` matches the declared `outputSchema` |
+| Multi-line GAQL loses no field | last `SELECT` field present in returned rows |
+| LIMIT ceiling bites | unclamped count measured first, then proven to be cut |
+| Guardrails are readable | `adspilot://accounts/{id}/limits` reports cap and write flag |
+| Completion suggests real accounts | `completion/complete` returns the live account ID |
+| Over-cap budget is refused | refusal **and** the live budget verified unchanged |
+| Unapproved go-live is refused | refusal **and** the live status verified unchanged |
+
+The default run performs **no mutation** — spend-related guards are verified through their
+refusal path, and a refusal is only accepted as proof once the underlying value is re-read
+and found unchanged. A check that cannot be proven by the account's data reports itself as
+failed rather than passing quietly.
+
+`npm run smoke -- --write` additionally creates a real campaign and asserts it comes up
+`PAUSED`. It prints the new campaign ID for manual deletion: the server intentionally
+exposes no delete tool, so the smoke test cannot clean up after itself.
 
 Design decisions and internals: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 Contributing: **[CONTRIBUTING.md](CONTRIBUTING.md)**.

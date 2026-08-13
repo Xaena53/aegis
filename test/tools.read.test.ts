@@ -152,6 +152,30 @@ test("list_accounts: MCC altındaki alt hesaplar da listelenir", async () => {
   assert.match(out, /\[TEST\]/);
 });
 
+/**
+ * Regression: an account whose details cannot be read has an UNKNOWN manager status.
+ * Reporting it as `yonetici: false` claims the opposite of what is known — the agent reads
+ * that as an ordinary ad account and every subsequent call fails with permission errors.
+ * Found by the live smoke test, which auto-selected exactly such an account.
+ */
+test("list_accounts: detayı okunamayan hesap kullanılabilir gibi sunulmaz", async () => {
+  const { ctx } = sahteContext({
+    hesaplar: ["5346956094", "1466231519"],
+    okunamayanHesaplar: ["5346956094"],
+    queries: [[/FROM customer\b/, [{ customer: { descriptive_name: "Reklam Hesabı", currency_code: "TRY", manager: false } }]]],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "list_accounts", arguments: {} });
+  const metin = String(res.content?.[0]?.text ?? "");
+  const okunamayan = res.structuredContent.hesaplar.find((h: any) => h.id === "5346956094");
+  const saglam = res.structuredContent.hesaplar.find((h: any) => h.id === "1466231519");
+
+  assert.equal(okunamayan?.erisilemedi, true, "okunamayan hesap işaretlenmeli");
+  assert.match(metin, /ERİŞİLEMEDİ/, "insan-okur tabloda da uyarı olmalı");
+  assert.ok(!saglam?.erisilemedi, "okunabilen hesap yanlışlıkla işaretlenmemeli");
+  assert.equal(saglam?.yonetici, false, "okunabilen reklam hesabı normal görünmeli");
+});
+
 /** Structured output: the agent should never have to parse numbers out of prose. */
 async function yapisal(c: any, name: string, args: Record<string, unknown>) {
   const res: any = await c.callTool({ name, arguments: args });

@@ -21,6 +21,13 @@ export interface SahteAyar {
   queries?: Array<[RegExp, any[]]>;
   /** Top-level accounts that listAccessibleCustomers will return. */
   hesaplar?: string[];
+  /**
+   * Accounts whose queries throw, modelling an account Google lists as accessible but
+   * whose details cannot actually be read (the usual cause is a missing login-customer-id).
+   * Without this the fake API can never fail, and the code paths that handle a partially
+   * readable account list would go untested.
+   */
+  okunamayanHesaplar?: string[];
 }
 
 export interface Kayit {
@@ -71,6 +78,9 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
   ctx.queryWithRetry = async (cid: string, gaql: string) => {
     rec.queries.push(gaql);
     rec.customerIds.push(cid);
+    if ((opts.okunamayanHesaplar ?? []).includes(cid)) {
+      throw new Error("USER_PERMISSION_DENIED: User doesn't have permission to access customer.");
+    }
     return yanit(gaql);
   };
   ctx.mutateWithRetry = async (fn: () => any) => fn();

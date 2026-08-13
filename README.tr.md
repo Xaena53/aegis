@@ -6,7 +6,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-154-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-155-brightgreen.svg)](test/)
 
 🇬🇧 [English README](README.md)
 
@@ -216,13 +216,42 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 154 test
+npm test           # 155 çevrimdışı test
+npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 ```
 
 Testler, enjekte edilmiş sahte bir Google Ads context'iyle `InMemoryTransport` üzerinde
 gerçek bir MCP istemci/sunucu çifti çalıştırır; böylece her kapı canlı hesaba
 dokunmadan, protokolün tamamı üzerinden sınanır. Pakette kapalı-arıza regresyonları ve
 kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var.
+
+### Canlı duman testi
+
+Çevrimdışı paket, sunucunun yalnızca *modellendiği haliyle* API'ye karşı doğru olduğunu
+kanıtlayabilir. `npm run smoke` bu boşluğu kapatır: gerçek stdio ikilisini başlatır,
+Claude Desktop'ın konuştuğu gibi MCP konuşur ve her vaadi Google'ın canlı sunucularına
+karşı doğrular.
+
+| Doğrulanan | Nasıl |
+|---|---|
+| Sunucu kurallarını ajana anlatıyor | `instructions` dolu ve DURAKLATILMIŞ kuralını taşıyor |
+| Hesaplar çözülüyor | her ID 10 hane; okunamayan hesap tahmin edilmiyor, atlanıyor |
+| Raporlar tipli | `structuredContent` bildirilen `outputSchema` ile uyuşuyor |
+| Çok satırlı GAQL alan kaybetmiyor | son `SELECT` alanı dönen satırlarda mevcut |
+| LIMIT tavanı gerçekten kesiyor | önce kırpmasız sayı ölçülüyor, sonra kesildiği kanıtlanıyor |
+| Kelepçeler okunabiliyor | `adspilot://accounts/{id}/limits` tavanı ve yazma iznini bildiriyor |
+| Tamamlama gerçek hesabı öneriyor | `completion/complete` canlı hesap ID'sini döndürüyor |
+| Tavan üstü bütçe reddediliyor | ret **ve** canlı bütçenin değişmediği doğrulanıyor |
+| Onaysız yayına alma reddediliyor | ret **ve** canlı durumun değişmediği doğrulanıyor |
+
+Varsayılan çalıştırma **hiçbir şeyi değiştirmez** — harcamayla ilgili kapılar reddetme
+yolundan doğrulanır ve bir ret, ancak altındaki değer yeniden okunup değişmediği
+görüldüğünde kanıt sayılır. Hesabın verisiyle kanıtlanamayan bir kontrol, sessizce
+geçmek yerine kendini başarısız bildirir.
+
+`npm run smoke -- --write` ek olarak gerçek bir kampanya oluşturur ve `PAUSED` doğduğunu
+doğrular. Yeni kampanya ID'sini elle silmen için yazdırır: sunucuda bilinçli olarak silme
+aracı yok, bu yüzden duman testi kendi artığını temizleyemez.
 
 Tasarım kararları ve iç yapı: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 Katkı: **[CONTRIBUTING.md](CONTRIBUTING.md)**.

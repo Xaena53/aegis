@@ -20,7 +20,8 @@
     "serve": "node dist/http.js",
     "dev": "tsx src/index.ts",
     "test": "node --import tsx --test \"test/*.test.ts\"",
-    "auth": "node scripts/get-refresh-token.mjs"
+    "auth": "node scripts/get-refresh-token.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "engines": {
     "node": ">=22.13.0"

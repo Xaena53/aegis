@@ -48,6 +48,10 @@ const HESAP_SEMASI = {
         testHesabi: z.boolean().optional(),
         durum: z.string().optional(),
         ustHesap: z.string().optional().describe("Alt hesapsa bağlı olduğu MCC"),
+        erisilemedi: z
+          .boolean()
+          .optional()
+          .describe("Detayları okunamadı: yönetici mi değil mi BİLİNMİYOR, kampanya için kullanma"),
       })
     )
     .describe("Erişilebilir hesaplar (MCC alt hesapları dahil)"),
@@ -124,7 +128,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         "Erişilebilen tüm Google Ads hesaplarını (MCC alt hesapları dahil) listeler. " +
         "KULLAN: başka bir araca vereceğin customerId'yi bilmiyorsan İLK bunu çağır. " +
         "KULLANMA: kimliği zaten biliyorsan tekrar çağırma. " +
-        "DİKKAT: MCC (yönetici) hesabında kampanya OLUŞTURULAMAZ — 'reklam hesabı' olanı seç.",
+        "DİKKAT: MCC (yönetici) hesabında kampanya OLUŞTURULAMAZ — 'reklam hesabı' olanı seç. " +
+        "erisilemedi=true olan hesabı SEÇME: detayları okunamadı, yönetici olup olmadığı bilinmiyor.",
       annotations: READ_ANNOTATIONS,
       outputSchema: HESAP_SEMASI,
     },
@@ -142,6 +147,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           testHesabi?: boolean;
           durum?: string;
           ustHesap?: string;
+          erisilemedi?: boolean;
         };
         const hesaplar: Hesap[] = [];
 
@@ -185,14 +191,26 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               }
             }
           } catch {
-            hesaplar.push({ id, ad: "(detay okunamadı — login_customer_id gerekebilir)", yonetici: false });
+            /**
+             * The account is listed as accessible but its details cannot be read, so whether
+             * it is a manager is UNKNOWN. Reporting `yonetici: false` here would state the
+             * opposite of what is known: the agent reads that as an ordinary ad account,
+             * picks it, and every call fails with USER_PERMISSION_DENIED. The unknown is
+             * surfaced instead, in both the structured output and the human-readable table.
+             */
+            hesaplar.push({
+              id,
+              ad: "(detay okunamadı — login_customer_id gerekebilir)",
+              yonetici: false,
+              erisilemedi: true,
+            });
           }
         }
 
         const satirlar = hesaplar.map((h) =>
           h.ustHesap
             ? `  └ ${h.id}\t${h.ad}\t${h.paraBirimi ?? "?"}${h.durum ? `\t[${h.durum}]` : ""}${h.yonetici ? " [MCC]" : ""}${h.testHesabi ? " [TEST]" : ""}`
-            : `${h.id}\t${h.ad}\t${h.paraBirimi ?? "?"}${h.yonetici ? "\t[MCC]" : ""}`
+            : `${h.id}\t${h.ad}\t${h.paraBirimi ?? "?"}${h.yonetici ? "\t[MCC]" : ""}${h.erisilemedi ? "\t[ERİŞİLEMEDİ — kampanya için kullanma]" : ""}`
         );
         const extra = ids.length > 30 ? `\n(… ve ${ids.length - 30} hesap daha — detayları atlandı)` : "";
         return ikili("customerId\tisim\tpara birimi\n" + satirlar.join("\n") + extra, { hesaplar });
