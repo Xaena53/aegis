@@ -24,6 +24,12 @@ export interface AdsPilotConfig {
   loginCustomerId?: string;
   writeEnabled: boolean;
   maxDailyBudget: number;
+  /** Nokia Network-as-Code application key; absent = network verification off. */
+  nacToken?: string;
+  /** E.164 number of the human whose approval the network verifies. */
+  approverPhone?: string;
+  /** SIM-swap lookback window for high-risk actions (hours). */
+  simSwapWindowHours: number;
 }
 
 const REQUIRED = [
@@ -35,6 +41,23 @@ const REQUIRED = [
 
 export function missingCredentials(): string[] {
   return REQUIRED.filter((k) => !process.env[k]?.trim());
+}
+
+/**
+ * Network-verification settings are process-wide, not per-tenant: the NaC key belongs
+ * to the operator, and hosted mode reuses this helper so both entry points read the
+ * same variables the same way.
+ */
+export function nacConfigFromEnv(): Pick<AdsPilotConfig, "nacToken" | "approverPhone" | "simSwapWindowHours"> {
+  return {
+    nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
+    approverPhone: process.env.ADSPILOT_APPROVER_PHONE?.trim() || undefined,
+    simSwapWindowHours: parseNumEnv(
+      "ADSPILOT_SIMSWAP_WINDOW_HOURS",
+      process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS,
+      72
+    ),
+  };
 }
 
 export function loadConfig(): AdsPilotConfig {
@@ -53,6 +76,7 @@ export function loadConfig(): AdsPilotConfig {
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.trim() || undefined,
     writeEnabled: parseBool(process.env.ADSPILOT_WRITE_ENABLED, true),
     maxDailyBudget: parseBudgetCap(process.env.ADSPILOT_MAX_DAILY_BUDGET),
+    ...nacConfigFromEnv(),
   };
 }
 

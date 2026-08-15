@@ -83,6 +83,8 @@ async function liveCampaignGuard(
       eylem: `"${kampanyaAdi}" kampanyası ŞU AN YAYINDA${belirsiz} — ${eylem} anında gerçek harcamayı etkiler.`,
       satirlar: [`Hesap: ${normalizeCustomerId(customerId)}`, ...ayrinti],
       soru: `${eylem} onaylıyor musun?`,
+      risk: "high",
+      agAyar: ctx.config,
     },
     confirm
   );
@@ -364,6 +366,8 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
                 `Tutarlar hesabın kendi para birimindedir.`,
               ],
               soru: "Bütçe artışını onaylıyor musun?",
+              risk: "medium",
+              agAyar: ctx.config,
             },
             confirm
           );
@@ -582,6 +586,8 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
                   : `⚠ COĞRAFİ HEDEF YOK — kampanya DÜNYA GENELİ yayınlanır ve bütçe alakasız trafiğe gider`,
               ],
               soru: "Kampanyayı yayına al?",
+              risk: "high",
+              agAyar: ctx.config,
             },
             confirm
           );

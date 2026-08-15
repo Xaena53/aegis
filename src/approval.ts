@@ -12,10 +12,16 @@
  *
  * Every failure mode — declined, cancelled, timed out, transport error — resolves to
  * "do not execute".
+ *
+ * When a risk tier is attached to the summary, the mobile network is consulted BEFORE
+ * any prompt is shown (see networkTrust.ts): a recently swapped approver SIM refuses
+ * the action outright, because the person who would answer the prompt may be the
+ * attacker who swapped it.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { agDogrula, type AgAyar, type AgRisk } from "./networkTrust.js";
 
-export type OnayKanali = "insan" | "ajan";
+export type OnayKanali = "insan" | "ajan" | "ag";
 
 export interface OnaySonucu {
   onaylandi: boolean;
@@ -31,6 +37,10 @@ export interface OnayOzeti {
   satirlar: string[];
   /** Label of the confirmation checkbox. */
   soru?: string;
+  /** Spend-risk tier; with `agAyar` set, the network is consulted before any prompt. */
+  risk?: AgRisk;
+  /** Network-verification config slice, passed by the calling tool from ctx.config. */
+  agAyar?: AgAyar;
 }
 
 /**
@@ -62,6 +72,17 @@ export async function onayAl(
   ozet: OnayOzeti,
   agentConfirm: boolean | undefined
 ): Promise<OnaySonucu> {
+  /**
+   * Network check runs FIRST — before the weak (confirm) and strong (elicitation)
+   * branches alike. A compromised approver must be refused on both paths; gating only
+   * the elicitation branch would let a stolen session fall back to confirm=true.
+   */
+  if (ozet.risk && ozet.agAyar) {
+    const ag = await agDogrula(ozet.agAyar, ozet.risk);
+    if (ag.engel) return { onaylandi: false, kanal: "ag", mesaj: ag.engel };
+    if (ag.kanit.length) ozet = { ...ozet, satirlar: [...ozet.satirlar, ...ag.kanit] };
+  }
+
   if (!elicitationVar(server)) {
     // Old or limited client: fall back to the agent-mediated gate
     if (agentConfirm === true) return { onaylandi: true, kanal: "ajan" };

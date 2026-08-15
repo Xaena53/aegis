@@ -17,7 +17,7 @@ import { AdsContext } from "./adsClient.js";
 import { UserStore, encryptSecret, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
 import { setRuntimeMode } from "./util.js";
-import { parseNumEnv } from "./config.js";
+import { nacConfigFromEnv, parseNumEnv } from "./config.js";
 
 /**
  * AGPL-3.0 SECTION 13 COMPLIANCE.
@@ -152,6 +152,7 @@ function contextFor(user: StoredUser): AdsContext {
       loginCustomerId: user.loginCustomerId,
       writeEnabled: user.writeEnabled,
       maxDailyBudget: user.maxDailyBudget,
+      ...nacConfigFromEnv(),
     });
     if (ctxCache.size > 500) ctxCache.clear(); // bound unlimited growth
     ctxCache.set(key, ctx);

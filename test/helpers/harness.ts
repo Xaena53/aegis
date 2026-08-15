@@ -2,6 +2,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.js";
 import { AdsContext } from "../../src/adsClient.js";
+import { __setSimSwapKanalForTests } from "../../src/networkTrust.js";
+
+/** Removes the injected fake CAMARA channel; call in a finally after agDurumu tests. */
+export function agKanaliniSifirla(): void {
+  __setSimSwapKanalForTests(undefined);
+}
 
 /**
  * Integration test harness.
@@ -28,6 +34,12 @@ export interface SahteAyar {
    * readable account list would go untested.
    */
   okunamayanHesaplar?: string[];
+  /**
+   * Enables network verification with a fake CAMARA channel: "temiz" answers no swap,
+   * "degisti" answers swapped, "hata" throws. The caller must reset the injected channel
+   * after the test (see agKanaliniSifirla), or the override leaks into later tests.
+   */
+  agDurumu?: "temiz" | "degisti" | "hata";
 }
 
 export interface Kayit {
@@ -74,6 +86,18 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
     writeEnabled: opts.writeEnabled ?? true,
     maxDailyBudget: opts.maxDailyBudget ?? 500,
   };
+  if (opts.agDurumu) {
+    ctx.config.nacToken = "test-nac-token";
+    ctx.config.approverPhone = "+905551112233";
+    ctx.config.simSwapWindowHours = 72;
+    const durum = opts.agDurumu;
+    __setSimSwapKanalForTests({
+      verifySimSwap: async () => {
+        if (durum === "hata") throw new Error("NaC sandbox unreachable");
+        return durum === "degisti";
+      },
+    });
+  }
   ctx.getCustomer = () => customer;
   ctx.queryWithRetry = async (cid: string, gaql: string) => {
     rec.queries.push(gaql);
