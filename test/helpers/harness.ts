@@ -40,6 +40,12 @@ export interface SahteAyar {
    * after the test (see agKanaliniSifirla), or the override leaks into later tests.
    */
   agDurumu?: "temiz" | "degisti" | "hata";
+  /**
+   * Records the lookback window (hours) each SIM-swap check was called with. This is
+   * how tests pin the risk tier end-to-end: without it, swapping "medium" and "high"
+   * at the write.ts call sites changes nothing any test observes.
+   */
+  agPencereKaydi?: number[];
 }
 
 export interface Kayit {
@@ -92,7 +98,8 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
     ctx.config.simSwapWindowHours = 72;
     const durum = opts.agDurumu;
     __setSimSwapKanalForTests({
-      verifySimSwap: async () => {
+      verifySimSwap: async (saat) => {
+        opts.agPencereKaydi?.push(saat);
         if (durum === "hata") throw new Error("NaC sandbox unreachable");
         return durum === "degisti";
       },

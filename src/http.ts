@@ -140,7 +140,13 @@ function oauthClient() {
 const ctxCache = new Map<string, AdsContext>();
 
 function contextFor(user: StoredUser): AdsContext {
-  const key = [user.id, user.refreshToken, user.loginCustomerId ?? "", user.writeEnabled, user.maxDailyBudget].join("|");
+  // Network-verification settings join the key: env is read once per process today,
+  // but a future runtime reload must not keep serving up to 500 stale contexts.
+  const nac = nacConfigFromEnv();
+  const key = [
+    user.id, user.refreshToken, user.loginCustomerId ?? "", user.writeEnabled, user.maxDailyBudget,
+    nac.nacToken ?? "", nac.approverPhone ?? "", nac.simSwapWindowHours,
+  ].join("|");
   let ctx = ctxCache.get(key);
   if (!ctx) {
     const { id, secret, devToken } = oauthClient();
@@ -152,7 +158,7 @@ function contextFor(user: StoredUser): AdsContext {
       loginCustomerId: user.loginCustomerId,
       writeEnabled: user.writeEnabled,
       maxDailyBudget: user.maxDailyBudget,
-      ...nacConfigFromEnv(),
+      ...nac,
     });
     if (ctxCache.size > 500) ctxCache.clear(); // bound unlimited growth
     ctxCache.set(key, ctx);

@@ -28,6 +28,7 @@
  *   node scripts/demo-agent.mjs "Hesabımı incele ve israf var mı söyle"
  *   (requires ANTHROPIC_API_KEY or an `ant auth login` profile)
  */
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -40,6 +41,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const GOREV =
   process.argv.slice(2).join(" ") ||
   "Reklam hesaplarımı listele, ilk reklam hesabının son 30 günlük kampanya performansını çıkar ve tek paragraf değerlendir.";
+
+if (!existsSync(join(ROOT, "dist", "index.js"))) {
+  console.error("dist/index.js bulunamadı — önce `npm run build` çalıştır.");
+  process.exit(1);
+}
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -91,62 +97,106 @@ const SISTEM =
   "Araç açıklamalarındaki KULLAN/KULLANMA yönergelerine uy. Para harcayan işlemleri sunucu " +
   "zaten insana onaylatır; onay reddedilirse kararı sorgulamadan kabul et. Türkçe yanıt ver.";
 
-let devam = true;
-while (devam) {
-  const response = await anthropic.beta.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    system: SISTEM,
-    tools,
-    messages,
-  });
-
-  if (response.stop_reason === "refusal") {
-    console.log("\nModel güvenlik gerekçesiyle yanıtı reddetti; görev sonlandırıldı.");
-    break;
-  }
-
-  for (const block of response.content) {
-    if (block.type === "text" && block.text.trim()) console.log(block.text);
-  }
-
-  if (response.stop_reason !== "tool_use") {
-    devam = false;
-    break;
-  }
-
-  messages.push({ role: "assistant", content: response.content });
-
-  // Execute every requested tool, then return ALL results in a single user message
-  const results = [];
-  for (const block of response.content) {
-    if (block.type !== "tool_use") continue;
-    console.log(`\n→ araç: ${block.name}(${JSON.stringify(block.input).slice(0, 120)})`);
-    try {
-      const out = await mcp.callTool({ name: block.name, arguments: block.input });
-      const metin = (out.content ?? [])
-        .map((c) => (c.type === "text" ? c.text : ""))
-        .join("\n");
-      results.push({
-        type: "tool_result",
-        tool_use_id: block.id,
-        content: metin || "(boş yanıt)",
-        is_error: out.isError === true,
-      });
-    } catch (e) {
-      results.push({
-        type: "tool_result",
-        tool_use_id: block.id,
-        content: `Araç hatası: ${e?.message ?? e}`,
-        is_error: true,
-      });
-    }
-  }
-  messages.push({ role: "user", content: results });
+/**
+ * After a MID-OUTPUT server-side fallback, blocks before the final `fallback` marker
+ * must be treated as discarded: thinking/tool_use from the declined attempt may not be
+ * echoed back, and executing those tool calls would return results for calls the
+ * serving model never made. Pre-output fallbacks (marker first) are unaffected.
+ */
+function fallbackSiniriUygula(content) {
+  const sinir = content.map((b) => b.type).lastIndexOf("fallback");
+  if (sinir <= 0) return content; // no fallback, or pre-output (nothing before it)
+  return content.filter(
+    (b, i) => i > sinir || !["thinking", "redacted_thinking", "tool_use"].includes(b.type)
+  );
 }
 
-rl.close();
-await mcp.close();
-process.exit(0);
+const SONUC_TAVANI = 30_000; // chars per tool result — a demo doesn't need more context
+
+try {
+  let devam = true;
+  while (devam) {
+    const response = await anthropic.beta.messages.create({
+      model: "claude-opus-5",
+      max_tokens: 16000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      system: SISTEM,
+      tools,
+      messages,
+    });
+
+    if (response.stop_reason === "refusal") {
+      console.log("\nModel güvenlik gerekçesiyle yanıtı reddetti; görev sonlandırıldı.");
+      break;
+    }
+
+    const icerik = fallbackSiniriUygula(response.content);
+
+    for (const block of icerik) {
+      if (block.type === "text" && block.text.trim()) console.log(block.text);
+    }
+
+    if (response.stop_reason === "max_tokens") {
+      console.log("\n⚠ Yanıt uzunluk sınırına takıldı — yukarıdaki metin YARIM olabilir, son cümleye güvenme.");
+      break;
+    }
+
+    if (response.stop_reason === "pause_turn") {
+      // Server paused mid-turn: append the partial turn and re-request to resume
+      messages.push({ role: "assistant", content: icerik });
+      continue;
+    }
+
+    if (response.stop_reason !== "tool_use") {
+      devam = false;
+      break;
+    }
+
+    messages.push({ role: "assistant", content: icerik });
+
+    // Execute every requested tool, then return ALL results in a single user message
+    const results = [];
+    for (const block of icerik) {
+      if (block.type !== "tool_use") continue;
+      console.log(`\n→ araç: ${block.name}(${JSON.stringify(block.input).slice(0, 120)})`);
+      try {
+        const out = await mcp.callTool({ name: block.name, arguments: block.input });
+        let metin = (out.content ?? [])
+          .map((c) => (c.type === "text" ? c.text : ""))
+          .join("\n");
+        if (metin.length > SONUC_TAVANI) {
+          metin = metin.slice(0, SONUC_TAVANI) + "\n[... sonuç kırpıldı ...]";
+        }
+        results.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: metin || "(boş yanıt)",
+          is_error: out.isError === true,
+        });
+      } catch (e) {
+        results.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: `Araç hatası: ${e?.message ?? e}`,
+          is_error: true,
+        });
+      }
+    }
+    messages.push({ role: "user", content: results });
+  }
+} catch (e) {
+  if (e?.status === 401 || /authentication|api.?key/i.test(String(e?.message))) {
+    console.error(
+      "\nAnthropic kimliği çözülemedi. ANTHROPIC_API_KEY ortam değişkenini tanımla " +
+        "(console.anthropic.com) ya da `ant auth login` ile giriş yap, sonra tekrar dene."
+    );
+  } else {
+    console.error(`\nBeklenmeyen hata: ${e?.message ?? e}`);
+  }
+  process.exitCode = 1;
+} finally {
+  rl.close();
+  await mcp.close().catch(() => {});
+}
+process.exit(process.exitCode ?? 0);

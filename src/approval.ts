@@ -77,7 +77,21 @@ export async function onayAl(
    * branches alike. A compromised approver must be refused on both paths; gating only
    * the elicitation branch would let a stolen session fall back to confirm=true.
    */
-  if (ozet.risk && ozet.agAyar) {
+  if (ozet.risk) {
+    /**
+     * A risk tag without its config is a programming error at the call site, and the
+     * safe reading of "the gate could not run" is refusal — silently skipping the
+     * network check here would be fail-open by omission.
+     */
+    if (!ozet.agAyar) {
+      return {
+        onaylandi: false,
+        kanal: "ag",
+        mesaj:
+          "Reddedildi: bu işlem risk etiketli ama ağ doğrulama yapılandırması onay kapısına " +
+          "ulaşmadı (agAyar eksik — sunucu tarafı hata). Güvenlik gereği harcama artışı uygulanmaz.",
+      };
+    }
     const ag = await agDogrula(ozet.agAyar, ozet.risk);
     if (ag.engel) return { onaylandi: false, kanal: "ag", mesaj: ag.engel };
     if (ag.kanit.length) ozet = { ...ozet, satirlar: [...ozet.satirlar, ...ag.kanit] };
