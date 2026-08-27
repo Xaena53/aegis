@@ -171,6 +171,19 @@ For the multi-user hosted deployment — systemd unit, nginx config, Docker imag
 the pitfalls that would otherwise cost you an afternoon — see
 **[deploy/README.md](deploy/README.md)**.
 
+## Docker
+
+The hosted (HTTP) mode comes up with one command:
+
+```bash
+cp .env.example .env        # fill in the four required values
+docker compose up --build
+curl http://localhost:8788/health          # -> {"ok":true,...}
+```
+
+Image layout, the environment table, the jury demo mode (`ADSPILOT_NAC_SIMULATE`), and
+troubleshooting live in **[docs/DOCKER.md](docs/DOCKER.md)**.
+
 ## From a URL to a campaign
 
 The flagship workflow. The server extracts *facts*, the client-side model does the

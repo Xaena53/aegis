@@ -46,6 +46,12 @@ export interface SahteAyar {
    * at the write.ts call sites changes nothing any test observes.
    */
   agPencereKaydi?: number[];
+  /**
+   * SİMÜLASYON kanalı (ADSPILOT_NAC_SIMULATE karşılığı). Bilerek nacToken SET EDİLMEZ
+   * ve sahte kanal ENJEKTE EDİLMEZ: testin geçmesi, simülasyonun token'sız ve SDK'sız
+   * çalıştığını kanıtlar. agDurumu ile birlikte kullanma.
+   */
+  agSimulasyon?: string;
 }
 
 export interface Kayit {
@@ -104,6 +110,11 @@ export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
         return durum === "degisti";
       },
     });
+  }
+  if (opts.agSimulasyon !== undefined) {
+    ctx.config.approverPhone = "+905551112233";
+    ctx.config.simSwapWindowHours = 72;
+    ctx.config.nacSimulate = opts.agSimulasyon;
   }
   ctx.getCustomer = () => customer;
   ctx.queryWithRetry = async (cid: string, gaql: string) => {

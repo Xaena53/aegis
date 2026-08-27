@@ -23,6 +23,7 @@
     "auth": "node scripts/get-refresh-token.mjs",
     "smoke": "node scripts/smoke.mjs",
     "agent": "node scripts/demo-agent.mjs",
+    "demo": "node scripts/demo-senaryo.mjs",
     "brain": "node scripts/growth-brain.mjs"
   },
   "engines": {

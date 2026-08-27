@@ -1,14 +1,33 @@
-# Build context'e sır ve gereksiz dosya girmesin
+# SPDX-License-Identifier: AGPL-3.0-only
+# Build context'e sır ve gereksiz dosya girmesin. İmaja yalnız package*.json,
+# tsconfig.json ve src/ kopyalanır; gerisi bağlamı şişirir ya da sır taşır.
+
+# Sırlar — .env ASLA imaja girmez (.env.example şablondur, sır içermez)
 .env
 .env.*
 !.env.example
 *.db
 *.db-wal
 *.db-shm
+
+# Üretilen / makineye özgü — dist imaj İÇİNDE derlenir, dışarıdan girmez
 node_modules
 dist
+coverage
+*.log
+
+# Depo ve CI
 .git
 .github
-coverage
+
+# İmaja hiç kopyalanmayanlar
 test
-*.log
+docs
+scripts
+deploy
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+.mcp.json
+.nvmrc

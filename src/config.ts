@@ -30,6 +30,13 @@ export interface AdsPilotConfig {
   approverPhone?: string;
   /** SIM-swap lookback window for high-risk actions (hours). */
   simSwapWindowHours: number;
+  /**
+   * SİMÜLASYON kanalı ("temiz" | "degisti"): tanımlıysa gerçek NaC SDK'sı yerine simüle
+   * kanal kullanılır (jüri demosu token'sız çalışır). Değer burada DOĞRULANMAZ: bozuk
+   * bir env değeri sunucuyu başlangıçta düşürmemeli, doğrulama anında Türkçe hatayla
+   * reddedilmelidir (bkz. networkTrust.ts, fail-closed).
+   */
+  nacSimulate?: string;
 }
 
 const REQUIRED = [
@@ -48,10 +55,15 @@ export function missingCredentials(): string[] {
  * to the operator, and hosted mode reuses this helper so both entry points read the
  * same variables the same way.
  */
-export function nacConfigFromEnv(): Pick<AdsPilotConfig, "nacToken" | "approverPhone" | "simSwapWindowHours"> {
+export function nacConfigFromEnv(): Pick<
+  AdsPilotConfig,
+  "nacToken" | "approverPhone" | "simSwapWindowHours" | "nacSimulate"
+> {
   return {
     nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
     approverPhone: process.env.ADSPILOT_APPROVER_PHONE?.trim() || undefined,
+    // Bilerek ham geçirilir; "temiz"/"degisti" doğrulaması karar anında yapılır.
+    nacSimulate: process.env.ADSPILOT_NAC_SIMULATE?.trim() || undefined,
     simSwapWindowHours: parseNumEnv(
       "ADSPILOT_SIMSWAP_WINDOW_HOURS",
       process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS,

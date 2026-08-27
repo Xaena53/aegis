@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# AdsPilot — tek komutla hosted (HTTP) mod:
+#   cp .env.example .env   (dört zorunlu değeri doldur — bkz. docs/DOCKER.md)
+#   docker compose up --build
+#   curl http://localhost:8788/health
+
+services:
+  adspilot:
+    build: .
+    image: adspilot
+    # Sırlar .env'den gelir; .env imaja HİÇBİR ZAMAN kopyalanmaz (bkz. .dockerignore)
+    env_file: .env
+    environment:
+      # Konteynerin İÇ portu sabit 8788: .env'deki PORT değerini bilerek ezer,
+      # yoksa aşağıdaki port eşlemesi kırılır. Dış portu değiştirmek istersen
+      # ports satırının SOL tarafını değiştir (örn. "9000:8788").
+      PORT: "8788"
+      # Dışarıdan görünen adres — MCP Host/Origin doğrulaması bunu kullanır,
+      # eşlenen portla aynı olmalı. .env'de tanımlıysa oradaki değer kazanır.
+      ADSPILOT_PUBLIC_URL: "${ADSPILOT_PUBLIC_URL:-http://localhost:8788}"
+      # Veritabanı kalıcı birimde: içinde şifreli refresh token'lar var. .env'de
+      # boş bırakılmış ADSPILOT_DB'nin salt-okunur /app'e düşmesini de önler.
+      ADSPILOT_DB: /data/adspilot.db
+      #
+      # ── DEMO MODU (jüri/mentör): SIM-Swap SİMÜLASYONU, NaC token'sız ──────
+      # Aşağıdaki iki satırın yorumunu kaldır; üretilen her metin açıkça
+      # "SİMÜLASYON" ibaresi taşır, gerçek ağ doğrulaması gibi sunulamaz:
+      #   temiz   -> SIM değişimi yok sayılır, onay akışı normal ilerler
+      #   degisti -> SIM değişmiş sayılır: SERT RET, onay istemi hiç çıkmaz
+      # ADSPILOT_NAC_SIMULATE: "temiz"
+      # ADSPILOT_APPROVER_PHONE: "+905551112233"   # simülasyonda da ZORUNLU
+    ports:
+      - "8788:8788"
+    volumes:
+      # Kalıcı birim: kullanıcı token'ları burada yaşar; silinirse tüm
+      # kullanıcıların bağlantısı düşer ve herkes yeniden /connect yapar.
+      - adspilot-verisi:/data
+    # TEK replika çalıştır: oturumlar süreç belleğinde (bkz. Dockerfile sonu)
+    restart: unless-stopped
+
+volumes:
+  adspilot-verisi:

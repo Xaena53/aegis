@@ -1,22 +1,37 @@
-# AdsPilot hosted sunucusu
+# SPDX-License-Identifier: AGPL-3.0-only
+# AdsPilot — hosted (HTTP) sunucu imajı
 #
 # Node 22.13+ ZORUNLU: hosted mod `node:sqlite` kullanır ve bu modül Node 22.5'te
 # geldi, 22.13'te bayraksız hale geldi. Node 18/20 ile ilk import'ta çöker.
-FROM node:22.13-alpine AS build
+# node:22-alpine güncel 22.x'i çeker (>= 22.13); package.json'daki engines alanı
+# da aynı sınırı doğrular.
+
+# ── 1. Aşama: derleme (dev bağımlılıkları dahil) ──────────────────────────
+FROM node:22-alpine AS derleme
 WORKDIR /app
-COPY package*.json ./
+COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:22.13-alpine
+# ── 2. Aşama: yalnız üretim bağımlılıkları ────────────────────────────────
+FROM node:22-alpine AS bagimliliklar
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# ── 3. Aşama: çalışma imajı (yalnız dist + üretim node_modules) ───────────
+FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=8788
 
-COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=build /app/dist ./dist
+# package.json çalışma anında da gerekli: "type": "module" olmadan Node,
+# dist/http.js'i CommonJS sanır ve ilk import'ta çöker.
+COPY package.json ./
+COPY --from=bagimliliklar /app/node_modules ./node_modules
+COPY --from=derleme /app/dist ./dist
 
 # Veritabanı kalıcı bir birimde tutulmalı: içinde ŞİFRELİ refresh token'lar var.
 # WAL modu .db-wal ve .db-shm yan dosyaları üretir; üçü birlikte yedeklenmeli.
@@ -27,9 +42,9 @@ ENV ADSPILOT_DB=/data/adspilot.db
 # Kök olarak çalıştırma
 USER node
 
-EXPOSE 8787
+EXPOSE 8788
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8788)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # TEK INSTANCE: oturumlar ve hız sınırı sayaçları süreç belleğindedir.
 # Birden çok replika çalıştırmak 404 session_not_found döngüsü yaratır.

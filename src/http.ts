@@ -145,7 +145,7 @@ function contextFor(user: StoredUser): AdsContext {
   const nac = nacConfigFromEnv();
   const key = [
     user.id, user.refreshToken, user.loginCustomerId ?? "", user.writeEnabled, user.maxDailyBudget,
-    nac.nacToken ?? "", nac.approverPhone ?? "", nac.simSwapWindowHours,
+    nac.nacToken ?? "", nac.approverPhone ?? "", nac.simSwapWindowHours, nac.nacSimulate ?? "",
   ].join("|");
   let ctx = ctxCache.get(key);
   if (!ctx) {
