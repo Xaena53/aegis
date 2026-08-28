@@ -126,6 +126,7 @@ export function raporOlustur({
   efektifTavanTL,
   tavanKaynagi,
   yayinSonucu,
+  dagitim,
 } = {}) {
   const satirlar = [];
   const ekle = (...s) => satirlar.push(...s);
@@ -184,6 +185,31 @@ export function raporOlustur({
   }
 
   // ── Plan ──
+  if (Array.isArray(dagitim) && dagitim.length) {
+    ekle("## Kanal Bütçe Dağıtımı", "");
+    /**
+     * UYGULANAN ile ÖNERİLEN ayrımı burada yapılır ve yumuşatılmaz.
+     *
+     * Dağıtım bütçeyi kanallara böler, ama kampanya kurma yolu bugün tek kanaldan gider.
+     * İkisini aynı tabloda ayırmadan göstermek, uygulanmamış bir payı uygulanmış gibi
+     * okutur — raporun en kolay yalan söyleyeceği yer tam burasıdır.
+     */
+    ekle("| Kanal | Günlük bütçe | Durum | Gerekçe |", "|---|---|---|---|");
+    dagitim.forEach((pay, i) => {
+      const durum = i === 0 ? "bu koşuda planlandı" : "ÖNERİ — bu koşuda uygulanmadı";
+      ekle(`| ${guvenli(pay.kanal)} | ${guvenli(String(pay.gunlukButce))} | ${durum} | ${guvenli(pay.gerekce)} |`);
+    });
+    ekle("");
+    if (dagitim.length > 1) {
+      ekle(
+        "> Yalnız ilk satırdaki kanal için kampanya kuruldu/planlandı. Diğer kanalların payı " +
+          "bir ÖNERİDİR: o platformda kampanya açılmadı, hiçbir çağrı yapılmadı. Uygulamak " +
+          "için o kanalın kendi araçları ayrıca çalıştırılmalıdır.",
+        ""
+      );
+    }
+  }
+
   ekle("## Plan", "");
   if (plan && typeof plan === "object") {
     const butce = Number.isFinite(plan.butceGunlukTL)

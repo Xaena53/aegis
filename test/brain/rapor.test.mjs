@@ -213,3 +213,39 @@ test("musteriIdMaskele: 10 haneli maskeler, 11 haneli birakir", () => {
   assert.equal(musteriIdMaskele("22345678901"), "22345678901");
   assert.equal(musteriIdMaskele(null), "");
 });
+
+test("kanal dağıtımı raporda: UYGULANAN ile ÖNERİ ayrımı yumuşatılmadan gösterilir", () => {
+  /**
+   * Raporun en kolay yalan söyleyeceği yer burası: bütçe kanallara bölünmüş ama kampanya
+   * tek kanalda kurulmuşken, ikisini aynı tabloda ayırmadan göstermek uygulanmamış bir
+   * payı uygulanmış gibi okutur.
+   */
+  const rapor = raporOlustur({
+    hedef: "test",
+    arastirma: { pazarOzeti: "x", hedefKitle: "y", anahtarKelimeAdaylari: [] },
+    plan: { kampanyaAdi: "K", hedefUlke: "TR", dil: "tr", butceGunlukTL: 70, adGruplari: [], negatifKelimeler: [], basariMetrikleri: [] },
+    kreatif: { basliklar: ["a"], aciklamalar: ["b"] },
+    kuruMod: true,
+    dagitim: [
+      { kanal: "google", gunlukButce: 70, gerekce: "arama niyeti yüksek" },
+      { kanal: "meta", gunlukButce: 30, gerekce: "görsel keşif" },
+    ],
+  });
+
+  assert.ok(rapor.includes("Kanal Bütçe Dağıtımı"), "dağıtım bölümü olmalı");
+  assert.ok(rapor.includes("bu koşuda planlandı"), "uygulanan kanal işaretlenmeli");
+  assert.ok(rapor.includes("ÖNERİ — bu koşuda uygulanmadı"), "uygulanmayan pay ÖNERİ diye işaretlenmeli");
+  assert.ok(rapor.includes("hiçbir çağrı yapılmadı"), "önerinin ne anlama geldiği açıkça yazılmalı");
+  assert.ok(rapor.includes("arama niyeti yüksek"), "gerekçeler rapora geçmeli");
+});
+
+test("dağıtım verilmezse 'Kanal Bütçe Dağıtımı' bölümü HİÇ oluşmaz", () => {
+  const rapor = raporOlustur({
+    hedef: "test",
+    arastirma: { pazarOzeti: "x", hedefKitle: "y", anahtarKelimeAdaylari: [] },
+    plan: { kampanyaAdi: "K", hedefUlke: "TR", dil: "tr", butceGunlukTL: 50, adGruplari: [], negatifKelimeler: [], basariMetrikleri: [] },
+    kreatif: { basliklar: ["a"], aciklamalar: ["b"] },
+    kuruMod: true,
+  });
+  assert.ok(!rapor.includes("Kanal Bütçe Dağıtımı"));
+});

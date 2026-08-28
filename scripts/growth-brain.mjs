@@ -45,6 +45,7 @@ import { anthropicIstemci, jsonUret, mcpBaglan } from "./brain/ortak.mjs";
 import { arastir } from "./brain/arastirma.mjs";
 import { stratejiKur, planDogrula } from "./brain/strateji.mjs";
 import { kreatifUret } from "./brain/kreatif.mjs";
+import { butceDagit, dagitimOzeti, kullanilabilirKanallar } from "./brain/dagitim.mjs";
 import { raporOlustur } from "./brain/rapor.mjs";
 
 /** src/config.ts parseBudgetCap varsayılanı — sunucu tavanı okunamadığında güvenli alt sınır. */
@@ -348,12 +349,42 @@ async function ana() {
     );
     console.log(`Araştırma tamam: ${arastirma.anahtarKelimeAdaylari.length} anahtar kelime adayı.`);
 
-    console.log(`\n[2/${N}] Strateji…`);
-    const plan = await stratejiKur(
-      { hedef: girdi.hedef, butceGunlukTL: efektifTavan, arastirma },
+    /**
+     * KANAL DAĞITIMI — strateji hangi bütçeyle çalışacağını buradan öğrenir.
+     *
+     * Kullanılabilir kanal kümesi ORTAMDAN okunur, modele sorulmaz: yapılandırılmamış
+     * bir kanala pay ayırmak, çalışmayacak bir planı öneri diye sunmak olurdu. Tek kanal
+     * varsa model hiç çağrılmaz — cevabı belli bir soruya LLM harcamayız.
+     */
+    const kanallar = kullanilabilirKanallar();
+    const dagitim = await butceDagit(
+      { hedef: girdi.hedef, toplamButce: efektifTavan, kanallar, arastirma },
       { jsonUret2 }
     );
-    planDogrula(plan, efektifTavan);
+    console.log(`Kanal dağıtımı: ${dagitimOzeti(dagitim)}`);
+    if (kanallar.length === 1) {
+      console.log(
+        `  (yalnız '${kanallar[0]}' yapılandırılmış — Meta için ADSPILOT_META_TOKEN ve ` +
+          `ADSPILOT_META_AD_ACCOUNT_ID tanımlanmalı)`
+      );
+    }
+
+    /**
+     * Strateji BİRİNCİ kanalın payıyla kurulur ve uygulama da o kanala yazar.
+     *
+     * Bugünkü dürüst sınır: dağıtım kanallara bölüyor, ama kampanya kurma yolu tek
+     * kanaldan gidiyor. Diğer kanalların payı rapora ÖNERİ olarak yazılıyor ve bunun
+     * öneri olduğu orada açıkça söyleniyor — otomatik uygulanıyormuş gibi gösterilmiyor.
+     */
+    const birincilPay = dagitim[0];
+    const kanalButcesi = birincilPay.gunlukButce;
+
+    console.log(`\n[2/${N}] Strateji… (${birincilPay.kanal}: ${kanalButcesi} TL)`);
+    const plan = await stratejiKur(
+      { hedef: girdi.hedef, butceGunlukTL: kanalButcesi, arastirma },
+      { jsonUret2 }
+    );
+    planDogrula(plan, kanalButcesi);
     console.log(`Plan doğrulandı: "${terminalTemiz(plan.kampanyaAdi)}" — günlük ${plan.butceGunlukTL} TL.`);
 
     console.log(`\n[3/${N}] Kreatif…`);
@@ -443,6 +474,7 @@ async function ana() {
 
     const yazmaYapilmadi = kuruMod || uygulamaSonucu === undefined;
     const rapor = raporOlustur({
+        dagitim,
       hedef: girdi.hedef,
       arastirma,
       plan,
