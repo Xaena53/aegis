@@ -17,9 +17,13 @@
  * any prompt is shown (see networkTrust.ts): a recently swapped approver SIM refuses
  * the action outright, because the person who would answer the prompt may be the
  * attacker who swapped it.
+ *
+ * Her ağ kararı (ret VE geçiş) denetim izi için kararGunlugu.ts'e yazılır. Günlük
+ * gözlemdir, kapı değildir: yazılamazsa akış aynen sürer.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { agDogrula, type AgAyar, type AgRisk } from "./networkTrust.js";
+import { agKararKaydiOlustur, kararYaz } from "./kararGunlugu.js";
 
 export type OnayKanali = "insan" | "ajan" | "ag";
 
@@ -41,6 +45,12 @@ export interface OnayOzeti {
   risk?: AgRisk;
   /** Network-verification config slice, passed by the calling tool from ctx.config. */
   agAyar?: AgAyar;
+  /**
+   * Kararın ait olduğu reklam hesabı (Google Ads müşteri ID). Yalnız denetim günlüğüne
+   * yazılır, karar mantığını ETKİLEMEZ. Hosted çok-kiracılı modda tüm kiracıların
+   * kararları tek dosyaya düştüğü için bu alan olmadan kayıtlar ayırt edilemiyordu.
+   */
+  hesapId?: string;
 }
 
 /**
@@ -84,15 +94,31 @@ export async function onayAl(
      * network check here would be fail-open by omission.
      */
     if (!ozet.agAyar) {
-      return {
-        onaylandi: false,
-        kanal: "ag",
-        mesaj:
-          "Reddedildi: bu işlem risk etiketli ama ağ doğrulama yapılandırması onay kapısına " +
-          "ulaşmadı (agAyar eksik — sunucu tarafı hata). Güvenlik gereği harcama artışı uygulanmaz.",
-      };
+      const mesaj =
+        "Reddedildi: bu işlem risk etiketli ama ağ doğrulama yapılandırması onay kapısına " +
+        "ulaşmadı (agAyar eksik — sunucu tarafı hata). Güvenlik gereği harcama artışı uygulanmaz.";
+      kararYaz(
+        agKararKaydiOlustur(
+          ozet.eylem,
+          ozet.risk,
+          {
+            engel: mesaj,
+            kanit: [],
+            // Kapı hiç çağrılamadı: hiçbir halka sorgu yapmadı, pencere de yok.
+            iz: { simSwap: "calismadi", retNedeni: "ag-ayari-kapiya-ulasmadi" },
+          },
+          ozet.hesapId
+        )
+      );
+      return { onaylandi: false, kanal: "ag", mesaj };
     }
     const ag = await agDogrula(ozet.agAyar, ozet.risk);
+    /**
+     * Denetim izi: RET ve GEÇİŞ tek noktadan, karardan hemen sonra kaydedilir —
+     * yalnız retleri yazmak "hiç sorulmadı" ile "sorulup geçti"yi ayırt edilemez
+     * kılardı. kararYaz asla fırlatmaz; günlük gözlemdir, kapı değildir.
+     */
+    kararYaz(agKararKaydiOlustur(ozet.eylem, ozet.risk, ag, ozet.hesapId));
     if (ag.engel) return { onaylandi: false, kanal: "ag", mesaj: ag.engel };
     if (ag.kanit.length) ozet = { ...ozet, satirlar: [...ozet.satirlar, ...ag.kanit] };
   }

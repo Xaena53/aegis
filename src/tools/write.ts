@@ -85,6 +85,8 @@ async function liveCampaignGuard(
       soru: `${eylem} onaylıyor musun?`,
       risk: "high",
       agAyar: ctx.config,
+      // Denetim günlüğü çok-kiracılı modda hangi hesabın kararı olduğunu bilmeli.
+      hesapId: normalizeCustomerId(customerId),
     },
     confirm
   );
@@ -368,6 +370,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               soru: "Bütçe artışını onaylıyor musun?",
               risk: "medium",
               agAyar: ctx.config,
+              hesapId: normalizeCustomerId(customerId),
             },
             confirm
           );
@@ -588,6 +591,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               soru: "Kampanyayı yayına al?",
               risk: "high",
               agAyar: ctx.config,
+              hesapId: normalizeCustomerId(customerId),
             },
             confirm
           );

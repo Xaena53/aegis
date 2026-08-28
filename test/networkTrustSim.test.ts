@@ -95,6 +95,27 @@ test("sim: pencere metinleri katmanı söyler — medium 24 saat, high yapıland
   assert.match(dar.engel!, /12 saat/, "yapılandırılan 24'ten darsa medium onu kullanmalı");
 });
 
+test("sim: iz 'simulasyon' der — simüle karar gerçek sorgu gibi izlenemez", async () => {
+  const temiz = await agDogrula({ ...SIM_AYAR, nacSimulate: "temiz" }, "high");
+  assert.deepEqual(temiz.iz, { simSwap: "simulasyon", pencereSaat: 72, maskeliNumara: "+905*******33" });
+
+  const degisti = await agDogrula({ ...SIM_AYAR, nacSimulate: "degisti" }, "medium");
+  assert.equal(degisti.iz.simSwap, "simulasyon");
+  assert.equal(degisti.iz.pencereSaat, 24, "iz, kararın verildiği pencereyi taşır");
+  assert.equal(degisti.iz.retNedeni, "sim-degisti");
+});
+
+test("sim: yapılandırma hatalarında iz 'calismadi' + sabit kod, pencere/numara YAZILMAZ", async () => {
+  const celiski = await agDogrula({ ...SIM_AYAR, nacToken: "gercek-token", nacSimulate: "temiz" }, "high");
+  assert.deepEqual(celiski.iz, { simSwap: "calismadi", retNedeni: "yapilandirma-celiskili" });
+
+  const tanimsiz = await agDogrula({ ...SIM_AYAR, nacSimulate: "belki" }, "high");
+  assert.deepEqual(tanimsiz.iz, { simSwap: "calismadi", retNedeni: "simulasyon-degeri-tanimsiz" });
+
+  const numarasiz = await agDogrula({ simSwapWindowHours: 72, nacSimulate: "temiz" }, "high");
+  assert.deepEqual(numarasiz.iz, { simSwap: "calismadi", retNedeni: "onaylayici-numarasi-yok" });
+});
+
 /* ── integration: gerçek MCP protokolü üzerinden, token'sız ve SDK'sız ────────── */
 
 async function elicitationliIstemci(ctx: any, karar: "accept" | "decline" = "accept") {

@@ -146,6 +146,63 @@ test("ağ: API hata mesajı ret metnine SIZMAZ (upstream gövde telefon numaras�
   }
 });
 
+/* ── yapısal denetim izi (AgIz) ───────────────────────────────────────────────── */
+
+/**
+ * İz, kararın NASIL oluştuğunu kapının kendi beyanıyla taşır. Aşağı akıştaki denetim
+ * günlüğü bunu ret/kanıt metnini koklayarak tahmin ediyordu ve iki halkanın metni
+ * birleşince yalan söylüyordu; buradaki iddialar o beyanı sabitler.
+ */
+test("iz: kapalı katman ile ÇALIŞAMAYAN katman ayrı değerlerdir (kapali ≠ calismadi)", async () => {
+  const kapali = await agDogrula({ simSwapWindowHours: 72 }, "high");
+  assert.deepEqual(kapali.iz, { simSwap: "kapali" }, "bilerek kapalı: sorgu da pencere de yok");
+
+  const eksik = await agDogrula({ nacToken: "t", simSwapWindowHours: 72 }, "high");
+  assert.equal(eksik.iz.simSwap, "calismadi", "yapılandırma hatası 'kapali' ile karıştırılamaz");
+  assert.equal(eksik.iz.retNedeni, "onaylayici-numarasi-yok");
+  assert.equal(eksik.iz.pencereSaat, undefined, "hiç sorgulanmayan katmanın penceresi yazılmaz");
+  assert.equal(eksik.iz.maskeliNumara, undefined);
+});
+
+test("iz: gerçek kanalın her sonucu 'gercek' izi + doğru sabit ret kodu üretir", async () => {
+  try {
+    kanal(true);
+    const ret = await agDogrula(AYAR, "high");
+    assert.deepEqual(ret.iz, {
+      simSwap: "gercek",
+      pencereSaat: 72,
+      maskeliNumara: "+905*******33",
+      retNedeni: "sim-degisti",
+    });
+
+    kanal(false, undefined);
+    const gecti = await agDogrula(AYAR, "medium");
+    assert.equal(gecti.iz.simSwap, "gercek");
+    assert.equal(gecti.iz.pencereSaat, 24, "iz, GERÇEKTEN sorgulanan pencereyi taşır");
+    assert.equal(gecti.iz.retNedeni, undefined);
+    assert.equal(gecti.iz.nv, undefined, "NV halkası koşmadıysa alan hiç yoktur");
+
+    kanal("hata");
+    const yanitsiz = await agDogrula(AYAR, "high");
+    assert.equal(yanitsiz.iz.simSwap, "gercek", "sorgu gerçekten DENENDİ — 'calismadi' değil");
+    assert.equal(yanitsiz.iz.retNedeni, "ag-yanitsiz");
+    assert.equal(yanitsiz.iz.pencereSaat, 72);
+  } finally {
+    agKanaliniSifirla();
+  }
+});
+
+test("iz: numara alanı yalnız maskele() çıktısıdır — ham numara ize hiç girmez", async () => {
+  try {
+    kanal(true);
+    const k = await agDogrula(AYAR, "high");
+    assert.match(k.iz.maskeliNumara!, /^\+905\*+33$/);
+    assert.doesNotMatch(JSON.stringify(k.iz), /5551112233/, "tam numara ize sızmamalı");
+  } finally {
+    agKanaliniSifirla();
+  }
+});
+
 test("ağ: risk etiketi var ama agAyar YOKSA kapı fail-open olmaz — reddedilir", async () => {
   const { onayAl } = await import("../src/approval.js");
   const sonuc = await onayAl(

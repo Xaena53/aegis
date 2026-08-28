@@ -25,7 +25,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
-ENV PORT=8788
+# Port, deponun her yerindeki varsayılanla AYNI olmalı: .env.example, src/http.ts
+# yedeği ve ADSPILOT_PUBLIC_URL örnekleri 8787 der. Farklı bir imaj portu, kopyalanan
+# .env'deki ADSPILOT_PUBLIC_URL ile uyuşmayınca her /mcp isteğini 403'e düşürür.
+ENV PORT=8787
 
 # package.json çalışma anında da gerekli: "type": "module" olmadan Node,
 # dist/http.js'i CommonJS sanır ve ilk import'ta çöker.
@@ -42,9 +45,9 @@ ENV ADSPILOT_DB=/data/adspilot.db
 # Kök olarak çalıştırma
 USER node
 
-EXPOSE 8788
+EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8788)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # TEK INSTANCE: oturumlar ve hız sınırı sayaçları süreç belleğindedir.
 # Birden çok replika çalıştırmak 404 session_not_found döngüsü yaratır.

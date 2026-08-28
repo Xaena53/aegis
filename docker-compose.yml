@@ -2,7 +2,7 @@
 # AdsPilot — tek komutla hosted (HTTP) mod:
 #   cp .env.example .env   (dört zorunlu değeri doldur — bkz. docs/DOCKER.md)
 #   docker compose up --build
-#   curl http://localhost:8788/health
+#   curl http://localhost:8787/health
 
 services:
   adspilot:
@@ -11,13 +11,13 @@ services:
     # Sırlar .env'den gelir; .env imaja HİÇBİR ZAMAN kopyalanmaz (bkz. .dockerignore)
     env_file: .env
     environment:
-      # Konteynerin İÇ portu sabit 8788: .env'deki PORT değerini bilerek ezer,
+      # Konteynerin İÇ portu sabit 8787: .env'deki PORT değerini bilerek ezer,
       # yoksa aşağıdaki port eşlemesi kırılır. Dış portu değiştirmek istersen
-      # ports satırının SOL tarafını değiştir (örn. "9000:8788").
-      PORT: "8788"
+      # ports satırının SOL tarafını değiştir (örn. "9000:8787").
+      PORT: "8787"
       # Dışarıdan görünen adres — MCP Host/Origin doğrulaması bunu kullanır,
       # eşlenen portla aynı olmalı. .env'de tanımlıysa oradaki değer kazanır.
-      ADSPILOT_PUBLIC_URL: "${ADSPILOT_PUBLIC_URL:-http://localhost:8788}"
+      ADSPILOT_PUBLIC_URL: "${ADSPILOT_PUBLIC_URL:-http://localhost:8787}"
       # Veritabanı kalıcı birimde: içinde şifreli refresh token'lar var. .env'de
       # boş bırakılmış ADSPILOT_DB'nin salt-okunur /app'e düşmesini de önler.
       ADSPILOT_DB: /data/adspilot.db
@@ -30,7 +30,7 @@ services:
       # ADSPILOT_NAC_SIMULATE: "temiz"
       # ADSPILOT_APPROVER_PHONE: "+905551112233"   # simülasyonda da ZORUNLU
     ports:
-      - "8788:8788"
+      - "8787:8787"
     volumes:
       # Kalıcı birim: kullanıcı token'ları burada yaşar; silinirse tüm
       # kullanıcıların bağlantısı düşer ve herkes yeniden /connect yapar.

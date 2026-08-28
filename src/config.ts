@@ -37,6 +37,14 @@ export interface AdsPilotConfig {
    * reddedilmelidir (bkz. networkTrust.ts, fail-closed).
    */
   nacSimulate?: string;
+  /**
+   * Number Verification SİMÜLASYON kanalı ("dogrulandi" | "uyusmadi"): güven zincirinin
+   * 2. halkası, YALNIZ high risk katmanında koşar. Gerçek CAMARA Number Verification
+   * cihaz-taraflı OIDC akışı ister ve sunucudan tek başına çağrılamaz; bu yüzden şimdilik
+   * yalnız simülasyon vardır (bkz. networkTrust.ts dosya başı). Değer burada DOĞRULANMAZ —
+   * nacSimulate ile aynı gerekçe: karar anında Türkçe hatayla reddedilir.
+   */
+  nvSimulate?: string;
 }
 
 const REQUIRED = [
@@ -57,13 +65,15 @@ export function missingCredentials(): string[] {
  */
 export function nacConfigFromEnv(): Pick<
   AdsPilotConfig,
-  "nacToken" | "approverPhone" | "simSwapWindowHours" | "nacSimulate"
+  "nacToken" | "approverPhone" | "simSwapWindowHours" | "nacSimulate" | "nvSimulate"
 > {
   return {
     nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
     approverPhone: process.env.ADSPILOT_APPROVER_PHONE?.trim() || undefined,
     // Bilerek ham geçirilir; "temiz"/"degisti" doğrulaması karar anında yapılır.
     nacSimulate: process.env.ADSPILOT_NAC_SIMULATE?.trim() || undefined,
+    // Aynı gerekçe: "dogrulandi"/"uyusmadi" doğrulaması karar anında yapılır.
+    nvSimulate: process.env.ADSPILOT_NV_SIMULATE?.trim() || undefined,
     simSwapWindowHours: parseNumEnv(
       "ADSPILOT_SIMSWAP_WINDOW_HOURS",
       process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS,

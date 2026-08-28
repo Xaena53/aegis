@@ -178,7 +178,7 @@ The hosted (HTTP) mode comes up with one command:
 ```bash
 cp .env.example .env        # fill in the four required values
 docker compose up --build
-curl http://localhost:8788/health          # -> {"ok":true,...}
+curl http://localhost:8787/health          # -> {"ok":true,...}
 ```
 
 Image layout, the environment table, the jury demo mode (`ADSPILOT_NAC_SIMULATE`), and

@@ -24,6 +24,7 @@
     "smoke": "node scripts/smoke.mjs",
     "agent": "node scripts/demo-agent.mjs",
     "demo": "node scripts/demo-senaryo.mjs",
+    "prova": "node scripts/prova.mjs",
     "brain": "node scripts/growth-brain.mjs"
   },
   "engines": {
