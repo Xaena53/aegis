@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Xaena53/google-ads-mcp/security/advisories/new
+    about: >-
+      Anything that could let spend happen without a verified human approval, or that
+      exposes a token or an approver number. Report it privately here, never as a public
+      issue.
+  - name: How the trust chain is meant to behave
+    url: https://github.com/Xaena53/google-ads-mcp/blob/main/docs/CAMARA.md
+    about: >-
+      Which CAMARA signals we query, which we only simulate, and exactly which have run
+      against a live endpoint. Read this before filing "the network check did not fire".

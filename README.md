@@ -24,6 +24,47 @@ AdsPilot moves that decision out of the agent's hands. When your MCP client supp
 the protocol, and the agent's own `confirm` flag is ignored entirely. Approval stops
 being a story the agent tells and becomes a fact the server can verify.
 
+| | |
+|---|---|
+| **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
+| **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
+| **Status** | Working software. Three CAMARA links verified against Nokia's live platform; 487 automated tests; Docker deployment |
+| **Not yet** | Device Status links (absent on our account tier) · Number Verification (device-side OIDC, uncallable from a server) · Meta writes (no live token) |
+
+## Contents
+
+- [Quick start](#quick-start) — running in five minutes
+- [Network-verified spending approvals](#network-verified-spending-approvals) — the idea, and where it honestly stands
+- [Seeing it run](#seeing-it-run) — the scripted demo and the stage-day preflight
+- [Capabilities](#capabilities) · [From a URL to a campaign](#from-a-url-to-a-campaign)
+- [The safety model](#the-safety-model) · [Architecture](#architecture) · [How it compares](#how-it-compares)
+- [Docker](#docker) · [Security](#security) · [Development](#development) · [License](#license)
+
+## Quick start
+
+Requires **Node ≥ 22.13** — the hosted mode uses the built-in `node:sqlite`.
+
+```bash
+git clone https://github.com/Xaena53/google-ads-mcp.git adspilot
+cd adspilot
+npm ci && npm run build && npm test
+```
+
+You need Google Ads API credentials: a developer token from an MCC account, a Google
+Cloud project with the Ads API enabled, and an OAuth client. Copy `.env.example` to
+`.env`, fill it in, then:
+
+```bash
+npm run auth                      # opens a browser, writes the refresh token to .env
+claude mcp add adspilot -- node /absolute/path/to/adspilot/dist/index.js
+```
+
+Ask Claude *"list my Google Ads accounts"* to confirm the connection.
+
+For the multi-user hosted deployment — systemd unit, nginx config, Docker image, and
+the pitfalls that would otherwise cost you an afternoon — see
+**[deploy/README.md](deploy/README.md)**.
+
 ## Network-verified spending approvals
 
 An approval prompt proves that *someone* answered it. It cannot prove that someone was the
@@ -137,22 +178,71 @@ glossary of the Turkish runtime strings: **[docs/DEMO.md](docs/DEMO.md)**.
 > Aegis — the network-trust gate, its demo and its runbook — was built for the GSMA MENA
 > Ignite hackathon (Theme 4).
 
-## How it compares
+## Capabilities
 
-| | Google official MCP | AdsPilot |
+**Tools** — 12 total. "Approval" marks actions that can increase spend and therefore
+pass through the gate above.
+
+| Tool | Purpose | Approval |
 |---|---|---|
-| **Campaign writes** | ❌ read-only by design | ✅ create, budget, keywords, ads, enable/pause |
-| **Approval model** | n/a | Human asked via MCP elicitation; agent cannot fabricate consent |
-| **Fail-closed guards** | n/a | Budget ceiling, paused-by-default, mandatory geo targeting, shared-budget protection |
-| **Multi-tenant hosting** | ❌ self-host, single identity | ✅ per-user OAuth, encrypted tokens, session isolation |
-| **Site → campaign** | ❌ | ✅ `analyze_site` turns any URL into campaign raw material |
-| **Network trust anchor** | ❌ | A six-link CAMARA chain (SIM swap · number verification · reachability · roaming · device swap · call forwarding) *before* the human is prompted — SIM Swap verified live in Simulator mode, links 2-6 written but not yet exercised ([docs](docs/CAMARA.md)) |
-| **License** | Apache-2.0 | AGPL-3.0 |
+| `list_accounts` | Accessible accounts, including MCC sub-accounts | — |
+| `campaign_performance` | Cost, clicks, conversions, CTR, avg. CPC | — |
+| `keyword_performance` | Performance of the keywords you added | — |
+| `search_terms_report` | What people actually searched; flags wasted spend | — |
+| `run_gaql` | Raw GAQL escape hatch (read-only, auto-limited) | — |
+| `analyze_site` | Extracts campaign raw material from any URL | — |
+| `create_search_campaign` | Budget + campaign + geo + ad group + keywords, atomically | born paused ⇒ no |
+| `create_responsive_search_ad` | Adds a responsive search ad to an ad group | if campaign is live |
+| `add_keywords` | Keywords or negatives at ad-group level | positives on live campaigns |
+| `add_campaign_negative_keywords` | Negatives across a whole campaign | no — reduces spend |
+| `update_campaign_budget` | Changes the daily budget | increases only |
+| `set_campaign_status` | Enable or pause | enabling only |
 
-> This table compares Google's official server, which is deliberately read-only and
-> therefore solves a different problem. Commercial alternatives (Markifact, Adzviser
-> and others) do offer writes, but their internals aren't publicly auditable, so this
-> table doesn't speculate about them. Verify current details yourself before choosing.
+**Resources** — browsable data that costs no tool call: `adspilot://accounts` ·
+`adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (your active
+guardrails) · `adspilot://gaql-sema` (field reference, so the agent stops inventing
+GAQL fields).
+
+**Prompts** — ready-made workflows that appear as slash commands: `/reklam-kur`
+(site → draft campaign) · `/israf-bul` (find and cut wasted spend) · `/haftalik-rapor`
+· `/kampanya-denetle` · `/guvenlik-durumu`.
+
+> The agent-facing surface (tool descriptions, prompts, error messages) is written in
+> Turkish, matching the product's initial market. The protocol, code and these docs are
+> English.
+
+## From a URL to a campaign
+
+The flagship workflow. The server extracts *facts*, the client-side model does the
+creative work, and a human approves before anything serves.
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant A as Agent
+    participant S as AdsPilot
+    participant G as Google Ads
+
+    U->>A: /reklam-kur https://example.com
+    A->>S: analyze_site(url)
+    S-->>A: title, meta, headings, JSON-LD, nav<br/>(inside an untrusted-data block)
+    Note over A: Agent drafts keywords and<br/>ad copy from those facts
+    A->>U: Draft: budget, keywords, headlines
+    U-->>A: looks good
+    A->>S: create_search_campaign(...)
+    S->>G: budget + campaign (PAUSED) + geo + keywords
+    A->>S: create_responsive_search_ad(...)
+    A->>S: set_campaign_status(ENABLED)
+    S->>U: Approve going live?<br/>account · budget · geo targeting
+    U-->>S: approve
+    S->>G: campaign → ENABLED
+```
+
+`analyze_site` fetches arbitrary URLs, so it treats every response as hostile:
+private-network and cloud-metadata addresses are blocked at both the hostname and the
+resolved-IP level, every redirect hop is re-validated before the request is made,
+parsing is linear-time (no catastrophic backtracking), and extracted text is returned
+inside a delimited untrusted-data block with forged closing tags stripped.
 
 ## The safety model
 
@@ -242,63 +332,22 @@ Two deployment shapes share the same core:
   and that user's settings are re-read on every request — so a limit change takes effect
   immediately, even mid-session.
 
-## Capabilities
+## How it compares
 
-**Tools** — 12 total. "Approval" marks actions that can increase spend and therefore
-pass through the gate above.
-
-| Tool | Purpose | Approval |
+| | Google official MCP | AdsPilot |
 |---|---|---|
-| `list_accounts` | Accessible accounts, including MCC sub-accounts | — |
-| `campaign_performance` | Cost, clicks, conversions, CTR, avg. CPC | — |
-| `keyword_performance` | Performance of the keywords you added | — |
-| `search_terms_report` | What people actually searched; flags wasted spend | — |
-| `run_gaql` | Raw GAQL escape hatch (read-only, auto-limited) | — |
-| `analyze_site` | Extracts campaign raw material from any URL | — |
-| `create_search_campaign` | Budget + campaign + geo + ad group + keywords, atomically | born paused ⇒ no |
-| `create_responsive_search_ad` | Adds a responsive search ad to an ad group | if campaign is live |
-| `add_keywords` | Keywords or negatives at ad-group level | positives on live campaigns |
-| `add_campaign_negative_keywords` | Negatives across a whole campaign | no — reduces spend |
-| `update_campaign_budget` | Changes the daily budget | increases only |
-| `set_campaign_status` | Enable or pause | enabling only |
+| **Campaign writes** | ❌ read-only by design | ✅ create, budget, keywords, ads, enable/pause |
+| **Approval model** | n/a | Human asked via MCP elicitation; agent cannot fabricate consent |
+| **Fail-closed guards** | n/a | Budget ceiling, paused-by-default, mandatory geo targeting, shared-budget protection |
+| **Multi-tenant hosting** | ❌ self-host, single identity | ✅ per-user OAuth, encrypted tokens, session isolation |
+| **Site → campaign** | ❌ | ✅ `analyze_site` turns any URL into campaign raw material |
+| **Network trust anchor** | ❌ | A six-link CAMARA chain (SIM swap · number verification · reachability · roaming · device swap · call forwarding) *before* the human is prompted — SIM Swap verified live in Simulator mode, links 2-6 written but not yet exercised ([docs](docs/CAMARA.md)) |
+| **License** | Apache-2.0 | AGPL-3.0 |
 
-**Resources** — browsable data that costs no tool call: `adspilot://accounts` ·
-`adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (your active
-guardrails) · `adspilot://gaql-sema` (field reference, so the agent stops inventing
-GAQL fields).
-
-**Prompts** — ready-made workflows that appear as slash commands: `/reklam-kur`
-(site → draft campaign) · `/israf-bul` (find and cut wasted spend) · `/haftalik-rapor`
-· `/kampanya-denetle` · `/guvenlik-durumu`.
-
-> The agent-facing surface (tool descriptions, prompts, error messages) is written in
-> Turkish, matching the product's initial market. The protocol, code and these docs are
-> English.
-
-## Quick start
-
-Requires **Node ≥ 22.13** — the hosted mode uses the built-in `node:sqlite`.
-
-```bash
-git clone https://github.com/Xaena53/google-ads-mcp.git adspilot
-cd adspilot
-npm ci && npm run build && npm test
-```
-
-You need Google Ads API credentials: a developer token from an MCC account, a Google
-Cloud project with the Ads API enabled, and an OAuth client. Copy `.env.example` to
-`.env`, fill it in, then:
-
-```bash
-npm run auth                      # opens a browser, writes the refresh token to .env
-claude mcp add adspilot -- node /absolute/path/to/adspilot/dist/index.js
-```
-
-Ask Claude *"list my Google Ads accounts"* to confirm the connection.
-
-For the multi-user hosted deployment — systemd unit, nginx config, Docker image, and
-the pitfalls that would otherwise cost you an afternoon — see
-**[deploy/README.md](deploy/README.md)**.
+> This table compares Google's official server, which is deliberately read-only and
+> therefore solves a different problem. Commercial alternatives (Markifact, Adzviser
+> and others) do offer writes, but their internals aren't publicly auditable, so this
+> table doesn't speculate about them. Verify current details yourself before choosing.
 
 ## Docker
 
@@ -313,39 +362,6 @@ curl http://localhost:8787/health          # -> {"ok":true,...}
 Image layout, the environment table, the jury demo mode (`ADSPILOT_NAC_SIMULATE`, the
 simulated CAMARA channel), and troubleshooting live in
 **[docs/DOCKER.md](docs/DOCKER.md)**.
-
-## From a URL to a campaign
-
-The flagship workflow. The server extracts *facts*, the client-side model does the
-creative work, and a human approves before anything serves.
-
-```mermaid
-sequenceDiagram
-    participant U as You
-    participant A as Agent
-    participant S as AdsPilot
-    participant G as Google Ads
-
-    U->>A: /reklam-kur https://example.com
-    A->>S: analyze_site(url)
-    S-->>A: title, meta, headings, JSON-LD, nav<br/>(inside an untrusted-data block)
-    Note over A: Agent drafts keywords and<br/>ad copy from those facts
-    A->>U: Draft: budget, keywords, headlines
-    U-->>A: looks good
-    A->>S: create_search_campaign(...)
-    S->>G: budget + campaign (PAUSED) + geo + keywords
-    A->>S: create_responsive_search_ad(...)
-    A->>S: set_campaign_status(ENABLED)
-    S->>U: Approve going live?<br/>account · budget · geo targeting
-    U-->>S: approve
-    S->>G: campaign → ENABLED
-```
-
-`analyze_site` fetches arbitrary URLs, so it treats every response as hostile:
-private-network and cloud-metadata addresses are blocked at both the hostname and the
-resolved-IP level, every redirect hop is re-validated before the request is made,
-parsing is linear-time (no catastrophic backtracking), and extracted text is returned
-inside a delimited untrusted-data block with forged closing tags stripped.
 
 ## Security
 
@@ -409,6 +425,8 @@ exposes no delete tool, so the smoke test cannot clean up after itself.
 
 Design decisions and internals: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 Contributing: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
+What changed, release by release: **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## License
 

@@ -24,6 +24,47 @@ AdsPilot bu kararı ajanın elinden alır. MCP istemcin
 sorar ve ajanın kendi `confirm` bayrağı hiç dikkate alınmaz. Onay, ajanın anlattığı
 bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşür.
 
+| | |
+|---|---|
+| **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
+| **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
+| **Durum** | Çalışan yazılım. Üç CAMARA halkası Nokia'nın canlı platformuna karşı doğrulandı; 487 otomatik test; Docker dağıtımı |
+| **Henüz yok** | Device Status halkaları (hesap katmanımızda uç nokta yok) · Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz) · Meta yazmaları (canlı jeton yok) |
+
+## İçindekiler
+
+- [Hızlı başlangıç](#hızlı-başlangıç) — beş dakikada çalışır hâle
+- [Ağ-doğrulamalı harcama onayı](#ağ-doğrulamalı-harcama-onayı) — fikir ve bugünkü dürüst durumu
+- [Çalışırken görmek](#çalışırken-görmek) — senaryolu demo ve sahne öncesi ön-uçuş
+- [Yetenekler](#yetenekler) · [URL'den kampanyaya](#urlden-kampanyaya)
+- [Güvenlik modeli](#güvenlik-modeli) · [Mimari](#mimari) · [Karşılaştırma](#karşılaştırma)
+- [Docker](#docker) · [Güvenlik](#güvenlik) · [Geliştirme](#geliştirme) · [Lisans](#lisans)
+
+## Hızlı başlangıç
+
+**Node ≥ 22.13** gerekir — barındırılan mod yerleşik `node:sqlite` kullanır.
+
+```bash
+git clone https://github.com/Xaena53/google-ads-mcp.git adspilot
+cd adspilot
+npm ci && npm run build && npm test
+```
+
+Google Ads API kimlik bilgileri gerekir: MCC hesabından bir developer token, Ads API'si
+etkin bir Google Cloud projesi ve bir OAuth istemcisi. `.env.example` dosyasını `.env`
+olarak kopyalayıp doldur, ardından:
+
+```bash
+npm run auth                      # tarayıcı açılır, refresh token .env'e yazılır
+claude mcp add adspilot -- node /mutlak/yol/adspilot/dist/index.js
+```
+
+Bağlantıyı doğrulamak için Claude'a *"Google Ads hesaplarımı listele"* de.
+
+Çok kullanıcılı kurulum — systemd unit, nginx yapılandırması, Docker imajı ve aksi
+halde sana bir öğleden sonraya mal olacak tuzaklar — için:
+**[deploy/README.md](deploy/README.md)**.
+
 ## Ağ-doğrulamalı harcama onayı
 
 Bir onay istemi, *birinin* cevapladığını kanıtlar; o kişinin hesap sahibi olduğunu
@@ -128,36 +169,66 @@ değerlerini asla basmaz. Anlatım metni, perde perde beklenen çıktı ve kapal
 > Aegis — ağ-güven kapısı, demosu ve runbook'u — GSMA MENA Ignite hackathon'u (Tema 4)
 > için geliştirildi.
 
-## Docker
+## Yetenekler
 
-Barındırılan (HTTP) mod tek komutla ayağa kalkar:
+**Araçlar** — 12 adet. "Onay" sütunu, harcamayı artırabilen ve bu yüzden yukarıdaki
+kapıdan geçen eylemleri işaretler.
 
-```bash
-cp .env.example .env        # dört zorunlu değeri doldur
-docker compose up --build
-curl http://localhost:8787/health          # -> {"ok":true,...}
+| Araç | Ne yapar | Onay |
+|---|---|---|
+| `list_accounts` | Erişilebilir hesaplar, MCC alt hesapları dahil | — |
+| `campaign_performance` | Maliyet, tıklama, dönüşüm, CTR, ort. TBM | — |
+| `keyword_performance` | Senin eklediğin anahtar kelimelerin performansı | — |
+| `search_terms_report` | İnsanların gerçekte ne aradığı; israfı işaretler | — |
+| `run_gaql` | Ham GAQL çıkış kapısı (salt okunur, otomatik sınırlı) | — |
+| `analyze_site` | Herhangi bir URL'den kampanya hammaddesi çıkarır | — |
+| `create_search_campaign` | Bütçe + kampanya + ülke + reklam grubu + kelimeler, atomik | duraklatılmış doğar ⇒ hayır |
+| `create_responsive_search_ad` | Reklam grubuna duyarlı arama reklamı ekler | kampanya yayındaysa |
+| `add_keywords` | Reklam grubu seviyesinde kelime/negatif | canlıda pozitif kelime |
+| `add_campaign_negative_keywords` | Kampanya genelinde negatif kelime | hayır — harcamayı azaltır |
+| `update_campaign_budget` | Günlük bütçeyi değiştirir | yalnız artışta |
+| `set_campaign_status` | Yayına alır ya da duraklatır | yalnız yayına almada |
+
+**Kaynaklar** — araç çağırmadan okunabilen veri: `adspilot://accounts` ·
+`adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (etkin
+kelepçelerin) · `adspilot://gaql-sema` (alan rehberi — ajan GAQL alanı uydurmasın).
+
+**Prompt'lar** — slash komut olarak görünen hazır iş akışları: `/reklam-kur`
+(siteden taslak kampanya) · `/israf-bul` (boşa harcamayı bul ve kes) ·
+`/haftalik-rapor` · `/kampanya-denetle` · `/guvenlik-durumu`.
+
+## URL'den kampanyaya
+
+Ürünün amiral iş akışı. Sunucu *gerçekleri* çıkarır, yaratıcı işi istemci tarafındaki
+model yapar, yayına almadan önce insan onaylar.
+
+```mermaid
+sequenceDiagram
+    participant U as Sen
+    participant A as Ajan
+    participant S as AdsPilot
+    participant G as Google Ads
+
+    U->>A: /reklam-kur https://ornek.com
+    A->>S: analyze_site(url)
+    S-->>A: başlık, meta, H1-H3, JSON-LD, menü<br/>(güvenilmez veri bloğu içinde)
+    Note over A: Ajan bu gerçeklerden kelime<br/>ve reklam metni üretir
+    A->>U: Taslak: bütçe, kelimeler, başlıklar
+    U-->>A: uygun
+    A->>S: create_search_campaign(...)
+    S->>G: bütçe + kampanya (PAUSED) + ülke + kelimeler
+    A->>S: create_responsive_search_ad(...)
+    A->>S: set_campaign_status(ENABLED)
+    S->>U: Yayına almayı onaylıyor musun?<br/>hesap · bütçe · coğrafi hedef
+    U-->>S: onayla
+    S->>G: kampanya → ENABLED
 ```
 
-İmaj yapısı, ortam değişkeni tablosu, jüri demo modu (`ADSPILOT_NAC_SIMULATE`) ve sorun
-giderme: **[docs/DOCKER.md](docs/DOCKER.md)**.
-
-## Karşılaştırma
-
-| | Google resmi MCP | AdsPilot |
-|---|---|---|
-| **Kampanya yazma** | ❌ tasarım gereği salt okunur | ✅ kurma, bütçe, kelime, reklam, yayına alma |
-| **Onay modeli** | yok | İnsana MCP elicitation ile sorulur; ajan onay uyduramaz |
-| **Kapalı-arıza kapılar** | yok | Bütçe tavanı, duraklatılmış doğma, zorunlu ülke hedefi, paylaşımlı bütçe koruması |
-| **Çok kiracılı barındırma** | ❌ tek kimlik, kendi sunucunda | ✅ kullanıcı başına OAuth, şifreli token, oturum izolasyonu |
-| **Siteden kampanyaya** | ❌ | ✅ `analyze_site` herhangi bir URL'yi kampanya hammaddesine çevirir |
-| **Ağ güven çapası** | ❌ | İnsana sorulmadan *önce* CAMARA SIM-Swap kontrolü — canlı uç noktaya karşı doğrulandı, Simulator kipi ([belge](docs/CAMARA.md)) |
-| **Lisans** | Apache-2.0 | AGPL-3.0 |
-
-> Tablo, Google'ın bilinçli olarak salt-okunur tasarlanmış resmi sunucusunu
-> karşılaştırır — o farklı bir problemi çözüyor. Ticari alternatifler (Markifact,
-> Adzviser vb.) yazma sunuyor, ancak iç yapıları kamuya açık biçimde denetlenebilir
-> olmadığı için bu tablo onlar hakkında tahmin yürütmüyor. Seçim yapmadan önce güncel
-> bilgileri kendin doğrula.
+`analyze_site` keyfi URL'ler çektiği için gelen her yanıtı düşman kabul eder: özel ağ
+ve bulut metadata adresleri hem alan adı hem çözümlenen IP düzeyinde engellenir, her
+yönlendirme durağı istek atılmadan ÖNCE yeniden doğrulanır, ayrıştırma doğrusal
+zamanlıdır (katastrofik geri izleme yok) ve çıkarılan metin, sahte kapanış etiketleri
+temizlenmiş bir güvenilmez-veri bloğu içinde döner.
 
 ## Güvenlik modeli
 
@@ -234,91 +305,36 @@ Aynı çekirdeği paylaşan iki dağıtım biçimi var:
   bağlıdır ve o kullanıcının ayarları her istekte yeniden okunur — yani bir limit
   değişikliği oturum açıkken bile anında geçerli olur.
 
-## Yetenekler
+## Karşılaştırma
 
-**Araçlar** — 12 adet. "Onay" sütunu, harcamayı artırabilen ve bu yüzden yukarıdaki
-kapıdan geçen eylemleri işaretler.
-
-| Araç | Ne yapar | Onay |
+| | Google resmi MCP | AdsPilot |
 |---|---|---|
-| `list_accounts` | Erişilebilir hesaplar, MCC alt hesapları dahil | — |
-| `campaign_performance` | Maliyet, tıklama, dönüşüm, CTR, ort. TBM | — |
-| `keyword_performance` | Senin eklediğin anahtar kelimelerin performansı | — |
-| `search_terms_report` | İnsanların gerçekte ne aradığı; israfı işaretler | — |
-| `run_gaql` | Ham GAQL çıkış kapısı (salt okunur, otomatik sınırlı) | — |
-| `analyze_site` | Herhangi bir URL'den kampanya hammaddesi çıkarır | — |
-| `create_search_campaign` | Bütçe + kampanya + ülke + reklam grubu + kelimeler, atomik | duraklatılmış doğar ⇒ hayır |
-| `create_responsive_search_ad` | Reklam grubuna duyarlı arama reklamı ekler | kampanya yayındaysa |
-| `add_keywords` | Reklam grubu seviyesinde kelime/negatif | canlıda pozitif kelime |
-| `add_campaign_negative_keywords` | Kampanya genelinde negatif kelime | hayır — harcamayı azaltır |
-| `update_campaign_budget` | Günlük bütçeyi değiştirir | yalnız artışta |
-| `set_campaign_status` | Yayına alır ya da duraklatır | yalnız yayına almada |
+| **Kampanya yazma** | ❌ tasarım gereği salt okunur | ✅ kurma, bütçe, kelime, reklam, yayına alma |
+| **Onay modeli** | yok | İnsana MCP elicitation ile sorulur; ajan onay uyduramaz |
+| **Kapalı-arıza kapılar** | yok | Bütçe tavanı, duraklatılmış doğma, zorunlu ülke hedefi, paylaşımlı bütçe koruması |
+| **Çok kiracılı barındırma** | ❌ tek kimlik, kendi sunucunda | ✅ kullanıcı başına OAuth, şifreli token, oturum izolasyonu |
+| **Siteden kampanyaya** | ❌ | ✅ `analyze_site` herhangi bir URL'yi kampanya hammaddesine çevirir |
+| **Ağ güven çapası** | ❌ | İnsana sorulmadan *önce* CAMARA SIM-Swap kontrolü — canlı uç noktaya karşı doğrulandı, Simulator kipi ([belge](docs/CAMARA.md)) |
+| **Lisans** | Apache-2.0 | AGPL-3.0 |
 
-**Kaynaklar** — araç çağırmadan okunabilen veri: `adspilot://accounts` ·
-`adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (etkin
-kelepçelerin) · `adspilot://gaql-sema` (alan rehberi — ajan GAQL alanı uydurmasın).
+> Tablo, Google'ın bilinçli olarak salt-okunur tasarlanmış resmi sunucusunu
+> karşılaştırır — o farklı bir problemi çözüyor. Ticari alternatifler (Markifact,
+> Adzviser vb.) yazma sunuyor, ancak iç yapıları kamuya açık biçimde denetlenebilir
+> olmadığı için bu tablo onlar hakkında tahmin yürütmüyor. Seçim yapmadan önce güncel
+> bilgileri kendin doğrula.
 
-**Prompt'lar** — slash komut olarak görünen hazır iş akışları: `/reklam-kur`
-(siteden taslak kampanya) · `/israf-bul` (boşa harcamayı bul ve kes) ·
-`/haftalik-rapor` · `/kampanya-denetle` · `/guvenlik-durumu`.
+## Docker
 
-## Hızlı başlangıç
-
-**Node ≥ 22.13** gerekir — barındırılan mod yerleşik `node:sqlite` kullanır.
+Barındırılan (HTTP) mod tek komutla ayağa kalkar:
 
 ```bash
-git clone https://github.com/Xaena53/google-ads-mcp.git adspilot
-cd adspilot
-npm ci && npm run build && npm test
+cp .env.example .env        # dört zorunlu değeri doldur
+docker compose up --build
+curl http://localhost:8787/health          # -> {"ok":true,...}
 ```
 
-Google Ads API kimlik bilgileri gerekir: MCC hesabından bir developer token, Ads API'si
-etkin bir Google Cloud projesi ve bir OAuth istemcisi. `.env.example` dosyasını `.env`
-olarak kopyalayıp doldur, ardından:
-
-```bash
-npm run auth                      # tarayıcı açılır, refresh token .env'e yazılır
-claude mcp add adspilot -- node /mutlak/yol/adspilot/dist/index.js
-```
-
-Bağlantıyı doğrulamak için Claude'a *"Google Ads hesaplarımı listele"* de.
-
-Çok kullanıcılı kurulum — systemd unit, nginx yapılandırması, Docker imajı ve aksi
-halde sana bir öğleden sonraya mal olacak tuzaklar — için:
-**[deploy/README.md](deploy/README.md)**.
-
-## URL'den kampanyaya
-
-Ürünün amiral iş akışı. Sunucu *gerçekleri* çıkarır, yaratıcı işi istemci tarafındaki
-model yapar, yayına almadan önce insan onaylar.
-
-```mermaid
-sequenceDiagram
-    participant U as Sen
-    participant A as Ajan
-    participant S as AdsPilot
-    participant G as Google Ads
-
-    U->>A: /reklam-kur https://ornek.com
-    A->>S: analyze_site(url)
-    S-->>A: başlık, meta, H1-H3, JSON-LD, menü<br/>(güvenilmez veri bloğu içinde)
-    Note over A: Ajan bu gerçeklerden kelime<br/>ve reklam metni üretir
-    A->>U: Taslak: bütçe, kelimeler, başlıklar
-    U-->>A: uygun
-    A->>S: create_search_campaign(...)
-    S->>G: bütçe + kampanya (PAUSED) + ülke + kelimeler
-    A->>S: create_responsive_search_ad(...)
-    A->>S: set_campaign_status(ENABLED)
-    S->>U: Yayına almayı onaylıyor musun?<br/>hesap · bütçe · coğrafi hedef
-    U-->>S: onayla
-    S->>G: kampanya → ENABLED
-```
-
-`analyze_site` keyfi URL'ler çektiği için gelen her yanıtı düşman kabul eder: özel ağ
-ve bulut metadata adresleri hem alan adı hem çözümlenen IP düzeyinde engellenir, her
-yönlendirme durağı istek atılmadan ÖNCE yeniden doğrulanır, ayrıştırma doğrusal
-zamanlıdır (katastrofik geri izleme yok) ve çıkarılan metin, sahte kapanış etiketleri
-temizlenmiş bir güvenilmez-veri bloğu içinde döner.
+İmaj yapısı, ortam değişkeni tablosu, jüri demo modu (`ADSPILOT_NAC_SIMULATE`) ve sorun
+giderme: **[docs/DOCKER.md](docs/DOCKER.md)**.
 
 ## Güvenlik
 
@@ -375,6 +391,8 @@ aracı yok, bu yüzden duman testi kendi artığını temizleyemez.
 
 Tasarım kararları ve iç yapı: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 Katkı: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
+Sürüm sürüm ne değiştiği: **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## Lisans
 
