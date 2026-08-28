@@ -388,5 +388,10 @@ test("okuma araçları readOnlyHint, yazma araçları destructiveHint bildirir",
   assert.equal(bul("create_responsive_search_ad").annotations.destructiveHint, true);
   // Creating a draft campaign is not destructive, because it is born paused
   assert.equal(bul("create_search_campaign").annotations.destructiveHint, false);
-  assert.equal(tools.length, 12, "araç sayısı sözleşmesi");
+  // Meta araçları da AYNI kapıdan geçer: sayı sözleşmesi 12 → 15 (Google 12 + Meta 3).
+  assert.equal(tools.length, 15, "araç sayısı sözleşmesi");
+  assert.equal(bul("create_meta_campaign").annotations.destructiveHint, false,
+    "Meta kampanyası da duraklatılmış doğar — yıkıcı değil");
+  assert.equal(bul("set_meta_campaign_status").annotations.destructiveHint, true);
+  assert.equal(bul("update_meta_campaign_budget").annotations.destructiveHint, true);
 });

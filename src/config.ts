@@ -22,6 +22,13 @@ export interface AdsPilotConfig {
   clientSecret: string;
   refreshToken: string;
   loginCustomerId?: string;
+  /**
+   * Meta (Facebook/Instagram) Marketing API erişim jetonu; yoksa Meta araçları hiçbir
+   * işlem yapmaz ve bunu AÇIKÇA söyler (sessizce "yapacak bir şey yok" demez).
+   */
+  metaToken?: string;
+  /** Meta reklam hesabı: "act_123456" ya da çıplak rakam — istemci normalize eder. */
+  metaAdAccountId?: string;
   writeEnabled: boolean;
   maxDailyBudget: number;
   /** Nokia Network-as-Code application key; absent = network verification off. */
@@ -207,6 +214,8 @@ export function loadConfig(): AdsPilotConfig {
     );
   }
   return {
+    metaToken: process.env.ADSPILOT_META_TOKEN?.trim() || undefined,
+    metaAdAccountId: process.env.ADSPILOT_META_AD_ACCOUNT_ID?.trim() || undefined,
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN!.trim(),
     clientId: process.env.GOOGLE_ADS_CLIENT_ID!.trim(),
     clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET!.trim(),

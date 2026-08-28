@@ -81,6 +81,28 @@ Tam sinyal envanteri, Number Verification'ın sunucudan çağrılamadığının 
 kanıtı ve ilk canlı sorguyu kayda geçirecek adım adım kontrol listesi:
 **[docs/CAMARA.md](docs/CAMARA.md)**.
 
+
+### İkinci harcama alanı, aynı kapının arkasında
+
+Kapının *alan-bağımsız* olduğu iddiası — "insana sorulmadan önce ağa sor" kuralının Google
+Ads'e özgü bir özellik değil, para hareket ettiren her yolun niteliği olduğu — ikinci bir
+platform onun arkasına oturana kadar ucuzdur. **Meta (Facebook/Instagram) o ikinci
+platform.** `create_meta_campaign`, `update_meta_campaign_budget` ve
+`set_meta_campaign_status` aynı `onayAl` kapısını aynı risk kademeleriyle çağırıyor; yani
+CAMARA zinciri Meta'da da insan istemi gösterilmeden önce koşuyor. Kampanyalar orada da
+duraklatılmış doğuyor ve aracın tartışılacak bir `status` parametresi yok.
+
+**Hiçbir Meta çağrısı bugüne dek Meta sunucularına ulaşmadı**: erişim jetonu, uygulama
+incelemesi ve reklam hesabı yok. İstek biçimleri Marketing API referansından alındı,
+testler sahte istemci enjekte ediyor — CAMARA halkalarının üzerinde token gelene kadar
+duran çekincenin aynısı, ve aynı şekilde kanıtla değiştirilecek.
+
+Adını anmaya değer bir tuzak, çünkü sessizce sahaya çıkan türden: Meta bütçeleri minor
+unit ister, Google micros. Aynı sayıyı iki API'ye göndermek birinde 100 kat hata demek; ve
+`1.005 * 100` ikili kayan noktada `100.49999999999999` olduğu için düz bir `Math.round`
+müşteriyi sessizce eksiltir. Dönüşüm sabit basamak üzerinden yuvarlanıyor ve bir test bunu
+sabitliyor.
+
 ## Çalışırken görmek
 
 ```bash

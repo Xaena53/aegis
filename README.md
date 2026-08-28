@@ -89,6 +89,28 @@ The full signal inventory, the type-level proof that Number Verification is unca
 a server, and the step-by-step checklist that turns the first live query into recorded fact
 are in **[docs/CAMARA.md](docs/CAMARA.md)**.
 
+
+### A second spend domain, behind the same gate
+
+The claim that the gate is *domain-general* — that "ask the network before a human is
+prompted" is not a Google Ads feature but a property of any path that moves money — is
+cheap until a second platform sits behind it. **Meta (Facebook/Instagram) is that second
+platform.** `create_meta_campaign`, `update_meta_campaign_budget` and
+`set_meta_campaign_status` call the same `onayAl` gate with the same risk tiers, so the
+CAMARA chain runs before the human prompt on Meta exactly as it does on Google. Campaigns
+are born paused there too, and the tool has no `status` parameter to argue with.
+
+**No Meta call has ever reached Meta's servers**: there is no access token, no app review,
+no ad account. Request shapes come from the Marketing API reference and the tests inject a
+fake client — the same disclaimer that stood over the CAMARA links until a token arrived,
+and it will be replaced by evidence the same way.
+
+One trap worth naming, because it is the kind that ships quietly: Meta wants budgets in
+minor units, Google wants micros. The same number sent to both APIs is a 100× error in one
+of them, and `1.005 * 100` is `100.49999999999999` in binary floating point, so a plain
+`Math.round` silently shortchanges the customer. The conversion rounds through a fixed
+decimal, and a test pins it.
+
 ## Seeing it run
 
 ```bash
