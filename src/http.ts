@@ -17,7 +17,7 @@ import { AdsContext } from "./adsClient.js";
 import { UserStore, encryptSecret, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
 import { setRuntimeMode } from "./util.js";
-import { nacConfigFromEnv, parseNumEnv } from "./config.js";
+import { nacAnahtarDilimi, nacConfigFromEnv, parseNumEnv } from "./config.js";
 
 /**
  * AGPL-3.0 SECTION 13 COMPLIANCE.
@@ -147,11 +147,12 @@ function contextFor(user: StoredUser): AdsContext {
   // one-directional: an operator who switches a trust-chain link ON keeps being served
   // cached contexts with it OFF, and believes a guard is running that never runs.
   // Adding a link to AgAyar means adding it to this key.
+  // Ağ-doğrulama dilimi config.ts'ten gelir: orada saf ve import edilebilir olduğu için
+  // "alan düşerse anahtar değişmiyor" durumu davranışsal olarak test edilebiliyor.
   const nac = nacConfigFromEnv();
   const key = [
     user.id, user.refreshToken, user.loginCustomerId ?? "", user.writeEnabled, user.maxDailyBudget,
-    nac.nacToken ?? "", nac.approverPhone ?? "", nac.simSwapWindowHours, nac.nacSimulate ?? "", nac.nvSimulate ?? "",
-    String(nac.reachCheck ?? ""), nac.reachSimulate ?? "", nac.locSimulate ?? "", nac.expectedCountry ?? "",
+    ...nacAnahtarDilimi(nac),
   ].join("|");
   let ctx = ctxCache.get(key);
   if (!ctx) {

@@ -33,6 +33,8 @@ import { sahteContext } from "./helpers/harness.js";
 import { onayAl } from "../src/approval.js";
 import {
   agDogrula,
+  __setCagriYonlendirmeKanalForTests,
+  __setCihazDegisimKanalForTests,
   __setErisimKanalForTests,
   __setKonumKanalForTests,
   __setSimSwapKanalForTests,
@@ -51,11 +53,13 @@ function simSwapTemiz(): void {
   __setSimSwapKanalForTests({ verifySimSwap: async () => false });
 }
 
-// Kanal override'ları modül-global: her testten sonra üçünü de sıfırla, yoksa sızarlar.
+// Kanal override'ları modül-global: her testten sonra HEPSİNİ sıfırla, yoksa sızarlar.
 afterEach(() => {
   __setSimSwapKanalForTests(undefined);
   __setErisimKanalForTests(undefined);
   __setKonumKanalForTests(undefined);
+  __setCihazDegisimKanalForTests(undefined);
+  __setCagriYonlendirmeKanalForTests(undefined);
 });
 
 /* ── Halka 3: SİMÜLASYON kanalı ───────────────────────────────────────────────── */
@@ -635,4 +639,466 @@ test("halkalar akışı bozmaz: temiz zincir yayına almayı geçirir, insan DÖ
   assert.match(sorulanlar[0], /Numara doğrulaması/, "2. halka kanıtı istemde olmalı");
   assert.match(sorulanlar[0], /Cihaz erişilebilirliği/, "3. halka kanıtı istemde olmalı");
   assert.match(sorulanlar[0], /Konum doğrulaması/, "4. halka kanıtı istemde olmalı");
+});
+
+/* ── Halka 5: Device Swap — SİMÜLASYON kanalı ─────────────────────────────────── */
+
+test("devSwap: 'temiz' kanıt satırı ekler — SİMÜLASYON ibareli, maskeli, gerçek sorgu YAPILMADI", async () => {
+  const k = await agDogrula({ ...TEMEL, devSwapSimulate: "temiz" }, "high");
+  assert.equal(k.engel, undefined);
+  // 1. halka kapalı (token yok) kendi dürüst satırını yazar; 5. halka onun ÜSTÜNE eklenir.
+  assert.equal(k.kanit.length, 2, "cihaz değişimi halkası SIM-Swap kapalıyken de koşmalı");
+  assert.match(k.kanit[1], /Cihaz değişimi \[SİMÜLASYON\]/);
+  assert.match(k.kanit[1], /son 72 saat/, "pencere gerçek akışla aynı koddan gelmeli");
+  assert.match(k.kanit[1], /YAPILMADI/, "gerçek ağ sorgusu gibi sunulamaz");
+  assert.match(k.kanit[1], /\+905\*+33/, "numara maskeli görünmeli");
+  assert.doesNotMatch(k.kanit[1], /5551112233/, "tam numara sızmamalı");
+  assert.equal(k.iz.devSwap, "simulasyon");
+  assert.equal(k.iz.maskeliNumara, MASKELI);
+});
+
+test("KRİTİK devSwap: 'degisti' SERT RET — SIM/NV/reach/konum temiz olsa bile istem gösterilmez", async () => {
+  const k = await agDogrula(
+    {
+      ...TEMEL,
+      nacSimulate: "temiz",
+      nvSimulate: "dogrulandi",
+      reachSimulate: "erisilebilir",
+      locSimulate: "beklenen",
+      expectedCountry: "TR",
+      devSwapSimulate: "degisti",
+    },
+    "high"
+  );
+  assert.ok(k.engel, "5. halka fail-open olamaz");
+  assert.match(k.engel!, /SİMÜLASYON/);
+  assert.match(k.engel!, /CİHAZ DEĞİŞİMİ SAPTANDI/);
+  assert.match(k.engel!, /YENİ BİR CİHAZA/);
+  assert.match(k.engel!, /gerçek ağ sorgusu YAPILMADI/);
+  assert.match(k.engel!, /\+905\*+33/);
+  assert.doesNotMatch(k.engel!, /5551112233/, "tam numara ret metnine sızmamalı");
+  assert.equal(k.kanit.length, 0, "ret hâlinde önceki halkaların temiz kanıtı bile taşınmaz");
+  // Ret nedeni SIM-Swap'ınkiyle karıştırılamaz: ayrı saldırı, ayrı kod.
+  assert.equal(k.iz.retNedeni, "cihaz-degisti");
+  assert.notEqual(k.iz.retNedeni, "sim-degisti");
+  assert.equal(k.iz.simSwap, "simulasyon", "önceki halkaların izi silinmez");
+  assert.equal(k.iz.nv, "simulasyon");
+  assert.equal(k.iz.reach, "simulasyon");
+  assert.equal(k.iz.loc, "simulasyon");
+  assert.equal(k.iz.devSwap, "simulasyon");
+});
+
+test("devSwap: tanınmayan değer ve numarasız yapılandırma KAPALI ARIZA — ham değer YANKILANMAZ", async () => {
+  const tanimsiz = await agDogrula({ ...TEMEL, devSwapSimulate: "belki-degismistir" }, "high");
+  assert.ok(tanimsiz.engel, "tanınmayan değer fail-open olamaz");
+  assert.match(tanimsiz.engel!, /ADSPILOT_DEVICESWAP_SIMULATE/);
+  assert.match(tanimsiz.engel!, /"temiz" \| "degisti"/, "geçerli değerler operatöre söylenmeli");
+  assert.doesNotMatch(tanimsiz.engel!, /belki-degismistir/, "ham env değeri ret metnine yankılanmaz");
+  assert.equal(tanimsiz.iz.devSwap, "calismadi", "yapılandırma hatası 'kapali' ile karıştırılamaz");
+  assert.equal(tanimsiz.iz.retNedeni, "simulasyon-degeri-tanimsiz");
+  assert.equal(tanimsiz.iz.maskeliNumara, undefined, "hiç değerlendirilmeyen numara ize yazılmaz");
+
+  const numarasiz = await agDogrula({ simSwapWindowHours: 72, devSwapSimulate: "temiz" }, "high");
+  assert.ok(numarasiz.engel);
+  assert.match(numarasiz.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.equal(numarasiz.kanit.length, 0);
+  assert.equal(numarasiz.iz.devSwap, "calismadi");
+  assert.equal(numarasiz.iz.retNedeni, "onaylayici-numarasi-yok");
+});
+
+/* ── Halka 5: GERÇEK CAMARA kanalı ────────────────────────────────────────────── */
+
+test("devSwap: gerçek kanal — değişmemiş GEÇER, değişmiş SERT REDDEDER, pencere sorguya GİDER", async () => {
+  simSwapTemiz();
+  const pencereler: number[] = [];
+  __setCihazDegisimKanalForTests({
+    cihazDegistiMi: async (saat: number) => {
+      pencereler.push(saat);
+      return false;
+    },
+  });
+  const AYAR = { ...TEMEL, nacToken: "gercek-token", devSwapCheck: true };
+
+  const gecti = await agDogrula(AYAR, "high");
+  assert.equal(gecti.engel, undefined);
+  assert.deepEqual(pencereler, [72], "gerçek sorgu yapılandırılan pencereyle YAPILMALI");
+  assert.equal(gecti.kanit.length, 2);
+  assert.match(gecti.kanit[1], /Cihaz değişimi: /);
+  assert.match(gecti.kanit[1], /GSMA Open Gateway Device Swap/);
+  assert.doesNotMatch(gecti.kanit[1], /SİMÜLASYON/, "gerçek halka simüle gibi etiketlenmemeli");
+  assert.equal(gecti.iz.devSwap, "gercek");
+
+  __setCihazDegisimKanalForTests({ cihazDegistiMi: async () => true });
+  const ret = await agDogrula(AYAR, "high");
+  assert.ok(ret.engel);
+  assert.match(ret.engel!, /YENİ BİR CİHAZA taşınmış/);
+  assert.doesNotMatch(ret.engel!, /SİMÜLASYON/, "gerçek ret simülasyon diye etiketlenemez");
+  assert.equal(ret.kanit.length, 0);
+  assert.equal(ret.iz.devSwap, "gercek");
+  assert.equal(ret.iz.retNedeni, "cihaz-degisti");
+});
+
+test("KRİTİK devSwap: okunamayan yanıt 'değişmedi' SAYILMAZ; fırlatma da kapalı arıza", async () => {
+  simSwapTemiz();
+  const AYAR = { ...TEMEL, nacToken: "gercek-token", devSwapCheck: true };
+
+  // Tipte `swapped` zorunlu boolean; yine de okunamayan gövdeyi temiz saymak sessiz
+  // gevşeme olurdu — halkanın tek işi olan reti yutardı.
+  __setCihazDegisimKanalForTests({ cihazDegistiMi: async () => undefined });
+  const okunamadi = await agDogrula(AYAR, "high");
+  assert.ok(okunamadi.engel, "okunamayan yanıt fail-open olamaz");
+  assert.match(okunamadi.engel!, /okunabilir yanıt alınamadı/);
+  assert.equal(okunamadi.iz.retNedeni, "ag-yanitsiz");
+  assert.notEqual(okunamadi.iz.retNedeni, "cihaz-degisti", "okunamayan yanıt yanlış suçlama üretmez");
+
+  const eskiError = console.error;
+  const stderr: string[] = [];
+  console.error = (...a: unknown[]) => void stderr.push(a.map(String).join(" "));
+  try {
+    __setCihazDegisimKanalForTests({
+      cihazDegistiMi: async () => {
+        throw new Error(`CAMARA 400: invalid phoneNumber ${TELEFON}`);
+      },
+    });
+    const hata = await agDogrula(AYAR, "high");
+    assert.ok(hata.engel);
+    assert.match(hata.engel!, /yanıt alınamadı/);
+    assert.doesNotMatch(hata.engel!, /5551112233/, "ham numara ret metnine sızmamalı");
+    assert.doesNotMatch(hata.engel!, /CAMARA 400/, "upstream hata metni ajana yankılanmaz");
+    assert.equal(hata.iz.devSwap, "gercek", "sorgu DENENDİ: 'calismadi' ile karıştırılamaz");
+    assert.equal(hata.iz.retNedeni, "ag-yanitsiz");
+    assert.equal(stderr.length, 1, "ayrıntı operatöre stderr'den gitmeli");
+    assert.doesNotMatch(stderr[0], /5551112233/, "numara stderr'de bile maskelenmeli");
+  } finally {
+    console.error = eskiError;
+  }
+});
+
+test("devSwap: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapalıyken demo serbesttir", async () => {
+  simSwapTemiz();
+  const celiski = await agDogrula(
+    { ...TEMEL, nacToken: "gercek-token", devSwapCheck: true, devSwapSimulate: "temiz" },
+    "high"
+  );
+  assert.ok(celiski.engel, "belirsizlikte gevşek kanal SEÇİLMEZ");
+  assert.match(celiski.engel!, /çelişkili yapılandırma/);
+  assert.match(celiski.engel!, /ADSPILOT_DEVICESWAP_CHECK/);
+  assert.equal(celiski.iz.devSwap, "calismadi");
+  assert.equal(celiski.iz.retNedeni, "yapilandirma-celiskili");
+
+  const demo = await agDogrula(
+    { ...TEMEL, nacToken: "gercek-token", devSwapSimulate: "degisti" },
+    "high"
+  );
+  assert.match(demo.engel!, /CİHAZ DEĞİŞİMİ SAPTANDI/, "karar simüle halkanın olmalı");
+  assert.equal(demo.iz.devSwap, "simulasyon");
+});
+
+/* ── Halka 6: Call Forwarding — SİMÜLASYON kanalı ─────────────────────────────── */
+
+test("callFwd: 'kapali' kanıt yazar, 'acik' SERT REDDEDER — ikisi de SİMÜLASYON ibareli", async () => {
+  const gecti = await agDogrula({ ...TEMEL, callFwdSimulate: "kapali" }, "high");
+  assert.equal(gecti.engel, undefined);
+  assert.equal(gecti.kanit.length, 2);
+  assert.match(gecti.kanit[1], /Çağrı yönlendirme \[SİMÜLASYON\]/);
+  assert.match(gecti.kanit[1], /YAPILMADI/);
+  assert.match(gecti.kanit[1], /\+905\*+33/);
+  assert.doesNotMatch(gecti.kanit[1], /5551112233/);
+  assert.equal(gecti.iz.callFwd, "simulasyon");
+
+  const ret = await agDogrula({ ...TEMEL, callFwdSimulate: "acik" }, "high");
+  assert.ok(ret.engel, "6. halka fail-open olamaz");
+  assert.match(ret.engel!, /ÇAĞRI YÖNLENDİRME AÇIK/);
+  assert.match(ret.engel!, /SİMÜLASYON/);
+  assert.match(ret.engel!, /gerçek ağ sorgusu YAPILMADI/);
+  assert.doesNotMatch(ret.engel!, /5551112233/);
+  assert.equal(ret.kanit.length, 0);
+  assert.equal(ret.iz.callFwd, "simulasyon");
+  assert.equal(ret.iz.retNedeni, "cagri-yonlendirme-acik");
+
+  const tanimsiz = await agDogrula({ ...TEMEL, callFwdSimulate: "sanirim-acik" }, "high");
+  assert.match(tanimsiz.engel!, /"kapali" \| "acik"/, "geçerli değerler operatöre söylenmeli");
+  assert.doesNotMatch(tanimsiz.engel!, /sanirim-acik/, "ham env değeri yankılanmaz");
+  assert.equal(tanimsiz.iz.callFwd, "calismadi");
+  assert.equal(tanimsiz.iz.retNedeni, "simulasyon-degeri-tanimsiz");
+
+  const numarasiz = await agDogrula({ simSwapWindowHours: 72, callFwdSimulate: "kapali" }, "high");
+  assert.match(numarasiz.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.equal(numarasiz.iz.callFwd, "calismadi");
+  assert.equal(numarasiz.iz.retNedeni, "onaylayici-numarasi-yok");
+});
+
+/* ── Halka 6: GERÇEK CAMARA kanalı ────────────────────────────────────────────── */
+
+test("callFwd: gerçek kanal — yönlendirme yoksa GEÇER, açıksa SERT REDDEDER ('gercek' izi)", async () => {
+  simSwapTemiz();
+  let cagriSayisi = 0;
+  __setCagriYonlendirmeKanalForTests({
+    kosulsuzYonlendirmeAcikMi: async () => {
+      cagriSayisi++;
+      return false;
+    },
+  });
+  const AYAR = { ...TEMEL, nacToken: "gercek-token", callFwdCheck: true };
+
+  const gecti = await agDogrula(AYAR, "high");
+  assert.equal(gecti.engel, undefined);
+  assert.equal(cagriSayisi, 1, "gerçek sorgu gerçekten yapılmalı");
+  assert.equal(gecti.kanit.length, 2);
+  assert.match(gecti.kanit[1], /Çağrı yönlendirme: /);
+  assert.match(gecti.kanit[1], /GSMA Open Gateway Call Forwarding Signal/);
+  assert.doesNotMatch(gecti.kanit[1], /SİMÜLASYON/);
+  assert.equal(gecti.iz.callFwd, "gercek");
+
+  __setCagriYonlendirmeKanalForTests({ kosulsuzYonlendirmeAcikMi: async () => true });
+  const ret = await agDogrula(AYAR, "high");
+  assert.ok(ret.engel);
+  assert.match(ret.engel!, /KOŞULSUZ ÇAĞRI\s+YÖNLENDİRME açık/);
+  assert.doesNotMatch(ret.engel!, /SİMÜLASYON/);
+  assert.equal(ret.kanit.length, 0);
+  assert.equal(ret.iz.callFwd, "gercek");
+  assert.equal(ret.iz.retNedeni, "cagri-yonlendirme-acik");
+});
+
+test("KRİTİK callFwd: 'active' OKUNAMAZSA temiz SAYILMAZ (tipte opsiyonel) — 501 de kapalı arıza", async () => {
+  simSwapTemiz();
+  const AYAR = { ...TEMEL, nacToken: "gercek-token", callFwdCheck: true };
+
+  // CAMARA yanıtında `active` OPSİYONEL: yokluğu "yönlendirme yok" değil "bilinmiyor".
+  __setCagriYonlendirmeKanalForTests({ kosulsuzYonlendirmeAcikMi: async () => undefined });
+  const okunamadi = await agDogrula(AYAR, "high");
+  assert.ok(okunamadi.engel, "bilinmeyeni temiz saymak halkanın var olma sebebini yutardı");
+  assert.match(okunamadi.engel!, /okunabilir yanıt alınamadı/);
+  assert.equal(okunamadi.iz.retNedeni, "ag-yanitsiz");
+  assert.notEqual(okunamadi.iz.retNedeni, "cagri-yonlendirme-acik", "yanlış suçlama üretmez");
+
+  const eskiError = console.error;
+  const stderr: string[] = [];
+  console.error = (...a: unknown[]) => void stderr.push(a.map(String).join(" "));
+  try {
+    // Kardeş uç nokta için SDK belgesi 501 diyor; her fırlatma RET olmalı.
+    __setCagriYonlendirmeKanalForTests({
+      kosulsuzYonlendirmeAcikMi: async () => {
+        throw new Error(`501 Not Implemented for ${TELEFON}`);
+      },
+    });
+    const hata = await agDogrula(AYAR, "high");
+    assert.ok(hata.engel, "501 sessizce geçilemez");
+    assert.match(hata.engel!, /yanıt alınamadı/);
+    assert.doesNotMatch(hata.engel!, /501 Not Implemented/, "upstream hata metni ajana yankılanmaz");
+    assert.doesNotMatch(hata.engel!, /5551112233/);
+    assert.equal(hata.iz.callFwd, "gercek", "sorgu DENENDİ");
+    assert.equal(hata.iz.retNedeni, "ag-yanitsiz");
+    assert.equal(stderr.length, 1);
+    assert.doesNotMatch(stderr[0], /5551112233/, "numara stderr'de bile maskelenmeli");
+  } finally {
+    console.error = eskiError;
+  }
+});
+
+/* ── Gecikme değişmezi: hiçbir halka VARSAYILAN OLARAK açılmaz ────────────────── */
+
+test("KRİTİK gecikme: token TEK BAŞINA 5. ve 6. halkayı AÇMAZ — sorgu yok, iz 'kapali'", async () => {
+  simSwapTemiz();
+  let devSwapCagri = 0;
+  let callFwdCagri = 0;
+  __setCihazDegisimKanalForTests({
+    cihazDegistiMi: async () => {
+      devSwapCagri++;
+      return true; // açık olsaydı REDDEDERDİ; kapalıyken kararı hiç etkilememeli
+    },
+  });
+  __setCagriYonlendirmeKanalForTests({
+    kosulsuzYonlendirmeAcikMi: async () => {
+      callFwdCagri++;
+      return true;
+    },
+  });
+
+  const k = await agDogrula({ ...TEMEL, nacToken: "gercek-token" }, "high");
+  assert.equal(devSwapCagri + callFwdCagri, 0, "anahtarsız halka CAMARA'ya hiç sormamalı (gecikme)");
+  assert.equal(k.engel, undefined, "istenmemiş halkalar harcamayı reddedemez");
+  assert.equal(k.iz.devSwap, "kapali", "sessiz kalmak 'sordum ve geçti' ile karışırdı");
+  assert.equal(k.iz.callFwd, "kapali");
+  assert.equal(k.kanit.length, 1, "kapalı halkalar insan istemine gürültü satırı eklemez");
+  assert.match(k.kanit[0], /SIM değişimi yok/, "tek kanıt 1. halkanınki olmalı");
+
+  // Kontrol: tek fark anahtar olduğunda aynı kanallar gerçekten koşuyor ve reddediyor.
+  const acik = await agDogrula({ ...TEMEL, nacToken: "gercek-token", devSwapCheck: true }, "high");
+  assert.match(acik.engel!, /YENİ BİR CİHAZA taşınmış/);
+  assert.equal(devSwapCagri, 1);
+});
+
+/* ── Zincir sırası, katman ve iz ayrımı ───────────────────────────────────────── */
+
+test("KRİTİK zincir: 5. halkanın reti 6. halkayı HİÇ koşturmaz; 6. halka en SONdur", async () => {
+  let callFwdCagri = 0;
+  __setCagriYonlendirmeKanalForTests({
+    kosulsuzYonlendirmeAcikMi: async () => {
+      callFwdCagri++;
+      return false; // "temiz" bir sonraki halka önceki reti YUMUŞATAMAMALI
+    },
+  });
+
+  const devSwapReti = await agDogrula(
+    { ...TEMEL, nacSimulate: "temiz", devSwapSimulate: "degisti", callFwdSimulate: "kapali" },
+    "high"
+  );
+  assert.match(devSwapReti.engel!, /CİHAZ DEĞİŞİMİ SAPTANDI/, "karar 5. halkanın olmalı");
+  assert.equal(devSwapReti.iz.retNedeni, "cihaz-degisti");
+  assert.equal(devSwapReti.iz.callFwd, undefined, "5. halka reddettiyse 6. halka hiç koşmaz");
+  assert.equal(devSwapReti.kanit.length, 0, "temiz kanıt bir retin yanına ASLA eklenmez");
+  assert.equal(callFwdCagri, 0);
+
+  // 6. halka zincirin SONUdur: önceki beşi temizken bile tek başına reddedebilir.
+  const sonHalka = await agDogrula(
+    {
+      ...TEMEL,
+      nacSimulate: "temiz",
+      nvSimulate: "dogrulandi",
+      reachSimulate: "erisilebilir",
+      locSimulate: "beklenen",
+      expectedCountry: "TR",
+      devSwapSimulate: "temiz",
+      callFwdSimulate: "acik",
+    },
+    "high"
+  );
+  assert.match(sonHalka.engel!, /ÇAĞRI YÖNLENDİRME AÇIK/, "son halka tek başına reddedebilmeli");
+  assert.equal(sonHalka.iz.retNedeni, "cagri-yonlendirme-acik");
+  assert.equal(sonHalka.iz.devSwap, "simulasyon", "önceki halkaların izi silinmez");
+  assert.equal(sonHalka.iz.callFwd, "simulasyon");
+});
+
+test("katman: devSwap ve callFwd YALNIZ high'ta koşar — medium'da 'degisti'/'acik' bile karar üretmez", async () => {
+  const m = await agDogrula(
+    { ...TEMEL, nacSimulate: "temiz", devSwapSimulate: "degisti", callFwdSimulate: "acik" },
+    "medium"
+  );
+  assert.equal(m.engel, undefined, "medium'da bu halkalar koşmadığı için reddedemez");
+  assert.equal(m.kanit.length, 1, "medium'da yalnız SIM-Swap kanıtı olmalı");
+  assert.doesNotMatch(m.kanit[0], /Cihaz değişimi/);
+  assert.doesNotMatch(m.kanit[0], /Çağrı yönlendirme/);
+  assert.equal(m.iz.devSwap, undefined, "koşmayan halkanın alanı HİÇ yoktur");
+  assert.equal(m.iz.callFwd, undefined);
+  assert.equal(m.iz.devSwapPencereSaat, undefined);
+
+  // Bozuk değerler de karar üretmez: halka orada YOK, gevşemiş değil.
+  const bozuk = await agDogrula(
+    { ...TEMEL, devSwapSimulate: "her ne ise", callFwdSimulate: "her ne ise" },
+    "medium"
+  );
+  assert.equal(bozuk.engel, undefined);
+  assert.equal(bozuk.iz.devSwap, undefined);
+  assert.equal(bozuk.iz.callFwd, undefined);
+});
+
+test("KRİTİK iz: ALTI halka AYRI alanlarda durur ve İKİ pencere birbirine karışmaz", async () => {
+  simSwapTemiz();
+  __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
+  __setKonumKanalForTests({ ulkeDurumu: async () => ({ yurtDisinda: false }) });
+  __setCihazDegisimKanalForTests({ cihazDegistiMi: async () => false });
+  __setCagriYonlendirmeKanalForTests({ kosulsuzYonlendirmeAcikMi: async () => false });
+
+  const k = await agDogrula(
+    {
+      ...TEMEL,
+      nacToken: "gercek-token",
+      nvSimulate: "dogrulandi",
+      reachCheck: true,
+      expectedCountry: "TR",
+      devSwapCheck: true,
+      callFwdCheck: true,
+    },
+    "high"
+  );
+  assert.equal(k.engel, undefined);
+  assert.equal(k.kanit.length, 6, "koşan her halka insan istemine kendi kanıtını yazar");
+  assert.equal(k.iz.simSwap, "gercek", "gerçek sorgu, simüle bir halka yüzünden indirgenemez");
+  assert.equal(k.iz.nv, "simulasyon", "NV yapısal olarak yalnız simüle olabilir");
+  assert.equal(k.iz.reach, "gercek");
+  assert.equal(k.iz.loc, "gercek");
+  assert.equal(k.iz.devSwap, "gercek");
+  assert.equal(k.iz.callFwd, "gercek");
+  assert.equal(k.iz.pencereSaat, 72);
+  assert.equal(k.iz.devSwapPencereSaat, 72);
+  assert.equal(k.iz.maskeliNumara, MASKELI);
+  assert.equal(k.iz.retNedeni, undefined);
+});
+
+test("KRİTİK iz: SIM-Swap katmanı KAPALIYKEN devSwap penceresi pencereSaat'e SIZMAZ", async () => {
+  /**
+   * Ayrı alanın varlık sebebi tam olarak bu: token da simülasyon da yokken 1. halka hiç
+   * sorgu yapmaz ve pencereSaat BOŞ kalmalıdır. Cihaz-değişim penceresi oraya yazılsaydı,
+   * denetçi hiç yapılmamış bir SIM-Swap sorgusunun penceresini görüp sorulmuş sanardı.
+   */
+  const k = await agDogrula({ ...TEMEL, devSwapSimulate: "temiz" }, "high");
+  assert.equal(k.engel, undefined);
+  assert.equal(k.iz.simSwap, "kapali", "1. halka hiç sorgu yapmadı");
+  assert.equal(k.iz.pencereSaat, undefined, "sorulmamış halkanın penceresi yazılamaz");
+  assert.equal(k.iz.devSwapPencereSaat, 72, "5. halkanın penceresi KENDİ alanında durur");
+});
+
+/* ── integration: onay kapısı ve gerçek MCP protokolü üzerinden ───────────────── */
+
+test("KRİTİK devSwap: 'degisti' onay kapısında İSTEM GÖSTERİLMEDEN reddeder (approval.ts uçtan uca)", async () => {
+  const sorulanlar: string[] = [];
+  const sonuc = await onayAl(
+    istemKaydedenSunucu(sorulanlar),
+    {
+      eylem: "kampanya yayına alınacak",
+      satirlar: ["Günlük bütçe: 50"],
+      risk: "high",
+      agAyar: { ...TEMEL, nacSimulate: "temiz", devSwapSimulate: "degisti" },
+    },
+    true // ajanın onay iddiası 5. halkanın retini de aşamamalı
+  );
+  assert.equal(sonuc.onaylandi, false);
+  assert.equal(sonuc.kanal, "ag");
+  assert.match(sonuc.mesaj!, /CİHAZ DEĞİŞİMİ SAPTANDI/);
+  assert.equal(sorulanlar.length, 0, "onay istemi HİÇ gösterilmemeli");
+});
+
+test("KRİTİK callFwd: 'acik' yayına almayı reddeder — MCP protokolü üzerinden, hiçbir yazma gitmez", async () => {
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agSimulasyon: "temiz" });
+  ctx.config.callFwdSimulate = "acik";
+  const { client, sorulanlar } = await elicitationliIstemci(ctx);
+
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+    confirm: true,
+  });
+
+  assert.match(out, /SİMÜLASYON/, "ajanın gördüğü ret açıkça simülasyon olmalı");
+  assert.match(out, /ÇAĞRI YÖNLENDİRME AÇIK/);
+  assert.equal(rec.mutations.length, 0, "hiçbir yazma gitmemeli");
+  assert.equal(sorulanlar.length, 0, "onay istemi HİÇ gösterilmemeli");
+});
+
+test("halkalar akışı bozmaz: temiz ALTI halka yayına almayı geçirir, insan ALTI kanıtı da görür", async () => {
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agSimulasyon: "temiz" });
+  ctx.config.nvSimulate = "dogrulandi";
+  ctx.config.reachSimulate = "erisilebilir";
+  ctx.config.locSimulate = "beklenen";
+  ctx.config.expectedCountry = "TR";
+  ctx.config.devSwapSimulate = "temiz";
+  ctx.config.callFwdSimulate = "kapali";
+  const { client, sorulanlar } = await elicitationliIstemci(ctx);
+
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+  });
+
+  assert.match(out, /YAYINDA/);
+  assert.equal(rec.mutations.length, 1, "temiz zincir + insan onayı → işlem gitmeli");
+  assert.match(sorulanlar[0], /SIM değişimi yok/, "1. halka kanıtı istemde olmalı");
+  assert.match(sorulanlar[0], /Numara doğrulaması/, "2. halka kanıtı istemde olmalı");
+  assert.match(sorulanlar[0], /Cihaz erişilebilirliği/, "3. halka kanıtı istemde olmalı");
+  assert.match(sorulanlar[0], /Konum doğrulaması/, "4. halka kanıtı istemde olmalı");
+  assert.match(sorulanlar[0], /Cihaz değişimi/, "5. halka kanıtı istemde olmalı");
+  assert.match(sorulanlar[0], /Çağrı yönlendirme/, "6. halka kanıtı istemde olmalı");
 });

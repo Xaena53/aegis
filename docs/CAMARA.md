@@ -28,8 +28,8 @@ server call it at all, and what is its status in this codebase today.
 |---|---|---|---|
 | **SIM Swap** (`simSwap.check`) | "Was the approver's line taken over recently?" | **Real path written.** Live channel + `ADSPILOT_NAC_SIMULATE` simulation channel + test seam. Never run live (§2). | **Yes** — API key + phone number, nothing else. |
 | **Number Verification** (`numberVerification.*`, `numberVerificationV100.*`) | "Is this approval coming from the line owner's own device?" | **Simulation only** (`ADSPILOT_NV_SIMULATE`). Runs on the `high` tier only. Every string it emits says `SİMÜLASYON` and `gerçek ağ sorgusu YAPILMADI`. | **No.** Device-side OIDC authorization-code flow — see §4. |
-| **Device Swap** (`deviceSwap.check`) | "Was the line moved to a NEW DEVICE in the last N hours?" | **Roadmap — next link to build.** Structural twin of SIM Swap: same auth, same body shape, same hour-based `maxAge`, same single-boolean output. | **Yes** — phone number only. |
-| **Call Forwarding Signal** (`callForwardingSignal.retrieveUnconditionalCallForwarding`) | "Is call forwarding active on the approver's line?" (the standard way to intercept OTP/voice verification) | **Roadmap.** Cheap, meaningful, no PII in the response. | **Yes** — phone number only. |
+| **Device Swap** (`deviceSwap.check`) | "Was the line moved to a NEW DEVICE in the last N hours?" | **Link 5 — real path written, opt-in.** Structural twin of SIM Swap: same auth, same body shape, same hour-based `maxAge` (it *shares* `ADSPILOT_SIMSWAP_WINDOW_HOURS` rather than inventing a second window variable), same single-boolean output. The live query stays **off unless `ADSPILOT_DEVICESWAP_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_DEVICESWAP_SIMULATE` is the demo channel. One deliberate divergence from link 1: an unreadable `swapped` is **not** taken as "no swap" — `undefined` is `RET`. Never run live (§2). | **Yes** — phone number only. |
+| **Call Forwarding Signal** (`callForwardingSignal.retrieveUnconditionalCallForwarding`) | "Is *unconditional* call forwarding active on the approver's line?" (the standard way to intercept OTP/voice verification, and invisible to all five earlier links: same SIM, same device, line reachable, expected country) | **Link 6 — real path written, opt-in.** Off unless `ADSPILOT_CALLFWD_CHECK` is set, `high` tier only, trail records `kapali` while off; `ADSPILOT_CALLFWD_SIMULATE` is the demo channel. Only the unconditional variant is called — one boolean, no PII: *which* number the line forwards to is never asked for, never received, never written anywhere. Never run live (§2). | **Yes** — phone number only. |
 | **KYC Tenure** (`kyc.checkTenure`) | "Has this number been with the same subscriber since date X, and is it prepaid (PAYG) or contract/business?" | **Roadmap, blocked on data we do not have.** Requires a `tenureDate` we would have to invent — see the trap note below. | **Yes**, but needs a date input we cannot honestly supply yet. |
 | **Number Recycling** (`numberRecycling.check`) | "Has the configured approver number changed hands since date X?" | **Roadmap.** Needs a new config field (e.g. `ADSPILOT_APPROVER_SINCE`). Window semantics differ from every other link: absolute date, not an hour window. | **Yes**, but needs that new config field. |
 | **Device Status — roaming** (`deviceStatus.checkRoaming`) | "Is the approver's line abroad right now, and in which country?" | **Link 4 — real path written.** Serves the expected-country check: `ADSPILOT_EXPECTED_COUNTRY` (ISO 3166-1 alpha-2) with `ADSPILOT_LOC_SIMULATE` as the demo channel. `high` tier only, and **only when an expected country is configured** — no default is invented, since a default would answer "clean" forever. Raw `countryName[]` is never echoed; only the derived expected/unexpected verdict. Never run live (§2). | **Yes** — `device.phoneNumber`. Direct endpoint, not passthrough. |
@@ -47,13 +47,19 @@ registration date exists in config, this link must fail closed (`RET`), never de
 **Trap note on `numberRecycling.check`.** Same shape of trap, same rule: without a real
 `ADSPILOT_APPROVER_SINCE` the link refuses; it does not invent a date.
 
-**Trap note on `callForwardingSignal`.** Two fail-closed hazards are already known from the
-type definitions: (1) `active` is *optional* in
+**Trap note on `callForwardingSignal`.** Two fail-closed hazards were read out of the type
+definitions before the link was written, and both are honoured by the implementation:
+(1) `active` is *optional* in
 `RetrieveUnconditionalCallForwardingCallForwardingSignalResponse`, so `undefined` means
-"unknown", which is `RET` — never "clean"; (2) the endpoint documentation states that
-`retrieveCallForwarding` "exceeds the main scope of the CFS API, for this reason an error
-code 501 can be returned", so a `NotImplementedError` is also `RET`, and an unrecognised
-array member is `RET` too.
+"unknown", which is `RET` — never "clean"; the code narrows with
+`typeof res.active === "boolean"` and refuses otherwise. (2) The endpoint documentation
+states that `retrieveCallForwarding` "exceeds the main scope of the CFS API, for this reason
+an error code 501 can be returned", so every throw — `NotImplementedError` included — is
+`RET`. The array-returning sibling `retrieveCallForwarding` is therefore **never called**:
+an unrecognised array member would be one more fail-closed path for a question that is
+already answerable with a single boolean. If an operator's network does not serve this
+signal, the honest move is to turn the link off (`ADSPILOT_CALLFWD_CHECK`), not to read the
+silence as "no forwarding".
 
 ---
 
@@ -72,17 +78,25 @@ The evidence, all of it checkable in the tree:
    `src/networkTrust.ts` takes the "layer deliberately off" branch and emits the honest line
    `Ağ doğrulaması: kapalı (ADSPILOT_NAC_TOKEN tanımlı değil)`.
 
-2. **The SDK is imported only inside `src/networkTrust.ts`** — once per live link
-   (SIM Swap, reachability, roaming), each in that link's own channel factory:
+2. **The SDK is imported only inside `src/networkTrust.ts`** — **five** times, once per
+   live link (SIM Swap, reachability, roaming, device swap, call forwarding), each in that
+   link's own channel factory:
 
    ```ts
    const { NetworkAsCodeApiClient } = await import("network-as-code");
    ```
 
+   Five, not six: Number Verification has no channel factory at all, because it has no
+   server-callable endpoint (§4). Grep for the line above to count them yourself — the
+   number in this sentence is the number of matches, and it must be re-counted whenever a
+   link is added.
+
    Every one is a lazy dynamic import, reached only when a token is present *and* that
-   link's simulation channel is absent (and, for reachability, only when
-   `ADSPILOT_REACH_CHECK` is on). No such condition has ever held. In practice the
-   `network-as-code` module has never been loaded into a running AdsPilot process.
+   link's simulation channel is absent — and, for reachability, device swap and call
+   forwarding, only when that link's own opt-in switch (`ADSPILOT_REACH_CHECK`,
+   `ADSPILOT_DEVICESWAP_CHECK`, `ADSPILOT_CALLFWD_CHECK`) is on. No such condition has ever
+   held. In practice the `network-as-code` module has never been loaded into a running
+   AdsPilot process.
 
 3. **Tests never touch the network — they inject a fake channel.** The seam is
    `__setSimSwapKanalForTests(...)`, used by `test/helpers/harness.ts`:
@@ -124,9 +138,11 @@ not aspirational:
   refuses; the raw approver number and raw upstream error text never reach the agent.
 - The **audit trail**: every risk-tagged decision (refusal *and* pass) is written from the
   gate's own structural trace (`AgKarar.iz`), not sniffed from message text, and **each of
-  the four links gets its own field** (`simSwapKanali`, `nvKanali`, `reachKanali`,
-  `locKanali`) so "real query + simulated second link" can never be flattened into
-  "everything simulated" — or, worse, read as "everything real".
+  the six links gets its own field** (`simSwapKanali`, `nvKanali`, `reachKanali`,
+  `locKanali`, `devSwapKanali`, `callFwdKanali`) so "real query + simulated second link" can
+  never be flattened into "everything simulated" — or, worse, read as "everything real".
+  The two windowed links are kept apart the same way: `pencereSaat` belongs to SIM Swap and
+  `devSwapPencereSaat` to device swap, even though both derive from one configuration value.
 
 What is unproven is the wire: request shape, auth, latency, error bodies, and operator
 coverage against a real endpoint. Section 3 is how that gets closed.
@@ -162,16 +178,33 @@ ADSPILOT_SIMSWAP_WINDOW_HOURS=72
 ADSPILOT_DECISION_LOG=./kararlar.jsonl
 ```
 
+The token switches on link 1 and **nothing else**. Links 3–6 each need their own opt-in,
+because every live link adds one more CAMARA round trip (10 s timeout each) to every
+`high`-tier approval, and an operator who wanted a SIM-swap check should not inherit
+latency — or false-positive refusals — they never asked for:
+
+```bash
+ADSPILOT_REACH_CHECK=1          # link 3 — reachability (fluctuates legitimately)
+ADSPILOT_EXPECTED_COUNTRY=TR    # link 4 — roaming; no default is ever invented
+ADSPILOT_DEVICESWAP_CHECK=1     # link 5 — device swap (shares the SIM-swap window)
+ADSPILOT_CALLFWD_CHECK=1        # link 6 — unconditional call forwarding
+```
+
+Turn them on one at a time for a first live run: each one is a new way for the endpoint to
+refuse a spend, and you want to know which link produced the first refusal you see.
+
 ### Step 3 — Remove the simulation channels
 
 This is the step that is easy to forget and expensive to get wrong.
 
 ```bash
-# ALL FOUR must be empty/absent for a real run — one per chain link.
+# ALL SIX must be empty/absent for a real run — one per chain link.
 ADSPILOT_NAC_SIMULATE=
 ADSPILOT_NV_SIMULATE=
 ADSPILOT_REACH_SIMULATE=
 ADSPILOT_LOC_SIMULATE=
+ADSPILOT_DEVICESWAP_SIMULATE=
+ADSPILOT_CALLFWD_SIMULATE=
 ```
 
 `ADSPILOT_NAC_TOKEN` and `ADSPILOT_NAC_SIMULATE` set together is **contradictory
@@ -183,11 +216,39 @@ rule exists to prevent.
 `ADSPILOT_NV_SIMULATE` is independent of the SIM-Swap layer and may legitimately coexist with
 a real token — but for a first live run, clear it, so nothing in the output is simulated.
 
-The same contradiction rule guards links 3 and 4, and this is where a leftover demo variable
-hides longest: those links only run on the **high** tier, so a first live check done with a
-budget raise (medium) shows nothing at all, and the refusal only appears at the first
-go-live. Clear `ADSPILOT_REACH_SIMULATE` and `ADSPILOT_LOC_SIMULATE`, and verify with a
-**high-tier** action, not just a budget change.
+#### The trap: for links 3, 5 and 6 the contradiction rule does *not* fire by default
+
+Read this before assuming a cleared `.env`. The contradiction refusal on the reachability,
+device-swap and call-forwarding links is not triggered by "token + simulation". It is
+triggered by **"that link's live channel is *on*" + simulation**, and the live channel is on
+only when its own opt-in switch is set:
+
+| Link | Leftover variable | Refuses on a token alone? |
+|---|---|---|
+| 3 — reachability | `ADSPILOT_REACH_SIMULATE` | **No** — only when `ADSPILOT_REACH_CHECK` is also on |
+| 4 — roaming / country | `ADSPILOT_LOC_SIMULATE` | Yes, when `ADSPILOT_EXPECTED_COUNTRY` is set |
+| 5 — device swap | `ADSPILOT_DEVICESWAP_SIMULATE` | **No** — only when `ADSPILOT_DEVICESWAP_CHECK` is also on |
+| 6 — call forwarding | `ADSPILOT_CALLFWD_SIMULATE` | **No** — only when `ADSPILOT_CALLFWD_CHECK` is also on |
+
+The reasoning inside the gate is sound on its own terms: with the switch off there is no
+live channel to contradict, so the simulation cannot be overriding a real query. But those
+switches are **off by default**, which means the composite outcome is precisely the failure
+this document warns about elsewhere — *a leftover demo variable turning real verification
+into theatre*. Concretely: you set a real token, you forget
+`ADSPILOT_DEVICESWAP_SIMULATE=temiz` from demo day, and link 5 answers **from the
+simulation** without a single word of protest. Nothing refuses, nothing warns on stderr,
+and the approval prompt carries a `SİMÜLASYON`-stamped evidence line among the real ones.
+
+Two things make it hide longer than any other misconfiguration:
+
+- **Links 2–6 run on the `high` tier only.** A first live check done with a budget raise
+  (medium) exercises link 1 and nothing else, so it looks completely clean.
+- **A half-simulated pass still reads `"gercek"` in `simSwapKanali`.** Only that link's own
+  field (`reachKanali` / `devSwapKanali` / `callFwdKanali`) says `"simulasyon"`.
+
+So: clear all six variables, then verify with a **high-tier** action (a go-live), not just a
+budget change, and read every channel field in the log line rather than the first one
+(Step 6). The audit trail is the only place this trap is visible.
 
 ### Step 4 — Build and verify the code is sound before spending a call
 
@@ -227,11 +288,28 @@ The critical field is `simSwapKanali`. It must read `"gercek"`:
 - `"kapali"` — the layer is off; the token never arrived.
 - `"calismadi"` — a configuration error prevented any query at all.
 
-Read the other links' fields with the same eye — `nvKanali`, `reachKanali`, `locKanali`
-carry the same vocabulary, and a line is only fully live when no link still says
-`"simulasyon"`. Checking `simSwapKanali` alone is how a half-simulated run gets mistaken
-for a real one: on a `high`-tier decision, links 3 and 4 have their own channels and one
-of them can still be answering from a leftover demo variable while link 1 reads `"gercek"`.
+Read the other links' fields with the same eye — `nvKanali`, `reachKanali`, `locKanali`,
+`devSwapKanali` and `callFwdKanali` carry the same vocabulary, and a line is only fully live
+when no link still says `"simulasyon"`. Checking `simSwapKanali` alone is how a
+half-simulated run gets mistaken for a real one: on a `high`-tier decision, links 3–6 each
+have their own channel, and any of them can still be answering from a leftover demo variable
+while link 1 reads `"gercek"` — see the trap in step 3, which for links 3, 5 and 6 produces
+no refusal at all.
+
+A `high`-tier line with the whole chain live looks like this — six channel fields, two
+separate windows, and `nvKanali` absent because that link cannot run at all:
+
+```json
+{"zaman":"...","eylem":"...","risk":"high","karar":"gecti",
+ "simSwapKanali":"gercek","reachKanali":"gercek","locKanali":"gercek",
+ "devSwapKanali":"gercek","callFwdKanali":"gercek",
+ "pencereSaat":72,"devSwapPencereSaat":72,"maskeliNumara":"+90XX****XX"}
+```
+
+`"kapali"` in any of `reachKanali` / `devSwapKanali` / `callFwdKanali` means that link's
+opt-in switch is off — a deliberate "I did not ask", which is a different statement from
+`"gercek"` and must never be read as a passed check. A link that was never configured at
+all writes **no field**, which is again different from `"kapali"`.
 
 Also confirm what is **absent**: no full phone number, no token, no raw upstream error text.
 The number appears only masked, and `retNedeniKisa` is a code from a fixed dictionary, never

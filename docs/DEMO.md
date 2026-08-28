@@ -141,16 +141,37 @@ Prefer containers? The image build, data volume, and healthcheck are documented 
 
 ### 3.3 The trust chain, and where it honestly ends
 
-The gate runs **two links, in a fixed order**:
+The gate runs **six links, in a fixed order**:
 
 1. **SIM Swap** (`ADSPILOT_NAC_SIMULATE`, or the real CAMARA API with a token) — "was the
    owner's line taken over recently?" Runs on **every** risk-tagged action.
 2. **Number Verification** (`ADSPILOT_NV_SIMULATE`) — "is this approval coming from the
-   owner's own device?" Runs **only on the high tier** and **only when the variable is
-   set**. On the medium tier (budget raises) this link does not exist at all.
+   owner's own device?" **Simulation only, permanently for now** — see the box below.
+3. **Device Reachability** (`ADSPILOT_REACH_CHECK` for the live query, or
+   `ADSPILOT_REACH_SIMULATE`) — "is the line reachable on the network right now?"
+4. **Roaming / expected country** (`ADSPILOT_EXPECTED_COUNTRY`, or `ADSPILOT_LOC_SIMULATE`)
+   — "is the line outside the country we expect?" Without an expected country the link does
+   not run at all; no default is invented, because a default would answer "clean" forever.
+5. **Device Swap** (`ADSPILOT_DEVICESWAP_CHECK`, or `ADSPILOT_DEVICESWAP_SIMULATE`) — "was
+   the line moved to a *new device*?" The attack SIM Swap cannot see: the card never moves,
+   the line does.
+6. **Call Forwarding** (`ADSPILOT_CALLFWD_CHECK`, or `ADSPILOT_CALLFWD_SIMULATE`) — "is
+   unconditional call forwarding active?" Invisible to all five links above: same SIM, same
+   device, line reachable, expected country — and the verification call goes to the attacker.
 
-The order is one-directional: a swapped SIM refuses immediately, so the second link never
-gets a chance to soften that verdict — it can only add another reason to refuse.
+**Links 2–6 run on the high tier only** (go-live, changes to a serving campaign), and each
+runs **only when its own variable is set**. On the medium tier (budget raises) they do not
+exist at all, and a `high`-tier run with nothing but a token exercises link 1 alone: holding
+`ADSPILOT_NAC_TOKEN` switches on no other link, because each live link costs another CAMARA
+round trip (10 s timeout each) on every approval, and another way to refuse a legitimate
+spend. A link that is configured but switched off records `kapali` in the audit trail — "I
+did not ask" is written down, never left to look like "asked and passed".
+
+The scripted demo sets only the link-1 channel itself; links 2–6 appear on stage only if you
+export their variables (§3.6).
+
+The order is one-directional: a swapped SIM refuses immediately, so no later link gets a
+chance to soften that verdict — a later link can only add another reason to refuse.
 
 > **Number Verification is SIMULATION ONLY today, and there is no honest way around it.**
 > Real CAMARA Number Verification is a **device-side OIDC flow**: the check is bound to
@@ -178,10 +199,14 @@ unrecognized value refused at decision time without echoing it):
 
 ### 3.4 Risk tiers
 
-| Tier | Actions | SIM-swap lookback | Number Verification link |
+| Tier | Actions | SIM-swap lookback | Chain links 2–6 |
 |---|---|---|---|
-| **medium** | budget increases | **24 h** (the tighter of 24 h and the configured window) | never runs |
-| **high** | go-live, changes to an already-serving campaign | configured window, **72 h** by default (clamped to 1–2400) | runs when `ADSPILOT_NV_SIMULATE` is set |
+| **medium** | budget increases | **24 h** (the tighter of 24 h and the configured window) | never run |
+| **high** | go-live, changes to an already-serving campaign | configured window, **72 h** by default (clamped to 1–2400) | each runs when its own variable is set: `ADSPILOT_NV_SIMULATE`, `ADSPILOT_REACH_CHECK`/`_SIMULATE`, `ADSPILOT_EXPECTED_COUNTRY`/`ADSPILOT_LOC_SIMULATE`, `ADSPILOT_DEVICESWAP_CHECK`/`_SIMULATE`, `ADSPILOT_CALLFWD_CHECK`/`_SIMULATE` |
+
+The device-swap link reuses `ADSPILOT_SIMSWAP_WINDOW_HOURS` rather than introducing a second
+window variable — but it is logged under its **own** field (`devSwapPencereSaat`), so an
+auditor can always tell which question was asked with which window.
 
 ### 3.5 Auditability — the decision log
 
@@ -206,10 +231,14 @@ ADSPILOT_DECISION_LOG=/var/log/adspilot/kararlar.jsonl
   E.164 number is dropped, with a stderr warning). The refusal reason is a **fixed code**
   from the gate's own vocabulary — free upstream text has no path into the file.
 - **Written from the gate's structural trace, not from its text.** Each field comes from
-  the decision itself, so the two chain links stay in **separate fields**
-  (`simSwapKanali`, `nvKanali`) and are never flattened into one. "Real CAMARA query +
-  simulated NV" and "both simulated" are different trust levels, and telling them apart
-  is the entire point of the log.
+  the decision itself, so **every chain link keeps its own field** — `simSwapKanali`,
+  `nvKanali`, `reachKanali`, `locKanali`, `devSwapKanali`, `callFwdKanali` — and they are
+  never flattened into one. "Real CAMARA query + simulated NV" and "both simulated" are
+  different trust levels, and telling them apart is the entire point of the log. The same
+  rule applies to the two windowed links: `pencereSaat` is SIM Swap's, `devSwapPencereSaat`
+  is link 5's, even though both derive from one configuration value. **Adding a link means
+  adding its field here too** — a link that reaches the gate but not the log turns a
+  simulated refusal into something an auditor reads as a real CAMARA query.
 
 Fields (absent fields are omitted rather than written as null, so "not measured" never
 looks like "empty"):
@@ -221,11 +250,23 @@ looks like "empty"):
 | `hesapId` | the Google Ads customer ID whose money was at stake |
 | `risk` | `medium` / `high` |
 | `karar` | `gecti` (passed) / `ret` (refused) / `kapali` — `kapali` means **no link actually queried anything**; a gate that was off is never logged as "passed" |
-| `simSwapKanali` | `gercek` / `simulasyon` / `kapali` (deliberately disabled) / `calismadi` (config error, never queried) |
-| `nvKanali` | `simulasyon` / `calismadi` — **absent** when the link did not run |
-| `pencereSaat` | the lookback window actually queried |
+| `simSwapKanali` | link 1 — `gercek` / `simulasyon` / `kapali` (deliberately disabled) / `calismadi` (config error, never queried) |
+| `nvKanali` | link 2 (Number Verification) — `simulasyon` / `calismadi` only. There is no `gercek`: the type itself has no such value (§3.3). **Absent** when the link did not run |
+| `reachKanali` | link 3 (device reachability) — same four values as `simSwapKanali`; `kapali` means `ADSPILOT_REACH_CHECK` is off. **Absent** when the link was never configured |
+| `locKanali` | link 4 (roaming / expected country) — same four values; `kapali` means `ADSPILOT_EXPECTED_COUNTRY` is unset. **Absent** when never configured |
+| `devSwapKanali` | link 5 (device swap) — same four values; `kapali` means `ADSPILOT_DEVICESWAP_CHECK` is off. **Absent** when never configured |
+| `callFwdKanali` | link 6 (call forwarding) — same four values; `kapali` means `ADSPILOT_CALLFWD_CHECK` is off. **Absent** when never configured |
+| `pencereSaat` | the SIM-swap lookback window actually queried |
+| `devSwapPencereSaat` | link 5's **own** lookback window — never merged into `pencereSaat`, because link 5 can run while the SIM-swap layer is off, and writing its window into link 1's field would show an auditor a query that never happened |
 | `maskeliNumara` | masked approver number, e.g. `+905*******22` |
-| `retNedeniKisa` | fixed refusal code: `sim-degisti`, `nv-uyusmadi`, `ag-yanitsiz`, `yapilandirma-celiskili`, `simulasyon-degeri-tanimsiz`, `onaylayici-numarasi-yok`, `ag-ayari-kapiya-ulasmadi` |
+| `retNedeniKisa` | fixed refusal code, from the gate's own closed vocabulary — never free or upstream text. The full set: `sim-degisti`, `nv-uyusmadi`, `cihaz-erisilemez`, `konum-beklenmedik`, `cihaz-degisti`, `cagri-yonlendirme-acik`, `beklenen-ulke-gecersiz`, `ag-yanitsiz`, `yapilandirma-celiskili`, `simulasyon-degeri-tanimsiz`, `onaylayici-numarasi-yok`, `ag-ayari-kapiya-ulasmadi` |
+
+Note the distinction the channel fields draw three ways: a **missing** field means the link
+never ran at all — either the decision was medium-tier, or the link was never configured;
+`"kapali"` means it was configured and deliberately switched off ("I did not ask"); and
+`"calismadi"` means a configuration error stopped it from asking. Only `"gercek"` is a query
+that actually reached CAMARA — and a single `"simulasyon"` next to it is what reveals a run
+that is part theatre.
 
 Two real lines — act 2's refusal, and a high-tier pass with both links (contains no
 secret; this is exactly what lands on disk):
@@ -494,6 +535,62 @@ broken, and it says so loudly rather than passing quietly.
 | Risk-tagged action reaches the gate without its config (programming error) | **Refuse** — never fail-open by omission (logged as `ag-ayari-kapiya-ulasmadi`) |
 | Decision log path broken / disk full | **Approval flow continues untouched** — one stderr line. The log is an observation, not a gate; the opposite would turn an audit tool into a new failure point |
 
+### Full pipeline: brain → gate
+
+`scripts/demo-senaryo.mjs` drives the gate directly. The **Growth Brain** run does the
+other half of the story: a real LLM researches the site, writes the plan and the ad copy,
+creates the campaign, and *then* asks to take it live — so one command shows the whole
+claim end to end: **the LLM plans, and every money movement goes through the network
+gate.**
+
+```bash
+# One terminal: the network says the approver's SIM was swapped.
+export ADSPILOT_NAC_SIMULATE=degisti
+export ADSPILOT_APPROVER_PHONE=+905551112222
+
+npm run brain -- \
+  --hedef "yeni müşteri kaydı" \
+  --url https://your-site.example \
+  --butce 50 \
+  --musteri 1234567890 \
+  --uygula --yayinla
+```
+
+**Prerequisites:** `ANTHROPIC_API_KEY` (the brain is a real model run — no key, no run),
+a built server (`npm run build`), and write tools enabled for the account. Without the key
+the run stops with a Turkish error naming the environment variable; the key is never
+accepted as a CLI argument, because that leaks it into shell history.
+
+**What you will see, in order:**
+
+1. **The planning steps** — research → strategy → creative, printed as `[1/5] … [3/5]`.
+2. **Approval #1** — a plan summary box, then `Yalnız 'Evet' devam ettirir` ("only 'Evet'
+   continues"). Typing anything else writes nothing. On `Evet` the campaign is created
+   **PAUSED**, exactly as in the dry-run flow.
+3. **Approval #2 — separate, explicit, and about money.** A second box states that the call
+   is `set_campaign_status → ENABLED`, that it is **high**-risk, and that the network gate
+   fires before any prompt. This is a distinct question, not a continuation of #1.
+4. **The gate fires.** With `ADSPILOT_NAC_SIMULATE=degisti` the refusal from act 2 is
+   printed **verbatim** under `── Sunucunun cevabı (aynen) ──` ("the server's answer,
+   as-is") and copied into the report. The report labels it
+   `✔ GÜVENLİK KAPISI ÇALIŞTI — BU BİR BAŞARISIZLIK DEĞİLDİR` ("the security gate worked —
+   this is NOT a failure"): the campaign stayed paused and nothing was spent. The process
+   exits **0**, because a refusal is the system working, not breaking.
+
+Swap to `ADSPILOT_NAC_SIMULATE=temiz` and the second half of the design shows itself: the
+network passes, its evidence line (`SIM değişimi yok…` — "no SIM swap") is carried into the
+report, and the server **still** refuses — because Growth Brain structurally cannot produce
+verified human consent. It advertises no elicitation capability and its `confirm` flag is
+stripped unconditionally, so consent has to come from a human through a client that can be
+asked. The report calls this `DOĞRULANMIŞ İNSAN ONAYI GEREKTİ` ("verified human approval
+was required") and, again, not a failure. Both outcomes are honest: the CLI never claims a
+campaign went live unless the server's own success line says so.
+
+`--yayinla` cannot be used on its own — `--uygula` must have created the campaign in the
+same run, so the tool can never take a *pre-existing* campaign live. That flag check runs
+**before** the API-key check: a malformed command line is not something an API key fixes,
+and reporting the missing key first would send you off to fix the wrong thing.
+
 ---
 
 ## 5. Troubleshooting
@@ -572,8 +669,15 @@ the process exits 1.
 | `dogrulandi` | verified (Number Verification simulation: request deemed to come from the owner's device) |
 | `uyusmadi` | did not match (Number Verification simulation: hard refusal) |
 | `Reddedildi` | Refused |
-| `AĞ DOĞRULAMASI BAŞARISIZ` | NETWORK VERIFICATION FAILED (chain link 1, SIM Swap) |
+| `AĞ DOĞRULAMASI BAŞARISIZ` | NETWORK VERIFICATION FAILED (used by every link with a live channel: 1, 3, 4, 5, 6) |
 | `NUMARA DOĞRULAMASI BAŞARISIZ` | NUMBER VERIFICATION FAILED (chain link 2) |
+| `erisilebilir` / `anormal` | reachable / unreachable (link 3 simulation values; `anormal` is a hard refusal) |
+| `CİHAZ ERİŞİLEBİLİRLİĞİ ANORMAL` | DEVICE REACHABILITY ABNORMAL (chain link 3) |
+| `beklenen` / `beklenmedik` | expected / unexpected country (link 4 simulation values) |
+| `KONUM BEKLENMEDİK` | LOCATION UNEXPECTED (chain link 4) |
+| `CİHAZ DEĞİŞİMİ SAPTANDI` | DEVICE SWAP DETECTED (chain link 5 — the line moved to a new device, SIM untouched) |
+| `acik` / `kapali` (link 6 values) | forwarding on / off. **Careful:** here `kapali` means *forwarding is off* (clean); in the audit trail's channel fields the same word means *the link never asked* |
+| `ÇAĞRI YÖNLENDİRME AÇIK` | UNCONDITIONAL CALL FORWARDING ACTIVE (chain link 6) |
 | `Ağ doğrulaması: kapalı` | Network verification: off |
 | `zincir 1 ▶` / `zincir 2 ▶` | chain link 1 / chain link 2 (evidence-line markers) |
 | `çelişkili yapılandırma` | contradictory configuration (token + simulation set together) |
@@ -586,4 +690,4 @@ the process exits 1.
 | `PERDE 3 ATLANDI — uydurma kanıt üretilmez` | Act 3 skipped — no fabricated evidence |
 | `ACİL — ELLE MÜDAHALE GEREKİYOR` | URGENT — MANUAL INTERVENTION REQUIRED |
 | `gecti` / `ret` / `kapali` | passed / refused / gate never queried (decision-log `karar` values) |
-| `gercek` / `simulasyon` / `calismadi` | real query / simulated / could not run (decision-log channel values) |
+| `gercek` / `simulasyon` / `kapali` / `calismadi` | real query / simulated / link deliberately switched off ("did not ask") / config error, never asked — the decision-log channel values |

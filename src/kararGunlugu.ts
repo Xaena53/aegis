@@ -25,8 +25,9 @@
  *    birleştiği için günlük yalan söyleyebiliyordu (SIM-Swap kapalı + NV simülasyonu
  *    "gecti/simulasyon" görünüyor, gerçek CAMARA sorgusu + NV simülasyonu "gercek"
  *    yerine "simulasyon" yazılıyordu). Artık her alan AgKarar.iz'den gelir ve zincirin
- *    HER halkası AYRI alana (simSwapKanali / nvKanali / reachKanali / locKanali)
- *    yazılır — tek boolean'a ASLA ezilmez.
+ *    HER halkası AYRI alana (simSwapKanali / nvKanali / reachKanali / locKanali /
+ *    devSwapKanali / callFwdKanali) yazılır — tek boolean'a ASLA ezilmez. Pencereli
+ *    halkalar da ayrıdır: pencereSaat SIM-Swap'ın, devSwapPencereSaat 5. halkanındır.
  *
  *    Bu kural halka eklendikçe yeniden kazanılmak zorundadır: 3. ve 4. halka ilk
  *    yazıldığında izde vardı ama kayda geçmiyordu, dolayısıyla SİMÜLE bir halkanın
@@ -63,8 +64,18 @@ export interface KararKaydi {
   reachKanali?: HalkaIzi;
   /** 4. halka (konum / beklenen ülke); halka hiç koşmadıysa alan YOKTUR. */
   locKanali?: HalkaIzi;
+  /** 5. halka (Device Swap — yeni cihaza taşınma); halka hiç koşmadıysa alan YOKTUR. */
+  devSwapKanali?: HalkaIzi;
+  /** 6. halka (Call Forwarding); halka hiç koşmadıysa alan YOKTUR. */
+  callFwdKanali?: HalkaIzi;
   /** Sorgulanan SIM-swap geriye bakış penceresi (saat); sorgu yapılmadıysa yok. */
   pencereSaat?: number;
+  /**
+   * 5. halkanın KENDİ geriye bakış penceresi (saat). pencereSaat ile birleştirilmez:
+   * SIM-Swap katmanı kapalıyken bile cihaz-değişim halkası koşabilir ve o pencereyi
+   * SIM-Swap'ınkiymiş gibi yazmak denetçiyi yanıltırdı.
+   */
+  devSwapPencereSaat?: number;
   /** Onaylayıcı numarasının MASKELİ hâli (ör. "+905*******33"); asla tam numara. */
   maskeliNumara?: string;
   /** networkTrust'ın sabit sözlüğünden ret kodu; serbest/upstream metin DEĞİL. */
@@ -139,7 +150,10 @@ export function agKararKaydiOlustur(
     nvKanali: iz.nv,
     reachKanali: iz.reach,
     locKanali: iz.loc,
+    devSwapKanali: iz.devSwap,
+    callFwdKanali: iz.callFwd,
     pencereSaat: iz.pencereSaat,
+    devSwapPencereSaat: iz.devSwapPencereSaat,
     maskeliNumara: maskeliDogrula(iz.maskeliNumara),
     retNedeniKisa: ag.engel ? iz.retNedeni : undefined,
   };
@@ -168,7 +182,10 @@ export function kararYaz(kayit: KararKaydi): void {
       nvKanali: kayit.nvKanali,
       reachKanali: kayit.reachKanali,
       locKanali: kayit.locKanali,
+      devSwapKanali: kayit.devSwapKanali,
+      callFwdKanali: kayit.callFwdKanali,
       pencereSaat: kayit.pencereSaat,
+      devSwapPencereSaat: kayit.devSwapPencereSaat,
       maskeliNumara: kayit.maskeliNumara,
       retNedeniKisa: kayit.retNedeniKisa,
     });

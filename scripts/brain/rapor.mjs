@@ -22,11 +22,24 @@
  * İsteğe bağlı ek alanlar (orkestratör verirse gösterilir, vermezse sessizce atlanır):
  *  - efektifTavanTL: bağlayıcı bütçe tavanı (min(CLI tavanı, sunucu maxDailyBudget))
  *  - tavanKaynagi: tavanın hangi kaynaktan bağlayıcı olduğu (ör. "sunucu limits kaynağı")
+ *  - yayinSonucu: --yayinla yolunun sonucu (uygulama.mjs yayinaAl dönüşü). Verilmezse
+ *    "Yayına Alma Denemesi" bölümü HİÇ oluşmaz. Ağ kapısının reddi bu bölümde
+ *    BAŞARISIZLIK olarak değil, "güvenlik kapısı çalıştı" olarak sunulur: para
+ *    hareketinin durdurulması sistemin amacıdır, arızası değil.
  */
 
 const MARKDOWN_KACIS = /[\\\[\]()<>`!|#]/g;
 const KONTROL_KARAKTERLERI = /[\u0000-\u001f\u007f-\u009f]/g;
 const MUSTERI_ID_DESENI = /\b(\d{3})-?(\d{3})-?\d{4}\b/g;
+
+/**
+ * Çağrı yerindeki uzunluk tavanının İZİ: kırpılan metnin sonuna eklenen "…".
+ *
+ * uygulama.mjs'ten sabit/tavan import EDİLMEZ — bu modülün bağımsızlığı bilinçlidir
+ * (bkz. YAYIN_ETIKETI notu) ve tavan sayısını buraya kopyalamak, tavan değiştiğinde
+ * sessizce yanlış rapor üretirdi. Tek bağ, kırpmanın görünür bıraktığı işarettir.
+ */
+const KIRPMA_IZI = /…\s*$/;
 
 /**
  * Güvenilmez metni tek satıra indirir, kontrol/ANSI karakterlerini siler ve
@@ -76,6 +89,30 @@ function adimBasarisizMi(adim) {
 }
 
 /**
+ * Yayın denemesi durum kodları → rapor etiketi. rapor.mjs'in bağımsızlığı korunsun
+ * diye uygulama.mjs'ten import edilmez; bilinmeyen kod geldiğinde ham değer
+ * güvenli biçimde gösterilir (eşleşme zorunlu değildir).
+ */
+const YAYIN_ETIKETI = {
+  basarili: "YAYINA ALINDI (ENABLED)",
+  "ag-retti": "AĞ KAPISI REDDETTİ",
+  "insan-onayi-gerekli": "DOĞRULANMIŞ İNSAN ONAYI GEREKTİ — sunucu reddetti",
+  reddedildi: "SUNUCU REDDETTİ",
+  hata: "HATA",
+  onaysiz: "OPERATÖR ONAY VERMEDİ — çağrı hiç yapılmadı",
+  atlandi: "ATLANDI — kurulum tamamlanmadığı için denenmedi",
+};
+
+/** Ret metnini alıntı bloğuna çevirir: her satır ayrı ayrı temizlenip kaçışlanır. */
+function alintiSatirlari(metin) {
+  const satirlar = String(metin ?? "")
+    .split("\n")
+    .map((s) => guvenli(s, ""))
+    .filter((s) => s !== "");
+  return satirlar.length ? satirlar.map((s) => `> ${s}`) : ["> (sunucu metni yok)"];
+}
+
+/**
  * Growth Brain çalıştırmasının Türkçe markdown raporunu üretir.
  * Tüm girdiler eksik/bozuk olabilir; fonksiyon fırlatmaz, yer tutucularla düşer.
  */
@@ -88,6 +125,7 @@ export function raporOlustur({
   kuruMod,
   efektifTavanTL,
   tavanKaynagi,
+  yayinSonucu,
 } = {}) {
   const satirlar = [];
   const ekle = (...s) => satirlar.push(...s);
@@ -252,11 +290,102 @@ export function raporOlustur({
     ekle("Uygulama çalıştırılmadı — yalnızca plan ve rapor üretildi.", "");
   }
 
+  // ── Yayına alma denemesi (YALNIZ --yayinla yolunda oluşur) ──
+  if (yayinSonucu && typeof yayinSonucu === "object") {
+    const durum = String(yayinSonucu.durum ?? "");
+    const etiket = YAYIN_ETIKETI[durum] ?? guvenli(durum, "(bilinmiyor)");
+    const denendi = yayinSonucu.denendi === true;
+    ekle("## Yayına Alma Denemesi", "");
+    ekle(
+      "Bu adımda `set_campaign_status` → ENABLED çağrısı denendi. Sunucuda bu çağrı HIGH risk",
+      "etiketlidir: ağ kapısı (CAMARA SIM-swap zinciri) insan onayı isteminden ÖNCE çalışır.",
+      ""
+    );
+    ekle("| Alan | Değer |", "|---|---|");
+    ekle(`| Çağrı yapıldı mı | ${denendi ? "evet" : "hayır"} |`);
+    ekle(`| Karar | ${etiket} |`);
+    if (yayinSonucu.kampanyaId) ekle(`| Kampanya ID | ${guvenli(yayinSonucu.kampanyaId)} |`);
+    ekle("");
+
+    if (yayinSonucu.sonucMetni) {
+      /**
+       * DÜRÜSTLÜK: burada "kısaltılmadı" DEMEZ, çünkü doğru değil. Metin bu rapora
+       * ulaşmadan ÖNCE çağrı yerinde (uygulama.mjs) uzunluk tavanında kırpılmış olabilir,
+       * ve burada raporun tekdüze hijyeninden geçer: kontrol karakteri sökülür, markdown
+       * kaçışlanır, 10 haneli müşteri ID'leri maskelenir (guvenli → musteriIdMaskele).
+       * Hijyeni ters yüz etmek link/görsel enjeksiyonuna tek istisna açardı; ama başlığın
+       * "aynen — kısaltılmadı" demesi de raporu kendi çıktısı hakkında yalancı yapıyordu.
+       *
+       * Özetleme/yumuşatma YOKTUR — vaadimiz budur. Kırpma varsa saklanmaz, AÇIKÇA yazılır.
+       */
+      const kirpik = KIRPMA_IZI.test(String(yayinSonucu.sonucMetni));
+      ekle(
+        kirpik
+          ? "**Sunucunun cevabı (özetlenmedi — ama uzunluk tavanında KIRPILDI; müşteri ID'leri maskeli, kontrol karakteri sökülüp markdown kaçışlandı):**"
+          : "**Sunucunun cevabı (özetlenmedi; uzun cevaplar çağrı yerinde kırpılabilir — müşteri ID'leri maskeli, kontrol karakteri sökülüp markdown kaçışlandı):**",
+        ""
+      );
+      ekle(...alintiSatirlari(yayinSonucu.sonucMetni));
+      if (kirpik) {
+        ekle(
+          "",
+          "_Alıntının sonundaki … uzunluk tavanının izidir: yukarıdaki metin sunucu cevabının TAMAMI DEĞİLDİR._"
+        );
+      }
+      ekle("");
+    }
+
+    const kanitlar = Array.isArray(yayinSonucu.kanitSatirlari) ? yayinSonucu.kanitSatirlari : [];
+    if (kanitlar.length) {
+      ekle("**Kanıt satırları** _(onay özetine ağ katmanının eklediği satırlar dahil)_:");
+      ekle(...maddeListesi(kanitlar));
+      ekle("");
+    }
+
+    if (durum === "ag-retti") {
+      ekle(
+        "**✔ GÜVENLİK KAPISI ÇALIŞTI — BU BİR BAŞARISIZLIK DEĞİLDİR.** Ağ doğrulaması yayına alma",
+        "isteğini reddetti; kampanya DURAKLATILMIŞ kaldı ve hiç para harcanmadı. Sistemin var oluş",
+        "amacı tam olarak budur: LLM planlar, ama her para hareketi ağ kapısından geçmek zorundadır.",
+        ""
+      );
+    } else if (durum === "insan-onayi-gerekli") {
+      ekle(
+        "**✔ İKİNCİ KAPI ÇALIŞTI — BU BİR BAŞARISIZLIK DEĞİLDİR.** Ağ kapısı bu çağrıyı durdurmadı,",
+        "ancak sunucu DOĞRULANMIŞ insan onayı istedi ve Growth Brain onayı yapısal olarak uyduramaz",
+        "(elicitation ilan edilmez, `confirm` bayrağı koşulsuz silinir). Kampanya DURAKLATILMIŞ kaldı.",
+        ""
+      );
+    } else if (durum === "basarili") {
+      ekle(
+        "**⚠ KAMPANYA YAYINDA — GERÇEK HARCAMA BAŞLADI.** Ağ kapısı ve onay kapısı geçildi.",
+        "Harcamayı hemen izlemeye al; durdurmak için kampanyayı PAUSED'a çek.",
+        ""
+      );
+    } else if (durum === "hata") {
+      ekle(
+        "**⚠ YAYIN DENEMESİ SONUÇSUZ** — sunucudan anlaşılır bir karar alınamadı. Kampanyanın gerçek",
+        "durumu bu rapordan OKUNAMAZ; hesaptan doğrulanmadan yayına alındığı ya da alınmadığı varsayılmamalıdır.",
+        ""
+      );
+    } else if (denendi) {
+      ekle(
+        "Sunucu bu çağrıyı reddetti; kampanya DURAKLATILMIŞ kaldı ve hiç para harcanmadı.",
+        ""
+      );
+    } else {
+      ekle("Çağrı hiç yapılmadı; kampanya DURAKLATILMIŞ kaldı ve hiç para harcanmadı.", "");
+    }
+  }
+
   // ── Güvenlik durumu (her raporda zorunlu ibare) ──
+  ekle("## Güvenlik Durumu", "");
+  if (yayinSonucu && yayinSonucu.durum === "basarili") {
+    ekle("- Kampanya YAYINDA (ENABLED); harcama başlamış durumda — bu rapordaki tek istisna budur.");
+  } else {
+    ekle("- Kampanya DURAKLATILMIŞ (PAUSED) durumda; kendiliğinden hiçbir harcama başlamaz.");
+  }
   ekle(
-    "## Güvenlik Durumu",
-    "",
-    "- Kampanya DURAKLATILMIŞ (PAUSED) durumda; kendiliğinden hiçbir harcama başlamaz.",
     "- Yayına alma (ENABLED) ve bütçe artışı, insan onayı + ağ onayı (CAMARA SIM-swap doğrulaması) ister; Growth Brain bu çağrıları hiçbir koşulda kendiliğinden yapmaz.",
     ""
   );

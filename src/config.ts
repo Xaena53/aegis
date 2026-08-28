@@ -69,6 +69,25 @@ export interface AdsPilotConfig {
    * Biçim doğrulaması (iki harf) karar anında yapılır; geçersiz değer kapalı arızadır.
    */
   expectedCountry?: string;
+  /**
+   * Device Swap SİMÜLASYON kanalı ("temiz" | "degisti"): güven zincirinin 5. halkası,
+   * YALNIZ high risk katmanında koşar. Değer burada DOĞRULANMAZ — karar anında Türkçe
+   * hatayla reddedilir (bkz. networkTrust.ts, kapalı arıza).
+   */
+  devSwapSimulate?: string;
+  /**
+   * 5. halkanın GERÇEK CAMARA sorgusunun açma/kapama anahtarı. Varsayılan KAPALI:
+   * her açık halka HIGH katmandaki onaya bir CAMARA gidiş-dönüşü daha ekler, bu yüzden
+   * hiçbir halka token'ın varlığıyla kendiliğinden açılmaz.
+   */
+  devSwapCheck: boolean;
+  /**
+   * Call Forwarding SİMÜLASYON kanalı ("kapali" | "acik"): güven zincirinin 6. halkası,
+   * YALNIZ high risk katmanında koşar. Aynı gerekçeyle değer burada DOĞRULANMAZ.
+   */
+  callFwdSimulate?: string;
+  /** 6. halkanın GERÇEK sorgu anahtarı. Varsayılan KAPALI (devSwapCheck ile aynı gerekçe). */
+  callFwdCheck: boolean;
 }
 
 const REQUIRED = [
@@ -98,6 +117,10 @@ export function nacConfigFromEnv(): Pick<
   | "reachCheck"
   | "locSimulate"
   | "expectedCountry"
+  | "devSwapSimulate"
+  | "devSwapCheck"
+  | "callFwdSimulate"
+  | "callFwdCheck"
 > {
   return {
     nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
@@ -120,12 +143,59 @@ export function nacConfigFromEnv(): Pick<
      * değer burada undefined olur ve konum halkası HİÇ KOŞMAZ (beklenti uydurulmaz).
      */
     expectedCountry: process.env.ADSPILOT_EXPECTED_COUNTRY?.trim() || undefined,
+    // Aynı gerekçe: "temiz"/"degisti" doğrulaması karar anında yapılır.
+    devSwapSimulate: process.env.ADSPILOT_DEVICESWAP_SIMULATE?.trim() || undefined,
+    /**
+     * Varsayılan KAPALI — reachCheck ile aynı gerekçe, artı gecikme: açık her gerçek
+     * halka HIGH katmandaki onaya bir CAMARA gidiş-dönüşü ekler. parseBool anlaşılamayan
+     * değeri de güvenli tarafa (kapalı) aldığı için bozuk bir değer halkayı açmaz.
+     */
+    devSwapCheck: parseBool(process.env.ADSPILOT_DEVICESWAP_CHECK, false),
+    // Aynı gerekçe: "kapali"/"acik" doğrulaması karar anında yapılır.
+    callFwdSimulate: process.env.ADSPILOT_CALLFWD_SIMULATE?.trim() || undefined,
+    callFwdCheck: parseBool(process.env.ADSPILOT_CALLFWD_CHECK, false),
     simSwapWindowHours: parseNumEnv(
       "ADSPILOT_SIMSWAP_WINDOW_HOURS",
       process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS,
       72
     ),
   };
+}
+
+/** nacConfigFromEnv()'in döndürdüğü dilimin tipi — anahtar üreticisi bunu alır. */
+export type NacDilimi = ReturnType<typeof nacConfigFromEnv>;
+
+/**
+ * Ağ-doğrulama ayarlarının bağlam önbelleği anahtarına giren parçası.
+ *
+ * Burada durmasının sebebi sınanabilirlik: http.ts başlangıçta hosted ortamı doğrulayıp
+ * eksik yapılandırmada process.exit çağırdığı için testten import EDİLEMEZ. Anahtar orada
+ * kaldığı sürece ancak kaynak METNİ taranarak sınanabiliyordu — ve metin taraması, bir
+ * alanı yorum satırına almayı fark etmiyordu (mutasyonla kanıtlandı: satırı `//` ile
+ * kapatınca 6. halkanın iki ayarı anahtardan düşüyor, hiçbir test kızarmıyordu).
+ * Saf fonksiyon olarak burada, "şu alan değişince anahtar gerçekten değişiyor mu" diye
+ * DAVRANIŞSAL olarak sınanır.
+ *
+ * Zincire halka eklemek, alanlarını buraya eklemek demektir. Eksiklik sessiz ve tek
+ * yönlüdür: halkayı AÇAN operatör, halka KAPALIYKEN üretilmiş bağlamı önbellekten almaya
+ * devam eder ve hiç koşmayan bir korumanın koştuğuna inanır.
+ */
+export function nacAnahtarDilimi(nac: NacDilimi): string[] {
+  return [
+    nac.nacToken ?? "",
+    nac.approverPhone ?? "",
+    String(nac.simSwapWindowHours),
+    nac.nacSimulate ?? "",
+    nac.nvSimulate ?? "",
+    String(nac.reachCheck ?? ""),
+    nac.reachSimulate ?? "",
+    nac.locSimulate ?? "",
+    nac.expectedCountry ?? "",
+    String(nac.devSwapCheck ?? ""),
+    nac.devSwapSimulate ?? "",
+    String(nac.callFwdCheck ?? ""),
+    nac.callFwdSimulate ?? "",
+  ];
 }
 
 export function loadConfig(): AdsPilotConfig {

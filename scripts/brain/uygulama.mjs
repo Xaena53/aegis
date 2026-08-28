@@ -7,10 +7,17 @@
  *   → add_campaign_negative_keywords → create_responsive_search_ad
  *
  * Güvenlik değişmezleri:
- *  - set_campaign_status ve update_campaign_budget KALICI kara listededir; bu modül
- *    hiçbir koşulda kampanyayı yayına almaz ve bütçe değiştirmez.
- *  - Hiçbir araca `confirm` anahtarı gönderilmez (sarmalayıcı koşulsuz siler) —
- *    onay gerektiren her işlem sunucu tarafında tasarım gereği reddedilir.
+ *  - uygula() akışında set_campaign_status ve update_campaign_budget KALICI kara
+ *    listededir: kurulum yolu hiçbir koşulda kampanyayı yayına almaz, bütçe değiştirmez.
+ *  - Yayına alma YALNIZ ayrı yayinaAl() fonksiyonundan çıkabilir (bkz. aşağıdaki
+ *    "Yayına alma" bölümü). O fonksiyon guvenliCagirici'yi KULLANMAZ; kendi dar
+ *    sarmalayıcısı (yayinCagirici) yalnız set_campaign_status + status='ENABLED'
+ *    taşır. Böylece kara liste kurulum yolunda aynen durur ve ENABLED çağrısının
+ *    tek çıkış noktası tek bir fonksiyon olur.
+ *  - Hiçbir araca `confirm` anahtarı gönderilmez (her iki sarmalayıcı da koşulsuz
+ *    siler) — onay gerektiren her işlem sunucu tarafında tasarım gereği reddedilir.
+ *    yayinaAl bunu DEĞİŞTİRMEZ: ENABLED çağrısı yapılır, kararı sunucudaki ağ kapısı
+ *    ve insan onayı kapısı verir; bu istemci onayı asla uyduramaz.
  *  - Araç argümanları alan alan elle kurulur; plan/kreatif nesneleri asla spread edilmez.
  *  - Negatif kelimeler YALNIZ bu çalıştırmada oluşturulan kampanyaya bağlanır:
  *    campaignId sadece create_search_campaign sonucundan regex ile ayrıştırılır,
@@ -36,8 +43,15 @@ export const OKUMA_IZINLI = Object.freeze(["run_gaql"]);
 /**
  * Kalıcı kara liste: harcama başlatan/artıran araçlar. İzinli listeye ileride
  * yanlışlıkla eklense bile sarmalayıcı önce burayı kontrol eder ve reddeder.
+ *
+ * DİKKAT: bu liste KURULUM yolunun (uygula → guvenliCagirici) kara listesidir ve
+ * gevşetilmemiştir. Yayına alma yolu ayrı bir sarmalayıcı kullanır (yayinCagirici)
+ * ve o sarmalayıcı da yalnız TEK aracı, tek statüyle taşır.
  */
 export const KARA_LISTE = Object.freeze(["set_campaign_status", "update_campaign_budget"]);
+
+/** Yayına alma yolunun TEK izinli aracı — başka hiçbir araç bu yoldan geçemez. */
+export const YAYIN_ARACI = "set_campaign_status";
 
 /** Kontrol karakterleri + C1 aralığı (ANSI/terminal enjeksiyonuna karşı). */
 const KONTROL_KARAKTERI = /[\x00-\x1f\x7f-\x9f]/;
@@ -426,4 +440,191 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
   }
 
   return { kampanyaId, adGrubuId, basari, adimlar, uyarilar, eksikAdimlar };
+}
+
+/* ── Yayına alma (YALNIZ growth-brain.mjs --yayinla yolundan) ────────────────── */
+
+/**
+ * Yayına alma yolunun dar sarmalayıcısı. guvenliCagirici'nin AKRABASI DEĞİL:
+ * kurulum yolundaki kara liste orada aynen durur, burada ise izin verilen küme
+ * tek elemanlıdır.
+ *
+ *  - Araç adı YALNIZ set_campaign_status olabilir; başka her ad reddedilir.
+ *  - status YALNIZ 'ENABLED' olabilir: bu sarmalayıcı "duraklat" için de bir yol
+ *    açsaydı, tek amaçlı olduğu iddiası kod düzeyinde doğrulanamazdı.
+ *  - `confirm` anahtarı koşulsuz silinir — insan onayını bu istemci uyduramaz;
+ *    kararı sunucudaki ağ kapısı ve onay kapısı verir.
+ */
+export function yayinCagirici(cagir) {
+  if (typeof cagir !== "function") {
+    throw new Error("yayinaAl: 'cagir' fonksiyonu zorunlu — mcpBaglan() ile alınır.");
+  }
+  return async function yayinCagir(arac, args) {
+    if (arac !== YAYIN_ARACI) {
+      throw new Error(
+        `Güvenlik: yayın sarmalayıcısı yalnız '${YAYIN_ARACI}' aracını taşır — '${arac}' reddedildi.`
+      );
+    }
+    if (args?.status !== "ENABLED") {
+      throw new Error("Güvenlik: yayın sarmalayıcısı yalnız status='ENABLED' çağrısı taşır.");
+    }
+    const temiz = {};
+    for (const [anahtar, deger] of Object.entries(args ?? {})) {
+      if (anahtar === "confirm") continue;
+      temiz[anahtar] = deger;
+    }
+    return String((await cagir(arac, temiz)) ?? "");
+  };
+}
+
+/**
+ * Sunucunun ENABLED yanıtındaki başarı imzası (write.ts'in bugünkü metni).
+ * Başarı YALNIZ bu imzayla ilan edilir; "ret metni bulamadım, demek ki olmuştur"
+ * çıkarımı yapılmaz (kapalı arıza).
+ */
+const YAYIN_BASARI_IZI = /YAYINDA \(ENABLED\)/;
+
+/**
+ * İnsan onayı kapısının imzaları. ÖNCE bunlara bakılır: ağ kapısı TEMİZ geçtiğinde
+ * kanıt satırları (içinde ADSPILOT_NAC_SIMULATE gibi ipuçları geçebilir) onay
+ * kapısının ret metnine eklenir — sıra ters olsaydı temiz bir geçiş "ağ reddetti"
+ * diye yanlış sunulurdu.
+ */
+const INSAN_KAPISI_IZLERI = [/confirm=true ile tekrar çağır/i, /^İşlem yapılmadı:/mu];
+
+/**
+ * Ağ kapısının (networkTrust.ts + approval.ts risk dalı) ret imzaları.
+ * Liste kasıtlı olarak dar: eşleşme yoksa "ağ reddetti" İDDİA EDİLMEZ, ret
+ * "sunucu reddetti" olarak dürüstçe sınıflanır.
+ */
+const AG_KAPISI_IZLERI = [
+  /AĞ DOĞRULAMASI BAŞARISIZ/u,
+  /NUMARA DOĞRULAMASI BAŞARISIZ/u,
+  /CİHAZ ERİŞİLEBİLİRLİĞİ ANORMAL/u,
+  /KONUM BEKLENMEDİK/u,
+  // 5. ve 6. halkanın SİMÜLE ret başlıkları. Eksiklerdi: gerçek kanalın reti
+  // "AĞ DOĞRULAMASI BAŞARISIZ" ile başladığı için yakalanıyor, simüle ret ise
+  // KENDİ başlığını taşıdığından hiçbir desene uymuyordu — cihaz değişimi ve çağrı
+  // yönlendirme retleri "ag-retti" yerine "reddedildi" sınıflanıyor, rapor
+  // "GÜVENLİK KAPISI ÇALIŞTI" bloğunu hiç basmıyordu (ağ kapısının yaptığı iş
+  // sıradan bir sunucu reddi gibi görünüyordu).
+  /CİHAZ DEĞİŞİMİ SAPTANDI/u,
+  /ÇAĞRI YÖNLENDİRME AÇIK/u,
+  /ağ doğrulaması tamamlanamadı/iu,
+  /ağ doğrulaması yapılandırması eksik/iu,
+  /ağ doğrulama yapılandırması onay kapısına ulaşmadı/iu,
+  /konum doğrulaması (aktif|yapılandırılmış)/iu,
+  /numara doğrulaması aktif/iu,
+  /cihaz erişilebilirliği kontrolü/iu,
+  /cihaz değişimi kontrolü/iu,
+  /çağrı yönlendirme kontrolü/iu,
+  /simülasyon kanalı aktif/iu,
+  // Halka adları BURAYA da eklenir: yeni halkanın env'i desende yoksa o halkanın
+  // yapılandırma/çelişki retleri (metinleri env adından başka ağ izi taşımaz)
+  // sınıflandırıcının dışında kalır. DEVICESWAP|CALLFWD tam da böyle kaçmıştı.
+  /ADSPILOT_(NAC|NV|REACH|LOC|DEVICESWAP|CALLFWD)_[A-Z_]+/u,
+  /ADSPILOT_(APPROVER_PHONE|EXPECTED_COUNTRY)/u,
+];
+
+/** Onay özetinin madde satırları (ağ kanıtı bu satırlarda taşınır). */
+function maddeSatirlari(metin) {
+  return String(metin ?? "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.startsWith("•"));
+}
+
+/** Madde satırları çıkarılmış gövde — ağ izleri YALNIZ gövdede aranır. */
+function maddesizGovde(metin) {
+  return String(metin ?? "")
+    .split("\n")
+    .filter((s) => !s.trim().startsWith("•"))
+    .join("\n");
+}
+
+/**
+ * ENABLED yanıtını dürüstçe sınıflandırır:
+ *  'basarili'            — kampanya gerçekten yayına alındı,
+ *  'ag-retti'            — ağ kapısı reddetti (demo vitrini: güvenlik çalıştı),
+ *  'insan-onayi-gerekli' — ağ geçti/kapalıydı, DOĞRULANMIŞ insan onayı olmadığı için
+ *                          sunucu reddetti (bu istemci onayı yapısal olarak uyduramaz),
+ *  'reddedildi'          — başka bir sunucu reddi (bütçe tavanı, yayınlanabilir reklam
+ *                          yok, kampanya bulunamadı, yazma kapalı…),
+ *  'hata'                — boş/anlaşılmaz yanıt ya da araç hatası.
+ */
+export function yayinSonucuSinifla(metin) {
+  const m = String(metin ?? "").trim();
+  if (!m || m === "(boş yanıt)") return "hata";
+  if (YAYIN_BASARI_IZI.test(m)) return "basarili";
+  if (INSAN_KAPISI_IZLERI.some((d) => d.test(m))) return "insan-onayi-gerekli";
+  const govde = maddesizGovde(m);
+  if (AG_KAPISI_IZLERI.some((d) => d.test(govde))) return "ag-retti";
+  if (sonucBasarisizMi(m)) return "reddedildi";
+  return "hata";
+}
+
+/** Ağ kanıtı / onay özeti satırları (madde işareti sökülmüş, temizlenmiş). */
+export function kanitSatirlariniAyikla(metin) {
+  return maddeSatirlari(metin)
+    .map((s) => gorunurOzet(s.replace(/^•\s*/u, ""), 300))
+    .filter((s) => s !== "");
+}
+
+/**
+ * Kurulmuş (PAUSED) kampanyayı YAYINA ALMAYI dener — set_campaign_status → ENABLED.
+ * Bu çağrı sunucuda HIGH risk etiketlidir: ağ kapısı (CAMARA SIM-swap zinciri) İLK
+ * çalışır, insan onayı kapısı ondan sonra gelir.
+ *
+ * Bu fonksiyon yalnız growth-brain.mjs'in --yayinla yolundan, operatörün AYRI ve
+ * açık ikinci 'Evet' onayından SONRA çağrılır. Onay bu istemciden sunucuya
+ * gönderilemez (confirm silinir, elicitation ilan edilmez); dolayısıyla temiz bir
+ * ağ sinyalinde bile sunucu 'insan-onayi-gerekli' ile reddedebilir — bu bir hata
+ * değil, "Growth Brain kendiliğinden yayına almaz" değişmezinin kanıtıdır.
+ *
+ * kampanyaId YALNIZ uygula() sonucundan (create_search_campaign çıktısından
+ * ayrıştırılmış değer) gelmelidir; plandan/modelden gelen ID kabul edilmez.
+ *
+ * Dönüş: { denendi, kampanyaId, durum, sonucMetni, kanitSatirlari }
+ * Fırlatmaz — araç hatası da 'hata' durumu olarak sınıflanır (rapor yalan söylemesin).
+ */
+export async function yayinaAl({ kampanyaId, musteriId }, { cagir }) {
+  const yayinCagir = yayinCagirici(cagir);
+
+  const kampanya = guvenliDize(kampanyaId, "kampanyaId", { max: 20 });
+  if (!/^\d+$/.test(kampanya)) {
+    throw new Error(
+      "kampanyaId yalnız rakam içerebilir — bu değer create_search_campaign sonucundan ayrıştırılır, plandan/modelden ASLA alınmaz."
+    );
+  }
+  const musteri = guvenliDize(musteriId, "musteriId", { max: 20 });
+  if (!/^[0-9-]+$/.test(musteri)) {
+    throw new Error("musteriId yalnız rakam ve tire içerebilir (örn. 1234567890).");
+  }
+
+  let metin;
+  try {
+    metin = await yayinCagir(YAYIN_ARACI, {
+      customerId: musteri,
+      campaignId: kampanya,
+      status: "ENABLED",
+    });
+  } catch (e) {
+    return {
+      denendi: true,
+      kampanyaId: kampanya,
+      durum: "hata",
+      sonucMetni: `Araç hatası: ${gorunurOzet(e?.message ?? "bilinmeyen hata")}`,
+      kanitSatirlari: [],
+    };
+  }
+
+  return {
+    denendi: true,
+    kampanyaId: kampanya,
+    durum: yayinSonucuSinifla(metin),
+    // Sunucunun cevabı AYNEN taşınır (yalnız ANSI/kontrol karakteri sökülür):
+    // ret metni demonun vitrin anıdır, özetlenip yumuşatılmaz.
+    sonucMetni: gorunurOzet(metin, 2000),
+    kanitSatirlari: kanitSatirlariniAyikla(metin),
+  };
 }

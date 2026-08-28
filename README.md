@@ -3,10 +3,12 @@
 
 **A Google Ads MCP server that lets an AI agent manage real campaigns — without letting it spend your money unsupervised.**
 
+*Aegis, its trust gate, asks the mobile network (GSMA Open Gateway / CAMARA) whether the approver's line was taken over — before any human is prompted, and before any money moves.*
+
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-155-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-431-brightgreen.svg)](test/)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -22,6 +24,91 @@ AdsPilot moves that decision out of the agent's hands. When your MCP client supp
 the protocol, and the agent's own `confirm` flag is ignored entirely. Approval stops
 being a story the agent tells and becomes a fact the server can verify.
 
+## Network-verified spending approvals
+
+An approval prompt proves that *someone* answered it. It cannot prove that someone was the
+account owner. Sessions, tokens, cookies and devices are application-layer artifacts, and
+application-layer artifacts get stolen — at which point the attacker inherits the exact
+same "are you sure?" dialog the owner would have seen, and answers it just as convincingly.
+
+The mobile network holds evidence the application layer cannot fabricate. Through GSMA Open
+Gateway / CAMARA APIs — reached via the Nokia Network-as-Code platform — an operator can
+answer questions such as *was this line's SIM swapped in the last 24 hours*, the signature
+move of account-takeover fraud. AdsPilot (the gate is called **Aegis**) puts that question
+in front of every spend-increasing action: **the network is consulted before the human
+prompt is ever shown**. A swapped SIM is refused outright rather than politely offered to
+whoever is now holding the line, and the agent's own `confirm` flag is ignored on every
+path. Risk is tiered — a budget increase is *medium* and uses a 24 h lookback; taking a
+campaign live is *high*, widens the window to the configured value (72 h by default) and
+admits further links of the chain.
+
+Every direction of uncertainty fails closed: no token, a missing approver number, an
+unrecognised configuration value, contradictory configuration, or an endpoint that does not
+answer within 10 s all end in refusal — never in a quiet pass. Raw values never reach the
+agent: the evidence line carries a masked number, refusal reasons come from a fixed
+vocabulary, and upstream error text goes to stderr only. Each risk-tagged decision —
+refusals *and* passes — can be appended to a JSONL audit trail (`ADSPILOT_DECISION_LOG`)
+that keeps a **separate channel field per chain link**, so "real query" and "simulated" can
+never be flattened into one another.
+
+### Where the chain honestly stands today
+
+Six links are designed; how far each one is built differs, and the difference matters more
+than the design does.
+
+| # | CAMARA signal | Question | State in this repo |
+|---|---|---|---|
+| 1 | `simSwap.check` | Was the approver's line taken over recently? | **Real path written** — live SDK channel + simulation channel + test seam. Runs on every risk-tagged action |
+| 2 | `numberVerification.*` | Is the approval coming from the owner's own device? | **Simulation only, permanently for now** — it is a device-side OIDC flow that no back-end can call. Its trace type has no "real" value at all |
+| 3 | `deviceStatus.retrieveReachabilityStatus` | Can the line receive data/SMS right now? | **Real path written, opt-in** (`ADSPILOT_REACH_CHECK`), high tier only — reachability legitimately fluctuates, so it stays off by default |
+| 4 | `deviceStatus.checkRoaming` | Is the line in the expected country? | **Real path written**, high tier, and only when `ADSPILOT_EXPECTED_COUNTRY` is set — no default country is invented, because a default would answer "clean" forever |
+| 5 | `deviceSwap.check` | Was the line moved to a **new device** — the attack SIM Swap cannot see? | **Real path written, opt-in** (`ADSPILOT_DEVICESWAP_CHECK`), high tier only. Shares the SIM-swap window but is logged under its own field; unlike link 1, an unreadable answer is a refusal, not a "no swap" |
+| 6 | `callForwardingSignal.retrieveUnconditionalCallForwarding` | Is unconditional call forwarding active — the classic OTP/voice intercept? | **Real path written, opt-in** (`ADSPILOT_CALLFWD_CHECK`), high tier only. One boolean, no PII: which number the line forwards to is never asked for or received |
+
+Links 2–6 run on the **high** tier only, and each needs its own variable: holding a
+Network-as-Code token switches on link 1 and nothing else, because every live link adds
+another CAMARA round trip to every approval — and another way to refuse a legitimate spend.
+A configured-but-disabled link records `kapali` in the audit trail, so "I did not ask" is
+never mistaken for "asked and passed".
+
+> **No CAMARA API call made by this repository has ever reached a live endpoint. Zero real
+> network queries have been executed, on any signal, at any time.** No Network-as-Code token
+> has ever been held, so the SDK's lazy import has never once been taken; every gate run so
+> far has come from a simulation channel, and every string such a run produces is stamped
+> `SİMÜLASYON` and states that no network query was made. A green test suite is evidence
+> about the **decision logic** — refusal on swapped SIM, on an unanswering API, on
+> incomplete configuration — not evidence that the wire works.
+
+The full signal inventory, the type-level proof that Number Verification is uncallable from
+a server, and the step-by-step checklist that turns the first live query into recorded fact
+are in **[docs/CAMARA.md](docs/CAMARA.md)**.
+
+## Seeing it run
+
+```bash
+npm run prova -- --musteri <customer-id>            # preflight; writes nothing
+npm run demo  -- --musteri <customer-id>            # three acts, dry by default
+npm run demo  -- --musteri <customer-id> --canli    # real +1 budget raise, reverted at once
+```
+
+`npm run demo` drives the **real** server binary over real MCP stdio — a fresh server process
+per scene, each handed its own simulation value, so nothing in `.env` is flipped mid-demo:
+a budget raise on a clean signal (the prompt appears with the network evidence line inside
+it), the same raise with a swapped SIM (**hard refusal, zero prompts** — the script counts
+elicitations and aborts if one is ever shown), and a high-tier go-live where the lookback
+widens to 72 h and, if `ADSPILOT_NV_SIMULATE` is set, a second evidence line appears. Act 3
+skips itself rather than stage a scene whose evidence it cannot honestly produce, and any
+campaign it takes live is reverted and then **read back** to prove it.
+
+`npm run prova` is the stage-day preflight: it exercises the same real paths (stdio binary,
+a live read-only `list_accounts`, a complete dry demo run) and reports each check as
+`GEÇTİ` / `UYARI` / `KALDI`, printing which environment variables are present but never
+their values. Narration script, act-by-act expected output, the fail-closed matrix and a
+glossary of the Turkish runtime strings: **[docs/DEMO.md](docs/DEMO.md)**.
+
+> Aegis — the network-trust gate, its demo and its runbook — was built for the GSMA MENA
+> Ignite hackathon (Theme 4).
+
 ## How it compares
 
 | | Google official MCP | AdsPilot |
@@ -31,6 +118,7 @@ being a story the agent tells and becomes a fact the server can verify.
 | **Fail-closed guards** | n/a | Budget ceiling, paused-by-default, mandatory geo targeting, shared-budget protection |
 | **Multi-tenant hosting** | ❌ self-host, single identity | ✅ per-user OAuth, encrypted tokens, session isolation |
 | **Site → campaign** | ❌ | ✅ `analyze_site` turns any URL into campaign raw material |
+| **Network trust anchor** | ❌ | A six-link CAMARA chain (SIM swap · number verification · reachability · roaming · device swap · call forwarding) *before* the human is prompted — real paths written, never yet run live ([docs](docs/CAMARA.md)) |
 | **License** | Apache-2.0 | AGPL-3.0 |
 
 > This table compares Google's official server, which is deliberately read-only and
@@ -40,9 +128,9 @@ being a story the agent tells and becomes a fact the server can verify.
 
 ## The safety model
 
-Every write follows the same decision path. The property worth noticing is the branch
-in bold: when elicitation is available, the human's answer is binding and the agent's
-`confirm` is never consulted.
+Every write follows the same decision path. Two branches are worth noticing: the network
+gate answers *before* any human is asked, and when elicitation is available the human's
+answer is binding while the agent's `confirm` is never consulted.
 
 ```mermaid
 flowchart TD
@@ -50,8 +138,10 @@ flowchart TD
     B -- no --> R["🚫 Rejected"]
     B -- yes --> C{"Does this action<br/>increase spend?"}
     C -- "no — pause, budget cut,<br/>negative keywords" --> E["✅ Executed"]
-    C -- yes --> D{"Client supports<br/>elicitation?"}
-    D -- "YES" --> H["Server asks the human directly<br/>agent's confirm is ignored"]
+    C -- yes --> N{"Network trust gate<br/>CAMARA · SIM swap first"}
+    N -- "swapped · no answer<br/>· misconfigured" --> R
+    N -- "clean, or gate off" --> D{"Client supports<br/>elicitation?"}
+    D -- "YES" --> H["Server asks the human directly<br/>network evidence inside the prompt<br/>agent's confirm is ignored"]
     D -- no --> F{"confirm = true?"}
     H -- approved --> G
     H -- "declined · cancelled<br/>· timeout · error" --> R
@@ -61,7 +151,12 @@ flowchart TD
     G -- yes --> E
 ```
 
-Three properties are worth calling out:
+Four properties are worth calling out:
+
+**The network is asked first.** When the trust gate refuses, the approval prompt is never
+rendered at all — because the person who would answer it may be the attacker who took over
+the line. An unconfigured gate is pass-through, but says so honestly in the evidence line
+and is logged as `kapali`, never as "passed".
 
 **Campaigns are born paused.** No tool in the system can create a campaign that is
 already serving. Going live is always a separate, approved step.
@@ -87,6 +182,7 @@ flowchart LR
         direction TB
         T["stdio · Streamable HTTP + Bearer"]
         M["MCP surface<br/>12 tools · 4 resources · 5 prompts"]
+        NT["Network trust gate<br/>src/networkTrust.ts"]
         SG["Safety gates<br/>approval · ceiling · fail-closed"]
         AC["AdsContext<br/>one per user, refreshed per request"]
     end
@@ -94,11 +190,16 @@ flowchart LR
     DB[("SQLite<br/>refresh tokens<br/>AES-256-GCM")]
     GA["Google Ads API"]
     WEB["Any website<br/>SSRF-guarded fetch"]
+    NAC["GSMA Open Gateway / CAMARA<br/>via Nokia Network-as-Code<br/>(never yet called live)"]
+    LOG[("Decision log<br/>JSONL, opt-in")]
 
     CC --> T
     CD --> T
     T --> M
-    M --> SG
+    M --> NT
+    NT -.spend-increasing actions only.-> NAC
+    NT --> SG
+    NT -.every risk-tagged decision.-> LOG
     SG --> AC
     AC --> GA
     AC -.credentials.-> DB
@@ -181,8 +282,9 @@ docker compose up --build
 curl http://localhost:8787/health          # -> {"ok":true,...}
 ```
 
-Image layout, the environment table, the jury demo mode (`ADSPILOT_NAC_SIMULATE`), and
-troubleshooting live in **[docs/DOCKER.md](docs/DOCKER.md)**.
+Image layout, the environment table, the jury demo mode (`ADSPILOT_NAC_SIMULATE`, the
+simulated CAMARA channel), and troubleshooting live in
+**[docs/DOCKER.md](docs/DOCKER.md)**.
 
 ## From a URL to a campaign
 
@@ -225,6 +327,10 @@ to live in **[SECURITY.md](SECURITY.md)**. Two of them in short:
 - Uncertainty never resolves in favour of spending money.
 - The agent cannot raise its own budget ceiling or re-enable writes.
 
+The network trust gate is held to the same rule: if the trust anchor cannot answer, the
+spend does not happen — and it never claims a live query it did not make
+([docs/CAMARA.md](docs/CAMARA.md)).
+
 Found a hole? Please report it privately through GitHub Security Advisories rather than
 a public issue.
 
@@ -233,14 +339,18 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 155 offline tests
+npm test           # 431 offline tests
 npm run smoke      # live checks against your real Google Ads account
+npm run prova -- --musteri <id>   # stage-day preflight for the demo (writes nothing)
+npm run demo  -- --musteri <id>   # the three-act network-trust demo, dry by default
 ```
 
 Tests run a real MCP client/server pair over `InMemoryTransport` with an injected fake
 Google Ads context, so every guard is exercised through the actual protocol without
 touching a live account. The suite includes fail-closed regressions and adversarial
-scenarios that try to reach a bad outcome by every known route.
+scenarios that try to reach a bad outcome by every known route. The network gate is tested
+the same way — through an injected fake channel, which is what makes the unreachable-API
+refusal assertable, and also why those green tests say nothing about the live CAMARA wire.
 
 ### Live smoke test
 

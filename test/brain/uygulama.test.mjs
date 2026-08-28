@@ -3,7 +3,9 @@
  * uygulama.mjs testleri — AĞSIZ: cagir sahtedir, gerçek MCP/Anthropic bağlantısı yoktur.
  *
  * Kanıtlanan güvenlik değişmezleri:
- *  - set_campaign_status / update_campaign_budget HİÇBİR koşulda çağrılmaz (kara liste),
+ *  - set_campaign_status / update_campaign_budget kurulum yolundan (uygula) HİÇBİR
+ *    koşulda çağrılmaz (kara liste); yayına alma YALNIZ ayrı yayinaAl() yolundan
+ *    çıkar ve o yolun testleri test/brain/yayin.test.mjs dosyasındadır,
  *  - hiçbir çağrıda `confirm` anahtarı yoktur,
  *  - negatif kelimeler yalnız create sonucundan ayrıştırılan campaignId'ye gider,
  *  - plan/kreatif içinde kimlik/hedef alanı varsa baştan hata,
@@ -14,6 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   uygula,
+  yayinaAl,
   guvenliCagirici,
   sonucBasarisizMi,
   kimlikAyikla,
@@ -131,6 +134,17 @@ test("GÜVENLİK: hiçbir çağrıda confirm anahtarı gönderilmez", async () =
   for (const { arac, args } of cagir.cagrilar) {
     assert.ok(!("confirm" in (args ?? {})), `${arac} çağrısında confirm olmamalı`);
   }
+});
+
+test("GÜVENLİK: kurulum yolu hiçbir çağrıda status='ENABLED' taşımaz", async () => {
+  const cagir = sahteCagir();
+  await uygula(ornekGirdi(), { cagir });
+  for (const { arac, args } of cagir.cagrilar) {
+    assert.notEqual(args?.status, "ENABLED", `${arac} çağrısı ENABLED taşımamalı`);
+  }
+  // Yayına alma yolu AYRI bir dışa aktarımdır; uygula() onu asla kullanmaz.
+  assert.equal(typeof yayinaAl, "function");
+  assert.ok(!YAZMA_IZINLI.includes("set_campaign_status"));
 });
 
 /* ── Sarmalayıcı (guvenliCagirici) ───────────────────────────────────────────── */

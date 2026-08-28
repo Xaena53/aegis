@@ -42,7 +42,10 @@ const ALANLAR = [
   "nvKanali",
   "reachKanali",
   "locKanali",
+  "devSwapKanali",
+  "callFwdKanali",
   "pencereSaat",
+  "devSwapPencereSaat",
   "maskeliNumara",
   "retNedeniKisa",
 ];
@@ -61,6 +64,8 @@ const HALKA_ALANLARI = [
   { iz: "nv", kayit: "nvKanali" },
   { iz: "reach", kayit: "reachKanali" },
   { iz: "loc", kayit: "locKanali" },
+  { iz: "devSwap", kayit: "devSwapKanali" },
+  { iz: "callFwd", kayit: "callFwdKanali" },
 ] as const;
 
 let kok: string;
@@ -474,7 +479,8 @@ test("KRİTİK: zincirin HER halkası kayda geçer — hiçbiri sessizce düşü
   /**
    * Eksik alanın yönü sinsidir: kayıt hâlâ geçerli JSON'dur, hiçbir test kızarmaz,
    * ama denetçi simüle bir halkanın ürettiği reti gerçek CAMARA sorgusu sanır.
-   * Bu yüzden dört halkanın DÖRDÜ de aynı anda doluyken kayıt sınanır.
+   * Bu yüzden zincirin TÜM halkaları aynı anda doluyken kayıt sınanır (HALKA_ALANLARI
+   * listesi büyüdükçe bu düzenek de büyür — eksik bırakılan halka aşağıda kızarır).
    */
   const kayit: Record<string, unknown> = agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", {
     engel: "Reddedildi [SİMÜLASYON]: CİHAZ ERİŞİLEBİLİRLİĞİ...",
@@ -484,7 +490,10 @@ test("KRİTİK: zincirin HER halkası kayda geçer — hiçbiri sessizce düşü
       nv: "simulasyon",
       reach: "simulasyon",
       loc: "simulasyon",
+      devSwap: "simulasyon",
+      callFwd: "simulasyon",
       pencereSaat: 72,
+      devSwapPencereSaat: 72,
       retNedeni: "cihaz-erisilemez",
     },
   }) as unknown as Record<string, unknown>;
@@ -494,6 +503,8 @@ test("KRİTİK: zincirin HER halkası kayda geçer — hiçbiri sessizce düşü
     nv: "simulasyon",
     reach: "simulasyon",
     loc: "simulasyon",
+    devSwap: "simulasyon",
+    callFwd: "simulasyon",
   };
   for (const { iz: izAlani, kayit: kayitAlani } of HALKA_ALANLARI) {
     assert.equal(
