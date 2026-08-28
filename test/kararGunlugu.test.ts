@@ -40,10 +40,28 @@ const ALANLAR = [
   "karar",
   "simSwapKanali",
   "nvKanali",
+  "reachKanali",
+  "locKanali",
   "pencereSaat",
   "maskeliNumara",
   "retNedeniKisa",
 ];
+
+/**
+ * Zincirin HER halkası için: izdeki alan → kayıttaki alan.
+ *
+ * Bu eşleme bir testin konusu, çünkü eksikliği sessizdir. 3. ve 4. halka ilk
+ * yazıldığında ize giriyor ama kayda geçmiyordu; ALANLAR listesi yalnız FAZLA alanı
+ * yakaladığı için hiçbir test kızarmadı ve simüle bir halkanın ürettiği ret, kayıtta
+ * yalnız "simSwapKanali":"gercek" görünerek gerçek bir CAMARA sorgusunun ürünü gibi
+ * okunuyordu. Yeni halka eklendiğinde buraya da satır eklenmezse aşağıdaki test kırılır.
+ */
+const HALKA_ALANLARI = [
+  { iz: "simSwap", kayit: "simSwapKanali" },
+  { iz: "nv", kayit: "nvKanali" },
+  { iz: "reach", kayit: "reachKanali" },
+  { iz: "loc", kayit: "locKanali" },
+] as const;
 
 let kok: string;
 let gunluk: string;
@@ -449,6 +467,48 @@ test("KRİTİK: kayıtta tam numara / token / 'Bearer' benzeri sır kalıbı YOK
       [],
       "kayıtta beklenmeyen alan olmamalı"
     );
+  }
+});
+
+test("KRİTİK: zincirin HER halkası kayda geçer — hiçbiri sessizce düşürülmez", () => {
+  /**
+   * Eksik alanın yönü sinsidir: kayıt hâlâ geçerli JSON'dur, hiçbir test kızarmaz,
+   * ama denetçi simüle bir halkanın ürettiği reti gerçek CAMARA sorgusu sanır.
+   * Bu yüzden dört halkanın DÖRDÜ de aynı anda doluyken kayıt sınanır.
+   */
+  const kayit: Record<string, unknown> = agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", {
+    engel: "Reddedildi [SİMÜLASYON]: CİHAZ ERİŞİLEBİLİRLİĞİ...",
+    kanit: [],
+    iz: {
+      simSwap: "gercek",
+      nv: "simulasyon",
+      reach: "simulasyon",
+      loc: "simulasyon",
+      pencereSaat: 72,
+      retNedeni: "cihaz-erisilemez",
+    },
+  }) as unknown as Record<string, unknown>;
+
+  const iz: Record<string, unknown> = {
+    simSwap: "gercek",
+    nv: "simulasyon",
+    reach: "simulasyon",
+    loc: "simulasyon",
+  };
+  for (const { iz: izAlani, kayit: kayitAlani } of HALKA_ALANLARI) {
+    assert.equal(
+      kayit[kayitAlani],
+      iz[izAlani],
+      `iz.${izAlani} kayda ${kayitAlani} olarak geçmeli — düşürülen halka denetim izini yalancı yapar`
+    );
+  }
+
+  // Diske düşen satırda da bulunmalı: kayıt nesnesi doğru olup JSON'a girmemesi de aynı hata.
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  kararYaz(kayit as never);
+  const yazilan = satirlar()[0] as Record<string, unknown>;
+  for (const { kayit: kayitAlani } of HALKA_ALANLARI) {
+    assert.ok(kayitAlani in yazilan, `${kayitAlani} JSONL satırında da bulunmalı`);
   }
 });
 

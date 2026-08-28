@@ -45,6 +45,30 @@ export interface AdsPilotConfig {
    * nacSimulate ile aynı gerekçe: karar anında Türkçe hatayla reddedilir.
    */
   nvSimulate?: string;
+  /**
+   * Device Reachability SİMÜLASYON kanalı ("erisilebilir" | "anormal"): güven zincirinin
+   * 3. halkası, YALNIZ high risk katmanında koşar. Değer burada DOĞRULANMAZ — karar anında
+   * Türkçe hatayla reddedilir (bkz. networkTrust.ts, kapalı arıza).
+   */
+  reachSimulate?: string;
+  /**
+   * 3. halkanın GERÇEK CAMARA sorgusunun açma/kapama anahtarı. Bilerek varsayılan KAPALI:
+   * erişilebilirlik meşru olarak dalgalanır (uçak modu, kapsama boşluğu), bu yüzden
+   * yalnızca NaC token'ının varlığına bakıp sorguyu açmak, SIM-Swap için token tanımlamış
+   * bir operatöre istemediği yanlış-pozitif retleri dayatırdı.
+   */
+  reachCheck: boolean;
+  /**
+   * Location SİMÜLASYON kanalı ("beklenen" | "beklenmedik"): güven zincirinin 4. halkası,
+   * YALNIZ high risk katmanında koşar. Aynı gerekçeyle değer burada DOĞRULANMAZ.
+   */
+  locSimulate?: string;
+  /**
+   * 4. halkanın beklentisi: onaylayıcının hattının bulunmasını beklediğimiz ülke
+   * (ISO 3166-1 alpha-2). TANIMSIZSA HALKA HİÇ KOŞMAZ — beklenen ülke uydurulmaz.
+   * Biçim doğrulaması (iki harf) karar anında yapılır; geçersiz değer kapalı arızadır.
+   */
+  expectedCountry?: string;
 }
 
 const REQUIRED = [
@@ -65,7 +89,15 @@ export function missingCredentials(): string[] {
  */
 export function nacConfigFromEnv(): Pick<
   AdsPilotConfig,
-  "nacToken" | "approverPhone" | "simSwapWindowHours" | "nacSimulate" | "nvSimulate"
+  | "nacToken"
+  | "approverPhone"
+  | "simSwapWindowHours"
+  | "nacSimulate"
+  | "nvSimulate"
+  | "reachSimulate"
+  | "reachCheck"
+  | "locSimulate"
+  | "expectedCountry"
 > {
   return {
     nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
@@ -74,6 +106,20 @@ export function nacConfigFromEnv(): Pick<
     nacSimulate: process.env.ADSPILOT_NAC_SIMULATE?.trim() || undefined,
     // Aynı gerekçe: "dogrulandi"/"uyusmadi" doğrulaması karar anında yapılır.
     nvSimulate: process.env.ADSPILOT_NV_SIMULATE?.trim() || undefined,
+    // Aynı gerekçe: "erisilebilir"/"anormal" doğrulaması karar anında yapılır.
+    reachSimulate: process.env.ADSPILOT_REACH_SIMULATE?.trim() || undefined,
+    /**
+     * Varsayılan KAPALI. parseBool anlaşılamayan değeri de güvenli tarafa (kapalı)
+     * aldığı için bozuk bir değer halkayı açık bırakmaz — açmak açık bir niyet ister.
+     */
+    reachCheck: parseBool(process.env.ADSPILOT_REACH_CHECK, false),
+    // Aynı gerekçe: "beklenen"/"beklenmedik" doğrulaması karar anında yapılır.
+    locSimulate: process.env.ADSPILOT_LOC_SIMULATE?.trim() || undefined,
+    /**
+     * Ham geçirilir: iki-harf (ISO 3166-1 alpha-2) doğrulaması karar anındadır. Boş/eksik
+     * değer burada undefined olur ve konum halkası HİÇ KOŞMAZ (beklenti uydurulmaz).
+     */
+    expectedCountry: process.env.ADSPILOT_EXPECTED_COUNTRY?.trim() || undefined,
     simSwapWindowHours: parseNumEnv(
       "ADSPILOT_SIMSWAP_WINDOW_HOURS",
       process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS,

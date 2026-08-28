@@ -50,6 +50,46 @@
  * The second link runs ONLY on the "high" tier (go-live and changes to a serving
  * campaign) — the demo narrative is "go-live gets the full chain".
  *
+ * ── Halka 3: Device Reachability (GERÇEK sorgu yapılabilir) ───────────────────
+ *
+ * Sorduğu soru: "onaylayıcının hattı şu an ağdan erişilebilir durumda mı?".
+ * CAMARA Device Status / Reachability uç noktası bunu sunucudan cevaplayabilir —
+ * tek tanımlayıcı olarak telefon numarası yeter, cihaz-taraflı akış GEREKMEZ.
+ * Bu yüzden NV'nin aksine burada gerçek SDK kanalı VARDIR; simülasyon kanalı
+ * (ADSPILOT_REACH_SIMULATE) yalnızca token'sız demo içindir.
+ *
+ * DÜRÜST TAKAS — bilerek yazıyoruz: erişilebilirlik MEŞRU olarak dalgalanır
+ * (uçak modu, kapsama boşluğu, kapalı telefon). Kapalı arıza ilkesi gereği
+ * "erişilemez" yanıtı RET üretir; fikir başvurusundaki "kademeli doğrulama"nın
+ * bu kapıdaki karşılığı budur, çünkü stdio MCP sunucusunun ikinci bir doğrulama
+ * kanalı yoktur ve belirsizlikte harcama YAPILMAZ. Yanlış-pozitif riski iki
+ * biçimde sınırlanır: (1) halka YALNIZ "high" katmanda koşar, (2) gerçek kanal
+ * OPT-IN'dir — ADSPILOT_REACH_CHECK açıkça açılmadıkça, NaC token'ı olsa bile
+ * sorgu yapılmaz ve iz "kapali" yazar. Böylece SIM-Swap için token tanımlayan
+ * bir operatör, hiç istemediği bir erişilebilirlik retiyle karşılaşmaz.
+ *
+ * ── Halka 4: Location Verification (beklenen ülke) ────────────────────────────
+ *
+ * Sorduğu soru: "onaylayıcının hattı beklenen ülkenin DIŞINDA bir ülkede mi?".
+ * Beklenti UYDURULMAZ: ADSPILOT_EXPECTED_COUNTRY (ISO 3166-1 alpha-2) tanımlı
+ * değilse halka hiç koşmaz ve izine "kapali" yazar. "Bugünün değeri" tipi bir
+ * varsayılan üretmek, cevabı her zaman "temiz" çıkaran sessiz bir güvenlik kaybı
+ * olurdu.
+ *
+ * NEDEN ROAMING ÜLKESİ, NEDEN CAMARA Location Verification DEĞİL: SDK'nın
+ * ürettiği `Area` tipi yalnızca `{ areaType: "CIRCLE" }` taşır — merkez koordinatı
+ * ve yarıçap alanları tip tanımlarında HİÇ YOK. Sorgulanacak alanı tip güvenli
+ * kuramadığımız için o uç nokta bilerek ERTELENDİ (`as any` ile şema uydurmak,
+ * yanlış gövdeyle 400 alıp halkayı kalıcı RET'e çevirirdi). Ülke sorusunu tip
+ * güvenli cevaplayan uç nokta Device Status / Roaming'dir: `roaming` boolean'ı
+ * ve MCC'den eşlenen ISO-2 ülke listesi. Halkanın kapsamı bu yüzden "ülke
+ * düzeyi"dir; şehir/yarıçap düzeyi coğrafya bu kapının BUGÜN vaadi değildir.
+ *
+ * HAM DEĞER YANKILANMAZ: operatörün bildirdiği ülke listesi (upstream veri)
+ * ne kanıt satırına ne ret metnine ne de ize girer. Dışarı çıkan tek şey
+ * TÜRETİLMİŞ karardır ("beklenen ülkede" / "beklenen ülke dışında") ve
+ * yapılandırmadan gelen, doğrulanmış-normalize edilmiş beklenen ülke kodudur.
+ *
  * ── Yapısal denetim izi (AgIz) ────────────────────────────────────────────────
  *
  * Her karar, metinlerinin yanında MAKİNE OKUNUR bir iz taşır: hangi halka koştu,
@@ -64,6 +104,28 @@
 export interface SimSwapKanali {
   /** True when the SIM changed within the last `maxAgeHours` hours. */
   verifySimSwap(maxAgeHours: number): Promise<boolean>;
+}
+
+/**
+ * Halka 3'ün ihtiyacı: onaylayıcının cihazı şu an ağdan erişilebilir mi?
+ *
+ * `undefined` bilerek vardır ve "hayır" ile aynı şey DEĞİLDİR: CAMARA yanıtı gelip de
+ * alan okunamadıysa (tip garantisine rağmen boş/başka tipte geldiyse) karar "erişilemez"
+ * değil "yanıt okunamadı"dır — ikisi ayrı ret kodlarına gider, ikisi de kapalı arızadır.
+ */
+export interface ErisilebilirlikKanali {
+  cihazErisilebilirMi(): Promise<boolean | undefined>;
+}
+
+/**
+ * Halka 4'ün ihtiyacı: hattın şu an hangi ülkede olduğu.
+ *
+ * `yurtDisinda` CAMARA'nın roaming boolean'ı, `ulkeler` MCC'den eşlenen ISO-2 listesidir.
+ * Her iki alan da opsiyoneldir çünkü SDK tipinde öyledir; okunamayan alan kapalı arızaya
+ * gider (bkz. ErisilebilirlikKanali'ndeki aynı gerekçe).
+ */
+export interface KonumKanali {
+  ulkeDurumu(): Promise<{ yurtDisinda?: boolean; ulkeler?: string[] }>;
 }
 
 export type AgRisk = "medium" | "high";
@@ -86,12 +148,32 @@ export type SimSwapIzi = "gercek" | "simulasyon" | "kapali" | "calismadi";
 export type NvIzi = "simulasyon" | "calismadi";
 
 /**
+ * Halka 3 (Device Reachability) ve halka 4 (Location) izi. Değer kümesi SIM-Swap ile
+ * aynıdır çünkü ikisinin de gerçek SDK kanalı VARDIR (NV'nin aksine — bkz. dosya başı):
+ *
+ * "gercek"     : CAMARA sorgusu gerçekten yapıldı (ya da denendi ve yanıtsız kaldı).
+ * "simulasyon" : simüle kanal karar verdi; hiçbir ağ sorgusu yapılmadı.
+ * "kapali"     : halka BİLEREK koşmadı — reach için ADSPILOT_REACH_CHECK açılmamış,
+ *                loc için ADSPILOT_EXPECTED_COUNTRY tanımsız. Yapılandırma hatası
+ *                DEĞİLDİR (o "calismadi"dir) ve ret de üretmez; kapının "sormadım"
+ *                beyanıdır — sessiz kalmak, denetimde "sordum ve geçti" ile karışırdı.
+ * "calismadi"  : yapılandırma hatası yüzünden sorgu HİÇ yapılamadı (ret eşlik eder).
+ *
+ * Halka hiç YAPILANDIRILMAMIŞSA (ne simülasyon ne token) alan HİÇ YAZILMAZ: "kapali"
+ * bilinçli bir kapatma beyanıdır, hiç istenmemiş bir halkanın sessizliği değil.
+ */
+export type HalkaIzi = "gercek" | "simulasyon" | "kapali" | "calismadi";
+
+/**
  * Ret nedenleri SABİT sözlük. Upstream metin (SDK hata gövdesi, env değeri, CAMARA
  * yanıtı) bu kümeye ASLA giremez: denetim izi serbest metin taşımaz, kod taşır.
  */
 export type RetNedeni =
   | "sim-degisti"
   | "nv-uyusmadi"
+  | "cihaz-erisilemez"
+  | "konum-beklenmedik"
+  | "beklenen-ulke-gecersiz"
   | "ag-yanitsiz"
   | "yapilandirma-celiskili"
   | "simulasyon-degeri-tanimsiz"
@@ -110,6 +192,16 @@ export interface AgIz {
   simSwap: SimSwapIzi;
   /** Halka hiç koşmadıysa (medium katman ya da ADSPILOT_NV_SIMULATE yok) alan YOKTUR. */
   nv?: NvIzi;
+  /**
+   * Halka 3 (Device Reachability). Medium katmanda ya da halka hiç yapılandırılmamışsa
+   * alan YOKTUR; token varken ADSPILOT_REACH_CHECK kapalıysa "kapali" yazar.
+   */
+  reach?: HalkaIzi;
+  /**
+   * Halka 4 (Location / beklenen ülke). Medium katmanda ya da halka hiç
+   * yapılandırılmamışsa alan YOKTUR; ADSPILOT_EXPECTED_COUNTRY tanımsızsa "kapali" yazar.
+   */
+  loc?: HalkaIzi;
   /** YALNIZ gerçekten sorgulanan katmanın geriye bakış penceresi (saat). */
   pencereSaat?: number;
   /** maskele() çıktısı; numarayı gerçekten değerlendiren bir halka koştuysa vardır. */
@@ -131,6 +223,20 @@ interface NvSonuc {
   engel?: string;
   kanit: string[];
   nv: NvIzi;
+  maskeliNumara?: string;
+  retNedeni?: RetNedeni;
+}
+
+/**
+ * Halka 3 ve 4'ün ortak sonuç şekli. Halkanın KENDİ iz değerini taşır; hangi AgIz
+ * alanına yazılacağını zincir birleşimi bilir — böylece iki halka tek alana ezilemez.
+ *
+ * Halka hiç koşmadıysa katman fonksiyonu `undefined` döner (bu tip hiç üretilmez).
+ */
+interface HalkaSonuc {
+  engel?: string;
+  kanit: string[];
+  halka: HalkaIzi;
   maskeliNumara?: string;
   retNedeni?: RetNedeni;
 }
@@ -157,6 +263,34 @@ export interface AgAyar {
    * karar anında yapılır (aynı kapalı-arıza gerekçesi).
    */
   nvSimulate?: string;
+  /**
+   * Device Reachability SİMÜLASYON kanalı (ADSPILOT_REACH_SIMULATE):
+   * "erisilebilir" | "anormal". Zincirin 3. halkası; tanımlıysa gerçek SDK'ya HİÇ
+   * dokunulmaz. Değer burada tip olarak dar tutulmaz — doğrulama karar anında yapılır.
+   */
+  reachSimulate?: string;
+  /**
+   * Halka 3'ün GERÇEK kanalının açma/kapama anahtarı (ADSPILOT_REACH_CHECK).
+   *
+   * Bilerek OPT-IN: erişilebilirlik meşru olarak dalgalanır (uçak modu, kapsama), bu
+   * yüzden yalnızca NaC token'ının varlığına bakıp sorguyu açmak, SIM-Swap için token
+   * tanımlamış bir operatöre hiç istemediği yanlış-pozitif retleri dayatırdı. Kapalıyken
+   * halka sorgu yapmaz ve izine "kapali" yazar (bkz. dosya başı, Halka 3).
+   */
+  reachCheck?: boolean;
+  /**
+   * Location SİMÜLASYON kanalı (ADSPILOT_LOC_SIMULATE): "beklenen" | "beklenmedik".
+   * Zincirin 4. halkası; aynı kapalı-arıza gerekçesiyle değer karar anında doğrulanır.
+   */
+  locSimulate?: string;
+  /**
+   * Halka 4'ün beklentisi (ADSPILOT_EXPECTED_COUNTRY, ISO 3166-1 alpha-2).
+   *
+   * TANIMSIZSA HALKA KOŞMAZ ("kapali" izi): beklenen ülke UYDURULMAZ. Tanımlı ama iki
+   * harfli kod değilse bu bir yapılandırma hatasıdır ve kapalı arızaya (RET) gider —
+   * operatör halkayı istemiş ama anlaşılmayan bir değer vermiştir.
+   */
+  expectedCountry?: string;
 }
 
 const MEDIUM_WINDOW_HOURS = 24;
@@ -204,6 +338,98 @@ async function kanalGetir(ayar: AgAyar): Promise<SimSwapKanali> {
   };
   gercekKanalAnahtari = anahtar;
   return gercekKanal;
+}
+
+/* ── Halka 3: gerçek kanal (Device Reachability) ──────────────────────────────── */
+
+let erisimOverride: ErisilebilirlikKanali | "reset" | undefined;
+export function __setErisimKanalForTests(k: ErisilebilirlikKanali | undefined): void {
+  erisimOverride = k ?? "reset";
+  gercekErisimKanal = undefined;
+  gercekErisimAnahtari = undefined;
+}
+
+let gercekErisimKanal: ErisilebilirlikKanali | undefined;
+let gercekErisimAnahtari: string | undefined;
+
+/**
+ * SIM-Swap kanalıyla BİREBİR aynı iskelet: tembel import (token'sız kurulumlar SDK'yı hiç
+ * yüklemez), token+telefon ile anahtarlanmış önbellek (anahtarsız tekil, İLK çağıranın
+ * numarasını kapanışa gömer ve numara döndürüldüğünde sessizce eski hattı sorgular),
+ * 10 sn timeout / 1 retry (SDK varsayılanı 60 sn × 3 deneme; bir onayı ~3 dakika
+ * askıda bırakır — kapalı arızaya HIZLI gitmek gerekir).
+ */
+async function erisimKanaliGetir(ayar: AgAyar): Promise<ErisilebilirlikKanali> {
+  if (erisimOverride && erisimOverride !== "reset") return erisimOverride;
+  const anahtar = `${ayar.nacToken}\u0000${ayar.approverPhone}`;
+  if (gercekErisimKanal && gercekErisimAnahtari === anahtar) return gercekErisimKanal;
+  const { NetworkAsCodeApiClient } = await import("network-as-code");
+  const client = new NetworkAsCodeApiClient({ apiKey: ayar.nacToken! });
+  const phoneNumber = ayar.approverPhone!;
+  gercekErisimKanal = {
+    cihazErisilebilirMi: async () => {
+      const res = await client.deviceStatus.retrieveReachabilityStatus(
+        { device: { phoneNumber } },
+        { timeoutInSeconds: 10, maxRetries: 1 }
+      );
+      /**
+       * `reachable` SDK tipinde zorunlu boolean, ama tip garantisi bir ÇALIŞMA ZAMANI
+       * garantisi değildir: gövde beklenenden başka gelirse "erişilemez" varsaymak da
+       * "erişilebilir" varsaymak da yanlış olur. undefined = "yanıt okunamadı".
+       */
+      return typeof res.reachable === "boolean" ? res.reachable : undefined;
+    },
+  };
+  gercekErisimAnahtari = anahtar;
+  return gercekErisimKanal;
+}
+
+/* ── Halka 4: gerçek kanal (Location — roaming ülkesi) ────────────────────────── */
+
+let konumOverride: KonumKanali | "reset" | undefined;
+export function __setKonumKanalForTests(k: KonumKanali | undefined): void {
+  konumOverride = k ?? "reset";
+  gercekKonumKanal = undefined;
+  gercekKonumAnahtari = undefined;
+}
+
+let gercekKonumKanal: KonumKanali | undefined;
+let gercekKonumAnahtari: string | undefined;
+
+/** Halka 3'ün kanalıyla aynı sözleşme; yalnız sorulan uç nokta farklı. */
+async function konumKanaliGetir(ayar: AgAyar): Promise<KonumKanali> {
+  if (konumOverride && konumOverride !== "reset") return konumOverride;
+  const anahtar = `${ayar.nacToken}\u0000${ayar.approverPhone}`;
+  if (gercekKonumKanal && gercekKonumAnahtari === anahtar) return gercekKonumKanal;
+  const { NetworkAsCodeApiClient } = await import("network-as-code");
+  const client = new NetworkAsCodeApiClient({ apiKey: ayar.nacToken! });
+  const phoneNumber = ayar.approverPhone!;
+  gercekKonumKanal = {
+    ulkeDurumu: async () => {
+      const res = await client.deviceStatus.checkRoaming(
+        { device: { phoneNumber } },
+        { timeoutInSeconds: 10, maxRetries: 1 }
+      );
+      return {
+        yurtDisinda: typeof res.roaming === "boolean" ? res.roaming : undefined,
+        // Ham liste BURADAN ÖTEYE GEÇMEZ: karar mantığı onu yalnız karşılaştırmada
+        // kullanır, hiçbir metne ve ize yazmaz (bkz. dosya başı, Halka 4).
+        ulkeler: Array.isArray(res.countryName) ? res.countryName : undefined,
+      };
+    },
+  };
+  gercekKonumAnahtari = anahtar;
+  return gercekKonumKanal;
+}
+
+/**
+ * Beklenen ülkeyi normalize eder: yalnız ISO 3166-1 alpha-2 (iki harf) kabul edilir.
+ * `undefined` = değer kullanılamaz; çağıran bunu kapalı arızaya çevirir. Ham değer
+ * hiçbir yere yazılmaz, yalnız normalize edilmiş kod dışarı çıkabilir.
+ */
+function ulkeNormalize(ham: string | undefined): string | undefined {
+  const t = ham?.trim();
+  return t && /^[A-Za-z]{2}$/.test(t) ? t.toUpperCase() : undefined;
 }
 
 /**
@@ -372,37 +598,431 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
 }
 
 /**
+ * Zincirin 3. halkası: Device Reachability.
+ *
+ * Ne zaman koşar: SADECE "high" katmanda ve SADECE bir kanal yapılandırılmışsa
+ * (ADSPILOT_REACH_SIMULATE ya da NaC token'ı). Hiç yapılandırılmamışsa `undefined`
+ * döner — iz alanı bile yazılmaz, çünkü "kapali" bilinçli bir kapatma beyanıdır,
+ * hiç istenmemiş bir halkanın sessizliği değil.
+ *
+ * Fail-closed sözleşmesi diğer halkalarla aynıdır: onaylayıcı numarası zorunlu,
+ * tanınmayan simülasyon değeri RET (ham değer YANKILANMAZ), yanıtsız/okunamayan
+ * CAMARA cevabı RET, "erişilemez" RET.
+ */
+async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
+  if (risk !== "high") return undefined;
+  const sim = ayar.reachSimulate?.trim();
+  const gercekAcik = Boolean(ayar.nacToken && ayar.reachCheck);
+  if (!sim && !ayar.nacToken) return undefined;
+
+  if (sim) {
+    /**
+     * Çelişki ölçütü bilerek "token var mı" DEĞİL, "gerçek kanal AÇIK mı"dır: halka
+     * opt-in olduğu için ADSPILOT_REACH_CHECK kapalıyken sorgulanacak gerçek bir kanal
+     * yoktur, dolayısıyla simülasyon hiçbir gerçek doğrulamayı tiyatroya çevirmez.
+     * Gerçek kanal açıkken ikisi birden tanımlıysa belirsizlikte gevşek kanal SEÇİLMEZ.
+     */
+    if (gercekAcik) {
+      return {
+        engel:
+          "Reddedildi [SİMÜLASYON]: ADSPILOT_REACH_CHECK açık (gerçek erişilebilirlik sorgusu) ve " +
+          "ADSPILOT_REACH_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu isteniyorsa " +
+          "simülasyon kaldırılmalı, demo isteniyorsa ADSPILOT_REACH_CHECK kapatılmalı. Güvenlik gereği " +
+          "belirsiz yapılandırmada harcama artışı uygulanmaz.",
+        kanit: [],
+        halka: "calismadi",
+        retNedeni: "yapilandirma-celiskili",
+      };
+    }
+    if (sim !== "erisilebilir" && sim !== "anormal") {
+      return {
+        engel:
+          `Reddedildi [SİMÜLASYON]: ADSPILOT_REACH_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
+          `karşı burada gösterilmez) — geçerli değerler "erisilebilir" | "anormal". Güvenlik gereği ` +
+          `anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).`,
+        kanit: [],
+        halka: "calismadi",
+        retNedeni: "simulasyon-degeri-tanimsiz",
+      };
+    }
+    if (!ayar.approverPhone) {
+      return {
+        engel:
+          "Reddedildi [SİMÜLASYON]: cihaz erişilebilirliği kontrolü aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+          "Sorgulanacak numara olmadan bu halka çalışamaz; güvenlik gereği harcama artışı uygulanmaz.",
+        kanit: [],
+        halka: "calismadi",
+        retNedeni: "onaylayici-numarasi-yok",
+      };
+    }
+    const maskeli = maskele(ayar.approverPhone);
+    if (sim === "anormal") {
+      return {
+        engel:
+          `Reddedildi [SİMÜLASYON]: CİHAZ ERİŞİLEBİLİRLİĞİ ANORMAL (SİMÜLE) — onaylayıcının ` +
+          `(${maskeli}) cihazı ağdan erişilemez SAYILDI (ADSPILOT_REACH_SIMULATE=anormal; gerçek ağ ` +
+          `sorgusu YAPILMADI). Gerçek akışta bu, onayı cevaplayan tarafın hattıyla ulaşılamadığı ` +
+          `anlamına gelir; kademeli doğrulama mümkün olmadığı için onay istemi gösterilmez ve harcama ` +
+          `artışı uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.`,
+        kanit: [],
+        halka: "simulasyon",
+        maskeliNumara: maskeli,
+        retNedeni: "cihaz-erisilemez",
+      };
+    }
+    return {
+      kanit: [
+        `Cihaz erişilebilirliği [SİMÜLASYON]: onaylayıcının hattı ağdan erişilebilir SAYILDI ` +
+          `(${maskeli}) — simüle kanal (ADSPILOT_REACH_SIMULATE=erisilebilir), gerçek ağ sorgusu YAPILMADI`,
+      ],
+      halka: "simulasyon",
+      maskeliNumara: maskeli,
+    };
+  }
+
+  /**
+   * Token var ama halka açılmamış: BİLEREK sorgu yapılmaz. Ret de üretilmez, kanıt
+   * satırı da yazılmaz — insan istemine "kontrol etmediğim şey" satırı koymak gürültü
+   * olurdu. Beyan yalnız yapısal ize düşer (bkz. HalkaIzi, "kapali").
+   */
+  if (!gercekAcik) return { kanit: [], halka: "kapali" };
+
+  if (!ayar.approverPhone) {
+    return {
+      engel:
+        "Reddedildi: cihaz erişilebilirliği kontrolü açık (ADSPILOT_REACH_CHECK) ama " +
+        "ADSPILOT_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
+        "güvenlik gereği harcama artışı uygulanmaz.",
+      kanit: [],
+      halka: "calismadi",
+      retNedeni: "onaylayici-numarasi-yok",
+    };
+  }
+  const maskeli = maskele(ayar.approverPhone);
+  try {
+    const kanal = await erisimKanaliGetir(ayar);
+    const erisilebilir = await kanal.cihazErisilebilirMi();
+    if (erisilebilir === true) {
+      return {
+        kanit: [
+          `Cihaz erişilebilirliği: onaylayıcının hattı ağdan erişilebilir durumda (${maskeli}) — ` +
+            `GSMA Open Gateway Device Reachability Status`,
+        ],
+        halka: "gercek",
+        maskeliNumara: maskeli,
+      };
+    }
+    if (erisilebilir === false) {
+      return {
+        engel:
+          `Reddedildi: AĞ DOĞRULAMASI BAŞARISIZ — onaylayıcının (${maskeli}) cihazı şu an ağdan ` +
+          `ERİŞİLEMİYOR (GSMA Open Gateway Device Reachability Status). Onayı cevaplayan tarafa hattı ` +
+          `üzerinden ulaşılamadığı için kademeli doğrulama yapılamaz; onay istemi hiç gösterilmedi ve ` +
+          `harcama artışı uygulanmaz. Cihaz ağa döndüğünde tekrar dene.`,
+        kanit: [],
+        halka: "gercek",
+        maskeliNumara: maskeli,
+        retNedeni: "cihaz-erisilemez",
+      };
+    }
+    /**
+     * Yanıt geldi ama okunamadı. "Erişilemez" demek yanlış suçlama, "erişilebilir"
+     * demek sessiz gevşeme olurdu; ikisi de değil — kontrol cevaplanamadı.
+     */
+    return {
+      engel:
+        "Reddedildi: ağ doğrulaması tamamlanamadı — cihaz erişilebilirlik kontrolünden okunabilir " +
+        "yanıt alınamadı. Güvenlik gereği cevaplanamayan kontrolde harcama artışı uygulanmaz; " +
+        "daha sonra tekrar dene.",
+      kanit: [],
+      halka: "gercek",
+      maskeliNumara: maskeli,
+      retNedeni: "ag-yanitsiz",
+    };
+  } catch (e: any) {
+    // Upstream metin ASLA ret mesajına girmez; ayrıntı numara maskelenerek stderr'e.
+    const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
+    console.error(`[adspilot] cihaz erişilebilirlik hatası (${maskeli}): ${detay}`);
+    return {
+      engel:
+        "Reddedildi: ağ doğrulaması tamamlanamadı — cihaz erişilebilirlik kontrolünden yanıt " +
+        "alınamadı. Güvenlik gereği yanıtsız kontrolde harcama artışı uygulanmaz; daha sonra tekrar " +
+        "dene. Sorun sürerse operatör sunucu günlüklerine bakmalı (ayrıntı oraya yazıldı).",
+      kanit: [],
+      halka: "gercek",
+      maskeliNumara: maskeli,
+      retNedeni: "ag-yanitsiz",
+    };
+  }
+}
+
+/**
+ * Zincirin 4. halkası: Location — "hat beklenen ülkenin dışında mı?".
+ *
+ * Beklenti UYDURULMAZ: ADSPILOT_EXPECTED_COUNTRY yoksa halka koşmaz ve "kapali" yazar.
+ * Bugünün tarihi/varsayılan bir ülke türetmek, cevabı her zaman "temiz" çıkaran sessiz
+ * bir güvenlik kaybı olurdu.
+ *
+ * Sıra bilinçlidir: beklenti YOKSA halka zaten karar veremez, bu yüzden çelişki ve
+ * simülasyon-değeri doğrulamaları o durumda hiç çalıştırılmaz — koşmayan bir halkanın
+ * yapılandırmasına bakıp harcamayı reddetmek, hiçbir güvenlik kazancı olmayan bir ret
+ * üretirdi (aynı gerekçeyle NV de medium katmanda değerini doğrulamaz).
+ */
+async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
+  if (risk !== "high") return undefined;
+  const sim = ayar.locSimulate?.trim();
+  if (!sim && !ayar.nacToken) return undefined;
+
+  const hamUlke = ayar.expectedCountry?.trim();
+  if (!hamUlke) {
+    if (sim) {
+      // Operatör halkayı açıkça istemiş ama beklentiyi vermemiş: sessiz kalmak, demoyu
+      // sessizce çalışmaz hâle getirirdi. Karar akışı ETKİLENMEZ, yalnız stderr'e yazılır.
+      console.error(
+        "[adspilot] ADSPILOT_LOC_SIMULATE tanımlı ama ADSPILOT_EXPECTED_COUNTRY yok — " +
+          "konum halkası KOŞMADI (beklenen ülke uydurulmaz)."
+      );
+    }
+    return { kanit: [], halka: "kapali" };
+  }
+
+  if (sim && ayar.nacToken) {
+    return {
+      engel:
+        "Reddedildi [SİMÜLASYON]: ADSPILOT_NAC_TOKEN ve ADSPILOT_LOC_SIMULATE birlikte tanımlı — " +
+        "çelişkili yapılandırma. Gerçek konum doğrulaması isteniyorsa ADSPILOT_LOC_SIMULATE " +
+        "kaldırılmalı, demo isteniyorsa token kaldırılmalı. Güvenlik gereği belirsiz yapılandırmada " +
+        "harcama artışı uygulanmaz.",
+      kanit: [],
+      halka: "calismadi",
+      retNedeni: "yapilandirma-celiskili",
+    };
+  }
+
+  const beklenen = ulkeNormalize(hamUlke);
+  if (!beklenen) {
+    return {
+      engel:
+        "Reddedildi: ADSPILOT_EXPECTED_COUNTRY değeri ISO 3166-1 alpha-2 (iki harf, ör. TR) " +
+        "biçiminde değil (değer, sır ihtimaline karşı burada gösterilmez). Beklenen ülke " +
+        "anlaşılamadığı için konum halkası çalışamaz; güvenlik gereği harcama artışı uygulanmaz " +
+        "(kapalı arıza).",
+      kanit: [],
+      halka: "calismadi",
+      retNedeni: "beklenen-ulke-gecersiz",
+    };
+  }
+
+  if (sim) {
+    if (sim !== "beklenen" && sim !== "beklenmedik") {
+      return {
+        engel:
+          `Reddedildi [SİMÜLASYON]: ADSPILOT_LOC_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
+          `karşı burada gösterilmez) — geçerli değerler "beklenen" | "beklenmedik". Güvenlik gereği ` +
+          `anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).`,
+        kanit: [],
+        halka: "calismadi",
+        retNedeni: "simulasyon-degeri-tanimsiz",
+      };
+    }
+    if (!ayar.approverPhone) {
+      return {
+        engel:
+          "Reddedildi [SİMÜLASYON]: konum doğrulaması aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+          "Sorgulanacak numara olmadan bu halka çalışamaz; güvenlik gereği harcama artışı uygulanmaz.",
+        kanit: [],
+        halka: "calismadi",
+        retNedeni: "onaylayici-numarasi-yok",
+      };
+    }
+    const maskeliSim = maskele(ayar.approverPhone);
+    if (sim === "beklenmedik") {
+      return {
+        engel:
+          `Reddedildi [SİMÜLASYON]: KONUM BEKLENMEDİK (SİMÜLE) — onaylayıcının (${maskeliSim}) hattı ` +
+          `beklenen ülkenin (${beklenen}) DIŞINDA SAYILDI (ADSPILOT_LOC_SIMULATE=beklenmedik; gerçek ağ ` +
+          `sorgusu YAPILMADI). Gerçek akışta bu, harcamayı onaylayan hattın beklenmedik bir coğrafyada ` +
+          `olduğu anlamına gelir; onay istemi gösterilmez ve harcama artışı uygulanmaz. Kullanıcıya ` +
+          `bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.`,
+        kanit: [],
+        halka: "simulasyon",
+        maskeliNumara: maskeliSim,
+        retNedeni: "konum-beklenmedik",
+      };
+    }
+    return {
+      kanit: [
+        `Konum doğrulaması [SİMÜLASYON]: onaylayıcının hattı beklenen ülkede (${beklenen}) SAYILDI ` +
+          `(${maskeliSim}) — simüle kanal (ADSPILOT_LOC_SIMULATE=beklenen), gerçek ağ sorgusu YAPILMADI`,
+      ],
+      halka: "simulasyon",
+      maskeliNumara: maskeliSim,
+    };
+  }
+
+  if (!ayar.approverPhone) {
+    return {
+      engel:
+        "Reddedildi: konum doğrulaması yapılandırılmış (ADSPILOT_EXPECTED_COUNTRY) ama " +
+        "ADSPILOT_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
+        "güvenlik gereği harcama artışı uygulanmaz.",
+      kanit: [],
+      halka: "calismadi",
+      retNedeni: "onaylayici-numarasi-yok",
+    };
+  }
+  const maskeli = maskele(ayar.approverPhone);
+  try {
+    const kanal = await konumKanaliGetir(ayar);
+    const durum = await kanal.ulkeDurumu();
+    if (typeof durum.yurtDisinda !== "boolean") {
+      return {
+        engel:
+          "Reddedildi: ağ doğrulaması tamamlanamadı — konum kontrolünden okunabilir yanıt alınamadı. " +
+          "Güvenlik gereği cevaplanamayan kontrolde harcama artışı uygulanmaz; daha sonra tekrar dene.",
+        kanit: [],
+        halka: "gercek",
+        maskeliNumara: maskeli,
+        retNedeni: "ag-yanitsiz",
+      };
+    }
+    if (durum.yurtDisinda === false) {
+      /**
+       * Hat kendi ana şebekesinde: beklenmedik YURT DIŞI coğrafya anomalisi YOK.
+       * Halkanın kapsamı bilerek burada biter — CAMARA bu durumda ülke döndürmez ve
+       * ülke-altı (şehir/yarıçap) doğrulama bu kapının bugünkü vaadi değildir
+       * (bkz. dosya başı, Halka 4: SDK'nın Area tipinde koordinat alanı yok).
+       */
+      return {
+        kanit: [
+          `Konum doğrulaması: onaylayıcının hattı yurt dışında değil, beklenen ülkeyle (${beklenen}) ` +
+            `çelişen bir coğrafya yok (${maskeli}) — GSMA Open Gateway Device Roaming Status`,
+        ],
+        halka: "gercek",
+        maskeliNumara: maskeli,
+      };
+    }
+    const ulkeler = (durum.ulkeler ?? [])
+      .map((u) => String(u).trim().toUpperCase())
+      .filter((u) => u.length > 0);
+    if (!ulkeler.length) {
+      // Yurt dışında ama hangi ülkede belli değil: beklentiyle karşılaştırılamaz → kapalı arıza.
+      return {
+        engel:
+          "Reddedildi: ağ doğrulaması tamamlanamadı — onaylayıcının hattı yurt dışında görünüyor ama " +
+          "bulunduğu ülke ağdan okunamadı, dolayısıyla beklenen ülkeyle karşılaştırılamadı. Güvenlik " +
+          "gereği cevaplanamayan kontrolde harcama artışı uygulanmaz.",
+        kanit: [],
+        halka: "gercek",
+        maskeliNumara: maskeli,
+        retNedeni: "ag-yanitsiz",
+      };
+    }
+    if (!ulkeler.includes(beklenen)) {
+      /**
+       * GÖZLENEN ülke ASLA yazılmaz — ne ret metnine, ne ize. Dışarı çıkan tek şey
+       * türetilmiş karar ve YAPILANDIRMADAN gelen beklenen ülke kodudur.
+       */
+      return {
+        engel:
+          `Reddedildi: AĞ DOĞRULAMASI BAŞARISIZ — onaylayıcının (${maskeli}) hattı beklenen ülkenin ` +
+          `(${beklenen}) DIŞINDA bir ülkede (GSMA Open Gateway Device Roaming Status; gözlenen ülke ` +
+          `güvenlik gereği burada gösterilmez). Harcama onayının beklenmedik bir coğrafyadan gelmesi ` +
+          `hesap ele geçirmenin tipik işaretidir; onay istemi hiç gösterilmedi ve harcama artışı ` +
+          `uygulanmaz. Hesap sahibi durumu doğrulayana kadar tekrar deneme.`,
+        kanit: [],
+        halka: "gercek",
+        maskeliNumara: maskeli,
+        retNedeni: "konum-beklenmedik",
+      };
+    }
+    return {
+      kanit: [
+        `Konum doğrulaması: onaylayıcının hattı beklenen ülkede (${beklenen}) — ` +
+          `GSMA Open Gateway Device Roaming Status (${maskeli})`,
+      ],
+      halka: "gercek",
+      maskeliNumara: maskeli,
+    };
+  } catch (e: any) {
+    const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
+    console.error(`[adspilot] konum doğrulaması hatası (${maskeli}): ${detay}`);
+    return {
+      engel:
+        "Reddedildi: ağ doğrulaması tamamlanamadı — konum kontrolünden yanıt alınamadı. Güvenlik " +
+        "gereği yanıtsız kontrolde harcama artışı uygulanmaz; daha sonra tekrar dene. Sorun sürerse " +
+        "operatör sunucu günlüklerine bakmalı (ayrıntı oraya yazıldı).",
+      kanit: [],
+      halka: "gercek",
+      maskeliNumara: maskeli,
+      retNedeni: "ag-yanitsiz",
+    };
+  }
+}
+
+/**
  * Consults the network before a spend-increasing approval. Called by the approval gate
  * for every risk-tagged action; the caller treats `engel` as a hard refusal.
  *
- * The chain runs in a fixed order — SIM Swap first, then (on the "high" tier only)
- * Number Verification. A refusal from the first link returns immediately: the second
- * link must never be able to overturn it, only to add a further reason to refuse.
+ * Zincir SABİT ve TEK YÖNLÜ sırayla koşar:
+ *   SIM Swap → Number Verification → Device Reachability → Location
+ * Son üçü YALNIZ "high" katmanda çalışır. Bir halkanın reti KESİNDİR: o noktada hemen
+ * dönülür, sonraki halkalar ne koşar ne de kararı yumuşatabilir — sonraki bir halka
+ * yalnızca reddetmek için yeni bir sebep ekleyebilir.
  */
 export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   const simSwap = await simSwapKatmani(ayar, risk);
   if (simSwap.engel) return simSwap;
 
-  const nv = nvKatmani(ayar, risk);
-  if (!nv) return simSwap;
-
   /**
-   * ZİNCİR BİRLEŞİMİ. İki halka da koştuysa iz İKİSİNİ de yansıtır: `simSwap` alanı
-   * 1. halkanın gerçekliğini korur (gerçek CAMARA sorgusu, NV simüle olsa bile),
-   * `nv` alanı 2. halkanınkini söyler. Tek alana ezmek, denetim izinin varlık
-   * sebebini yok ederdi.
+   * ZİNCİR BİRLEŞİMİ. Koşan her halka KENDİ iz alanına yazar; tek bir alana ASLA
+   * ezilmez. "Gerçek CAMARA SIM-Swap sorgusu + NV simülasyonu + kapalı konum halkası"
+   * ile "hepsi simülasyon" farklı güven seviyeleridir ve denetim izinin tek işi bu
+   * ayrımı kanıtlamaktır.
    *
-   * Ret nedeni burada yalnız NV'den gelebilir: 1. halkanın engeli yukarıda erken
-   * dönmüştür, dolayısıyla simSwap.iz.retNedeni bu noktada tanımsızdır.
+   * `retNedeni` yalnız reddeden halkadan gelebilir: önceki halkaların engeli zaten
+   * erken dönmüştür, dolayısıyla bu noktada tanımsızdır.
    */
-  const iz: AgIz = {
-    ...simSwap.iz,
-    nv: nv.nv,
-    maskeliNumara: simSwap.iz.maskeliNumara ?? nv.maskeliNumara,
-    retNedeni: nv.retNedeni,
-  };
-  if (nv.engel) return { engel: nv.engel, kanit: [], iz };
-  return { kanit: [...simSwap.kanit, ...nv.kanit], iz };
+  let kanit = [...simSwap.kanit];
+  let iz: AgIz = simSwap.iz;
+
+  const nv = nvKatmani(ayar, risk);
+  if (nv) {
+    iz = {
+      ...iz,
+      nv: nv.nv,
+      maskeliNumara: iz.maskeliNumara ?? nv.maskeliNumara,
+      retNedeni: nv.retNedeni,
+    };
+    if (nv.engel) return { engel: nv.engel, kanit: [], iz };
+    kanit = [...kanit, ...nv.kanit];
+  }
+
+  const reach = await erisilebilirlikKatmani(ayar, risk);
+  if (reach) {
+    iz = {
+      ...iz,
+      reach: reach.halka,
+      maskeliNumara: iz.maskeliNumara ?? reach.maskeliNumara,
+      retNedeni: reach.retNedeni,
+    };
+    if (reach.engel) return { engel: reach.engel, kanit: [], iz };
+    kanit = [...kanit, ...reach.kanit];
+  }
+
+  const loc = await konumKatmani(ayar, risk);
+  if (loc) {
+    iz = {
+      ...iz,
+      loc: loc.halka,
+      maskeliNumara: iz.maskeliNumara ?? loc.maskeliNumara,
+      retNedeni: loc.retNedeni,
+    };
+    if (loc.engel) return { engel: loc.engel, kanit: [], iz };
+    kanit = [...kanit, ...loc.kanit];
+  }
+
+  return { kanit, iz };
 }
 
 /**

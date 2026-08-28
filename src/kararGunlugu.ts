@@ -24,14 +24,20 @@
  *    ret ve kanıt METİNLERİ koklanarak tahmin ediliyordu; iki halkanın metni tek dizede
  *    birleştiği için günlük yalan söyleyebiliyordu (SIM-Swap kapalı + NV simülasyonu
  *    "gecti/simulasyon" görünüyor, gerçek CAMARA sorgusu + NV simülasyonu "gercek"
- *    yerine "simulasyon" yazılıyordu). Artık her alan AgKarar.iz'den gelir ve iki halka
- *    AYRI alanlara (simSwapKanali + nvKanali) yazılır — tek boolean'a ASLA ezilmez.
+ *    yerine "simulasyon" yazılıyordu). Artık her alan AgKarar.iz'den gelir ve zincirin
+ *    HER halkası AYRI alana (simSwapKanali / nvKanali / reachKanali / locKanali)
+ *    yazılır — tek boolean'a ASLA ezilmez.
+ *
+ *    Bu kural halka eklendikçe yeniden kazanılmak zorundadır: 3. ve 4. halka ilk
+ *    yazıldığında izde vardı ama kayda geçmiyordu, dolayısıyla SİMÜLE bir halkanın
+ *    ürettiği ret, kayıtta yalnız "simSwapKanali":"gercek" görünüp gerçek bir CAMARA
+ *    sorgusunun ürünü sanılıyordu. Yeni halka eklerken buraya da alan eklenmeli.
  *
  * Günlük varsayılan olarak KAPALIDIR: ADSPILOT_DECISION_LOG tanımlı değilse hiçbir
  * dosya oluşturulmaz ve hiçbir şey yazılmaz (demo/compose ortamı açar).
  */
 import { appendFileSync } from "node:fs";
-import type { AgKarar, AgRisk, NvIzi, RetNedeni, SimSwapIzi } from "./networkTrust.js";
+import type { AgKarar, AgRisk, HalkaIzi, NvIzi, RetNedeni, SimSwapIzi } from "./networkTrust.js";
 
 /** Kapının verdiği karar: geçti / reddetti / hiçbir halka sorgu yapmadı. */
 export type KararSonucu = "gecti" | "ret" | "kapali";
@@ -53,6 +59,10 @@ export interface KararKaydi {
   simSwapKanali: SimSwapIzi;
   /** 2. halka (Number Verification); halka hiç koşmadıysa alan YOKTUR. */
   nvKanali?: NvIzi;
+  /** 3. halka (Device Reachability); halka hiç koşmadıysa alan YOKTUR. */
+  reachKanali?: HalkaIzi;
+  /** 4. halka (konum / beklenen ülke); halka hiç koşmadıysa alan YOKTUR. */
+  locKanali?: HalkaIzi;
   /** Sorgulanan SIM-swap geriye bakış penceresi (saat); sorgu yapılmadıysa yok. */
   pencereSaat?: number;
   /** Onaylayıcı numarasının MASKELİ hâli (ör. "+905*******33"); asla tam numara. */
@@ -127,6 +137,8 @@ export function agKararKaydiOlustur(
     karar: ag.engel ? "ret" : hicSorguYok(iz.simSwap) ? "kapali" : "gecti",
     simSwapKanali: iz.simSwap,
     nvKanali: iz.nv,
+    reachKanali: iz.reach,
+    locKanali: iz.loc,
     pencereSaat: iz.pencereSaat,
     maskeliNumara: maskeliDogrula(iz.maskeliNumara),
     retNedeniKisa: ag.engel ? iz.retNedeni : undefined,
@@ -154,6 +166,8 @@ export function kararYaz(kayit: KararKaydi): void {
       karar: kayit.karar,
       simSwapKanali: kayit.simSwapKanali,
       nvKanali: kayit.nvKanali,
+      reachKanali: kayit.reachKanali,
+      locKanali: kayit.locKanali,
       pencereSaat: kayit.pencereSaat,
       maskeliNumara: kayit.maskeliNumara,
       retNedeniKisa: kayit.retNedeniKisa,

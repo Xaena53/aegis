@@ -142,10 +142,16 @@ const ctxCache = new Map<string, AdsContext>();
 function contextFor(user: StoredUser): AdsContext {
   // Network-verification settings join the key: env is read once per process today,
   // but a future runtime reload must not keep serving up to 500 stale contexts.
+  //
+  // EVERY field of the slice belongs here, and the omission is silent and
+  // one-directional: an operator who switches a trust-chain link ON keeps being served
+  // cached contexts with it OFF, and believes a guard is running that never runs.
+  // Adding a link to AgAyar means adding it to this key.
   const nac = nacConfigFromEnv();
   const key = [
     user.id, user.refreshToken, user.loginCustomerId ?? "", user.writeEnabled, user.maxDailyBudget,
     nac.nacToken ?? "", nac.approverPhone ?? "", nac.simSwapWindowHours, nac.nacSimulate ?? "", nac.nvSimulate ?? "",
+    String(nac.reachCheck ?? ""), nac.reachSimulate ?? "", nac.locSimulate ?? "", nac.expectedCountry ?? "",
   ].join("|");
   let ctx = ctxCache.get(key);
   if (!ctx) {
