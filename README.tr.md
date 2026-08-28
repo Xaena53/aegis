@@ -3,10 +3,12 @@
 
 **Yapay zekâ ajanının gerçek Google Ads kampanyalarını yönetmesini sağlayan MCP sunucusu — paranı denetimsiz harcamasına izin vermeden.**
 
+*Güven kapısı Aegis, onaylayıcının hattının ele geçirilip geçirilmediğini mobil ağa sorar (GSMA Open Gateway / CAMARA) — insana sorulmadan ve para hareket etmeden önce.*
+
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-155-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-451-brightgreen.svg)](test/)
 
 🇬🇧 [English README](README.md)
 
@@ -22,6 +24,95 @@ AdsPilot bu kararı ajanın elinden alır. MCP istemcin
 sorar ve ajanın kendi `confirm` bayrağı hiç dikkate alınmaz. Onay, ajanın anlattığı
 bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşür.
 
+## Ağ-doğrulamalı harcama onayı
+
+Bir onay istemi, *birinin* cevapladığını kanıtlar; o kişinin hesap sahibi olduğunu
+kanıtlayamaz. Oturum, token, çerez ve cihaz uygulama katmanına ait şeylerdir ve uygulama
+katmanına ait şeyler çalınır — o andan itibaren saldırgan, sahibin göreceği "emin misin?"
+penceresinin aynısını devralır ve onu en az sahibi kadar ikna edici biçimde cevaplar.
+
+Mobil ağ, uygulama katmanının uyduramayacağı bir kanıt tutar. GSMA Open Gateway / CAMARA
+API'leri üzerinden — Nokia Network-as-Code platformuyla — operatör *bu hattın SIM kartı son
+24 saatte değişti mi* gibi soruları cevaplayabilir; bu, hesap ele geçirme dolandırıcılığının
+imza hareketidir. AdsPilot (kapının adı **Aegis**) bu soruyu harcamayı artıran her işlemin
+önüne koyar: **ağa, insan istemi gösterilmeden önce sorulur.** Değişmiş bir SIM, hattı artık
+elinde tutan kişiye nazikçe sunulmak yerine doğrudan reddedilir ve ajanın kendi `confirm`
+bayrağı her yolda yok sayılır. Risk kademelidir: bütçe artışı *orta* seviyedir ve 24 saatlik
+geriye bakış kullanır; kampanyayı yayına almak *yüksek* seviyedir, pencereyi yapılandırılan
+değere (varsayılan 72 saat) genişletir ve zincirin sonraki halkalarını devreye sokar.
+
+Belirsizliğin her yönü kapalı arızaya düşer: token yok, onaylayıcı numarası eksik,
+tanınmayan bir yapılandırma değeri, çelişkili yapılandırma ya da 10 saniyede cevap vermeyen
+bir uç nokta — hepsi retle biter, hiçbiri sessiz geçişle. Ham değerler ajana ulaşmaz: kanıt
+satırı maskeli numara taşır, ret nedenleri sabit bir sözlükten gelir, upstream hata metni
+yalnız stderr'e gider. Risk etiketli her karar — retler *ve* geçişler — JSONL denetim izine
+yazılabilir (`ADSPILOT_DECISION_LOG`) ve iz, **her zincir halkası için ayrı bir kanal alanı**
+tutar; böylece "gerçek sorgu" ile "simülasyon" birbirine karışamaz.
+
+### Zincirin bugünkü dürüst durumu
+
+Altı halka tasarlandı; her birinin ne kadarının inşa edildiği farklıdır ve bu fark,
+tasarımın kendisinden daha önemlidir.
+
+| # | CAMARA sinyali | Sorduğu soru | Bu depodaki durumu |
+|---|---|---|---|
+| 1 | `simSwap.check` | Onaylayıcının hattı yakın zamanda ele geçirildi mi? | **Gerçek yol yazılı** — canlı SDK kanalı + simülasyon kanalı + test dikişi. Risk etiketli her işlemde koşar |
+| 2 | `numberVerification.*` | Onay, sahibin kendi cihazından mı geliyor? | **Şimdilik kalıcı olarak yalnız simülasyon** (`ADSPILOT_NV_SIMULATE`) — cihaz-taraflı OIDC akışıdır, hiçbir arka uç onu çağıramaz. İz tipinde "gerçek" değeri hiç yoktur |
+| 3 | `deviceStatus.retrieveReachabilityStatus` | Hat şu an veri/SMS alabiliyor mu? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_REACH_CHECK`), yalnız yüksek katman — erişilebilirlik meşru olarak dalgalanır, bu yüzden varsayılan kapalıdır |
+| 4 | `deviceStatus.checkRoaming` | Hat beklenen ülkede mi? | **Gerçek yol yazılı**, yüksek katman, yalnız `ADSPILOT_EXPECTED_COUNTRY` tanımlıyken — varsayılan ülke uydurulmaz, çünkü uydurulan bir varsayılan sonsuza dek "temiz" cevabı verir |
+| 5 | `deviceSwap.check` | Hat son N saatte yeni bir cihaza mı taşındı? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_DEVICESWAP_CHECK`), yüksek katman. SIM Swap'ın yapısal ikizi; okunamayan yanıt "değişim yok" sayılmaz, RET olur |
+| 6 | `callForwardingSignal` | Hatta koşulsuz çağrı yönlendirme açık mı? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_CALLFWD_CHECK`), yüksek katman. OTP ele geçirmenin klasik yolu ve önceki beş halkanın göremediği saldırı: aynı SIM, aynı cihaz, hat erişilebilir, ülke beklenen. Yalnız koşulsuz varyant sorulur — tek boolean, PII yok |
+
+> **Bu deponun yaptığı hiçbir CAMARA çağrısı bugüne dek canlı bir uç noktaya ulaşmadı.
+> Hiçbir sinyalde, hiçbir zaman, tek bir gerçek ağ sorgusu koşulmadı.** Elimizde hiç
+> Network-as-Code token'ı olmadı, dolayısıyla SDK'nın tembel import'u bir kez bile
+> alınmadı; bugüne kadarki her kapı koşusu bir simülasyon kanalından geldi ve böyle bir
+> koşunun ürettiği her metin `SİMÜLASYON` damgalıdır ve ağ sorgusu yapılmadığını söyler.
+> Yeşil bir test süiti **karar mantığı** hakkında kanıttır — değişmiş SIM'de ret, cevap
+> vermeyen API'de ret, eksik yapılandırmada ret — telin çalıştığının kanıtı değildir.
+
+Tam sinyal envanteri, Number Verification'ın sunucudan çağrılamadığının tip düzeyindeki
+kanıtı ve ilk canlı sorguyu kayda geçirecek adım adım kontrol listesi:
+**[docs/CAMARA.md](docs/CAMARA.md)**.
+
+## Çalışırken görmek
+
+```bash
+npm run prova -- --musteri <musteri-id>            # sahne öncesi ön-uçuş; hiçbir şey yazmaz
+npm run demo  -- --musteri <musteri-id>            # üç perde, varsayılan kuru
+npm run demo  -- --musteri <musteri-id> --canli    # gerçek +1 bütçe artışı, anında geri alınır
+```
+
+`npm run demo` **gerçek** sunucu ikilisini gerçek MCP stdio üzerinden sürer — her sahneye
+kendi simülasyon değeri verilmiş ayrı bir sunucu süreci, böylece demo ortasında `.env`
+değiştirilmez: temiz sinyalde bütçe artışı (istem, içinde ağ kanıtı satırıyla belirir),
+aynı artış değişmiş SIM'le (**sert ret, sıfır istem** — betik elicitation sayar ve bir tane
+bile gösterilirse durur) ve yüksek katmanda yayına alma (pencere 72 saate genişler).
+Perde 3, dürüstçe üretemeyeceği bir kanıtı sahnelemektense kendini atlar; yayına aldığı
+kampanyayı geri alır ve durumu **geri okuyarak** kanıtlar.
+
+`npm run prova` sahne günü ön-uçuşudur: aynı gerçek yolları koşturur (stdio ikilisi, canlı
+salt-okunur `list_accounts`, eksiksiz bir kuru demo koşusu) ve her kontrolü `GEÇTİ` /
+`UYARI` / `KALDI` olarak raporlar; hangi ortam değişkeninin tanımlı olduğunu söyler ama
+değerlerini asla basmaz. Anlatım metni, perde perde beklenen çıktı ve kapalı-arıza matrisi:
+**[docs/DEMO.md](docs/DEMO.md)**.
+
+> Aegis — ağ-güven kapısı, demosu ve runbook'u — GSMA MENA Ignite hackathon'u (Tema 4)
+> için geliştirildi.
+
+## Docker
+
+Barındırılan (HTTP) mod tek komutla ayağa kalkar:
+
+```bash
+cp .env.example .env        # dört zorunlu değeri doldur
+docker compose up --build
+curl http://localhost:8787/health          # -> {"ok":true,...}
+```
+
+İmaj yapısı, ortam değişkeni tablosu, jüri demo modu (`ADSPILOT_NAC_SIMULATE`) ve sorun
+giderme: **[docs/DOCKER.md](docs/DOCKER.md)**.
+
 ## Karşılaştırma
 
 | | Google resmi MCP | AdsPilot |
@@ -31,6 +122,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 | **Kapalı-arıza kapılar** | yok | Bütçe tavanı, duraklatılmış doğma, zorunlu ülke hedefi, paylaşımlı bütçe koruması |
 | **Çok kiracılı barındırma** | ❌ tek kimlik, kendi sunucunda | ✅ kullanıcı başına OAuth, şifreli token, oturum izolasyonu |
 | **Siteden kampanyaya** | ❌ | ✅ `analyze_site` herhangi bir URL'yi kampanya hammaddesine çevirir |
+| **Ağ güven çapası** | ❌ | İnsana sorulmadan *önce* CAMARA SIM-Swap kontrolü — gerçek yol yazılı, henüz canlı koşmadı ([belge](docs/CAMARA.md)) |
 | **Lisans** | Apache-2.0 | AGPL-3.0 |
 
 > Tablo, Google'ın bilinçli olarak salt-okunur tasarlanmış resmi sunucusunu
@@ -216,7 +308,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 155 çevrimdışı test
+npm test           # 451 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 ```
 

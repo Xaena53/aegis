@@ -49,6 +49,7 @@ const KAYNAK_CONFIG = oku("../src/config.ts");
 const KAYNAK_BEYIN = oku("../scripts/brain/uygulama.mjs");
 const ENV_ORNEK = oku("../.env.example");
 const BELGE_README = oku("../README.md");
+const BELGE_README_TR = oku("../README.tr.md");
 const BELGE_CAMARA = oku("../docs/CAMARA.md");
 const BELGE_DEMO = oku("../docs/DEMO.md");
 
@@ -384,6 +385,24 @@ test("docs/CAMARA.md: her halkanın her env adı sinyal envanterinde belgeli", (
  * halkayı SESSİZCE atlayamaz. (Tam da bu kaçmıştı: zincir altı halkaya çıktığında tablo
  * dörtte kalmış ve metin "Four links are designed" demeye devam etmişti.)
  */
+test("README (TR): Türkçe sinyal tablosu da hiçbir halkayı atlamıyor", () => {
+  /**
+   * İki dilli bir depoda çeviri, sessizce bayatlamanın en kolay yeridir: İngilizce README
+   * güncellenir, Türkçesi olduğu gibi kalır. Tam da bu oldu — zincir altı halkaya
+   * çıkarken README.tr.md ağ kapısından TEK KELİME etmiyordu ve test rozeti 155'te
+   * kalmıştı. Türkçe okuyan (jüri üyesi, hoca, katkıcı) o dosyaya bakar; onun için orada
+   * anlatılmayan halka yoktur.
+   */
+  for (const halka of ZINCIR_HALKALARI) {
+    assert.ok(
+      halka.envler.some((env) => BELGE_README_TR.includes(env)),
+      `README.tr.md halka '${halka.id}' hakkında TEK KELİME etmiyor: env adlarının ` +
+        `(${halka.envler.join(", ")}) hiçbiri geçmiyor. İngilizce README güncellenirken ` +
+        `Türkçesi geride kalmış — iki sinyal tablosu birlikte güncellenir.`
+    );
+  }
+});
+
 test("README.md: sinyal tablosu hiçbir halkayı atlamıyor (halka başına en az bir env)", () => {
   for (const halka of ZINCIR_HALKALARI) {
     assert.ok(
