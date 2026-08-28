@@ -78,7 +78,7 @@ never mistaken for "asked and passed".
 > the decision log as `"simSwapKanali":"gercek"`. **The caveat that matters:** the account is
 > in the platform's *Simulator mode*, so the request, auth, routing and response shape are
 > real while the subscriber behind the number is Nokia's simulation — the wire is proven, the
-> operator integration is not. Links 2–6 have **not** been exercised live yet. A green test
+> operator integration is not. Links 5 and 6 have since been verified live too — device swap and call forwarding both answer through the gate with a `gercek` trace. Links 3 and 4 are blocked by the account rather than the code: every Device Status path returns `404 Endpoint does not exist` on the free Simulator tier, while the three working links answer `200` with the same key. A green test
 > suite remains evidence about **decision logic**, not about the wire.
 >
 > One finding worth repeating: the SDK does not send the `X-RapidAPI-Host` header, and

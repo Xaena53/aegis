@@ -29,12 +29,12 @@ server call it at all, and what is its status in this codebase today.
 |---|---|---|---|
 | **SIM Swap** (`simSwap.check`) | "Was the approver's line taken over recently?" | **Real path written.** Live channel + `ADSPILOT_NAC_SIMULATE` simulation channel + test seam. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — API key + phone number, nothing else. |
 | **Number Verification** (`numberVerification.*`, `numberVerificationV100.*`) | "Is this approval coming from the line owner's own device?" | **Simulation only** (`ADSPILOT_NV_SIMULATE`). Runs on the `high` tier only. Every string it emits says `SİMÜLASYON` and `gerçek ağ sorgusu YAPILMADI`. | **No.** Device-side OIDC authorization-code flow — see §4. |
-| **Device Swap** (`deviceSwap.check`) | "Was the line moved to a NEW DEVICE in the last N hours?" | **Link 5 — real path written, opt-in.** Structural twin of SIM Swap: same auth, same body shape, same hour-based `maxAge` (it *shares* `ADSPILOT_SIMSWAP_WINDOW_HOURS` rather than inventing a second window variable), same single-boolean output. The live query stays **off unless `ADSPILOT_DEVICESWAP_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_DEVICESWAP_SIMULATE` is the demo channel. One deliberate divergence from link 1: an unreadable `swapped` is **not** taken as "no swap" — `undefined` is `RET`. Not yet exercised live (§2). | **Yes** — phone number only. |
-| **Call Forwarding Signal** (`callForwardingSignal.retrieveUnconditionalCallForwarding`) | "Is *unconditional* call forwarding active on the approver's line?" (the standard way to intercept OTP/voice verification, and invisible to all five earlier links: same SIM, same device, line reachable, expected country) | **Link 6 — real path written, opt-in.** Off unless `ADSPILOT_CALLFWD_CHECK` is set, `high` tier only, trail records `kapali` while off; `ADSPILOT_CALLFWD_SIMULATE` is the demo channel. Only the unconditional variant is called — one boolean, no PII: *which* number the line forwards to is never asked for, never received, never written anywhere. Not yet exercised live (§2). | **Yes** — phone number only. |
+| **Device Swap** (`deviceSwap.check`) | "Was the line moved to a NEW DEVICE in the last N hours?" | **Link 5 — real path written, opt-in.** Structural twin of SIM Swap: same auth, same body shape, same hour-based `maxAge` (it *shares* `ADSPILOT_SIMSWAP_WINDOW_HOURS` rather than inventing a second window variable), same single-boolean output. The live query stays **off unless `ADSPILOT_DEVICESWAP_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_DEVICESWAP_SIMULATE` is the demo channel. One deliberate divergence from link 1: an unreadable `swapped` is **not** taken as "no swap" — `undefined` is `RET`. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — phone number only. |
+| **Call Forwarding Signal** (`callForwardingSignal.retrieveUnconditionalCallForwarding`) | "Is *unconditional* call forwarding active on the approver's line?" (the standard way to intercept OTP/voice verification, and invisible to all five earlier links: same SIM, same device, line reachable, expected country) | **Link 6 — real path written, opt-in.** Off unless `ADSPILOT_CALLFWD_CHECK` is set, `high` tier only, trail records `kapali` while off; `ADSPILOT_CALLFWD_SIMULATE` is the demo channel. Only the unconditional variant is called — one boolean, no PII: *which* number the line forwards to is never asked for, never received, never written anywhere. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — phone number only. |
 | **KYC Tenure** (`kyc.checkTenure`) | "Has this number been with the same subscriber since date X, and is it prepaid (PAYG) or contract/business?" | **Roadmap, blocked on data we do not have.** Requires a `tenureDate` we would have to invent — see the trap note below. | **Yes**, but needs a date input we cannot honestly supply yet. |
 | **Number Recycling** (`numberRecycling.check`) | "Has the configured approver number changed hands since date X?" | **Roadmap.** Needs a new config field (e.g. `ADSPILOT_APPROVER_SINCE`). Window semantics differ from every other link: absolute date, not an hour window. | **Yes**, but needs that new config field. |
-| **Device Status — roaming** (`deviceStatus.checkRoaming`) | "Is the approver's line abroad right now, and in which country?" | **Link 4 — real path written.** Serves the expected-country check: `ADSPILOT_EXPECTED_COUNTRY` (ISO 3166-1 alpha-2) with `ADSPILOT_LOC_SIMULATE` as the demo channel. `high` tier only, and **only when an expected country is configured** — no default is invented, since a default would answer "clean" forever. Raw `countryName[]` is never echoed; only the derived expected/unexpected verdict. Not yet exercised live (§2). | **Yes** — `device.phoneNumber`. Direct endpoint, not passthrough. |
-| **Device Status — connectivity / reachability** (`deviceStatus.retrieveReachabilityStatus`) | "Can the line receive data/SMS right now?" | **Link 3 — real path written, opt-in.** The false-positive objection is real: reachability legitimately fluctuates (airplane mode, coverage, dead battery) and under fail-closed an "unreachable" answer refuses the spend. So the live query stays **off unless `ADSPILOT_REACH_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_REACH_SIMULATE` is the demo channel. Not yet exercised live (§2). | **Yes** — phone number only. |
+| **Device Status — roaming** (`deviceStatus.checkRoaming`) | "Is the approver's line abroad right now, and in which country?" | **Link 4 — real path written.** Serves the expected-country check: `ADSPILOT_EXPECTED_COUNTRY` (ISO 3166-1 alpha-2) with `ADSPILOT_LOC_SIMULATE` as the demo channel. `high` tier only, and **only when an expected country is configured** — no default is invented, since a default would answer "clean" forever. Raw `countryName[]` is never echoed; only the derived expected/unexpected verdict. **Endpoint absent on our account** — every Device Status path returns `404 Endpoint does not exist` (§2). | **Yes** — `device.phoneNumber`. Direct endpoint, not passthrough. |
+| **Device Status — connectivity / reachability** (`deviceStatus.retrieveReachabilityStatus`) | "Can the line receive data/SMS right now?" | **Link 3 — real path written, opt-in.** The false-positive objection is real: reachability legitimately fluctuates (airplane mode, coverage, dead battery) and under fail-closed an "unreachable" answer refuses the spend. So the live query stays **off unless `ADSPILOT_REACH_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_REACH_SIMULATE` is the demo channel. **Endpoint absent on our account** — every Device Status path returns `404 Endpoint does not exist` (§2). | **Yes** — phone number only. |
 | **Location Verification / Retrieval** (`location.*`) | "Is the approver inside the expected geography?" | **Deferred — the country question is served by roaming instead (above).** The SDK's `Area` type is `{ areaType: 'CIRCLE' }` only: center coordinates and radius are absent from the `.d.ts`, so a query area cannot be expressed type-safely, and forcing it with `as any` would be inventing a schema. It is also the highest-privacy data in the set (needs `consentInfo`), and `retrieve` returns raw coordinates. Country-level roaming answers most of the fraud question at a fraction of the privacy cost. | Structurally yes; **not type-safe today.** |
 | **Geofencing** (`geofencing.*`) | "Tell me when the approver enters/leaves an area." | **Out of scope.** Not a synchronous question-and-answer: the answer arrives later on a webhook, which a fail-closed approval gate cannot wait for. Also needs a public sink URL and subscription lifecycle state. | Technically yes; architecturally unusable here. |
 | **KYC Match / Fill-In** (`kyc.match`, `kyc.fillIn`) | "Do the user's identity details match the operator's records?" / "Give me the subscriber's identity record." | **Rejected on principle.** `match` demands identity PII as *input* (we hold none). `fillIn` returns ID document number, address, birthdate as *output* — a direct collision with our invariant that raw values are never echoed to the agent. | Yes — and that is precisely why the refusal is deliberate, not incidental. |
@@ -82,16 +82,37 @@ What ran, and what came back:
 All three were written to the decision log with `"simSwapKanali":"gercek"` — the field
 exists precisely so this claim can be checked rather than believed.
 
+**Links 5 and 6 followed, through the gate rather than a raw request:**
+
+| Link | Live response | Trace written |
+|---|---|---|
+| 5 · `deviceSwap.check` | `200 {"swapped":false}` on the clean MSISDN, `{"swapped":true}` on `…1000` | `"devSwap":"gercek"` |
+| 6 · `callForwardingSignal` | `200 {"active":false}` on the clean MSISDN, `{"active":true}` on `…1000` | `"callFwd":"gercek"` |
+
+The simulator is consistent across signals: `+99999991000` answers "compromised" to every
+question and `+99999991001` answers "clean" to every one, so a full-chain demo needs no
+staging beyond choosing a number.
+
 **The important caveat: live endpoint, simulated network.** The account is in the
 platform's *Simulator mode*, so the HTTP request, the authentication, the routing and the
 response shape are all real, but the subscriber behind the number is Nokia's simulation,
 not a person on an operator's network. Reaching real subscribers requires completing
 onboarding with a billing account. So the wire is proven; the operator integration is not.
 
-**What still has not run live:** links 2–6. Number Verification cannot (§4). Reachability,
-roaming, device swap and call forwarding each sit behind their own opt-in switch and have
-not been exercised against the platform yet; their code paths are the same shape as the
-SIM Swap one that now works, but "same shape" is a design argument, not evidence.
+**What still has not run live:** links 2, 3 and 4 — and for three different reasons, which
+is worth separating because only one of them is ours to fix.
+
+- **Link 2, Number Verification** cannot run from a server at all (§4). No account tier
+  changes that.
+- **Links 3 and 4** are blocked by the account, not the code: every Device Status path we
+  tried — `/device-status/v0/connectivity`, `/device-status/v0/roaming`,
+  `/device-status/device-reachability-status/v1/retrieve`,
+  `/device-status/device-roaming-status/v1/retrieve` — answers
+  `404 {"message":"Endpoint … does not exist"}` while SIM Swap, Device Swap and Call
+  Forwarding answer `200` with the same key and header. The endpoints appear in the
+  platform's own API catalogue, so the likeliest explanation is that Device Status is not
+  exposed on the free Simulator tier. That is a question for the platform, and it is on the
+  mentor-session list rather than in the code.
 
 ### The header that made it work
 

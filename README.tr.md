@@ -70,7 +70,7 @@ tasarımın kendisinden daha önemlidir.
 > günlüğüne `"simSwapKanali":"gercek"` olarak düştü. **Önemli çekince:** hesap platformun
 > *Simulator* kipinde, yani istek, kimlik doğrulama, yönlendirme ve yanıt biçimi gerçek ama
 > numaranın arkasındaki abone Nokia'nın simülasyonu — tel kanıtlandı, operatör entegrasyonu
-> kanıtlanmadı. 2-6. halkalar henüz canlı denenmedi. Yeşil test süiti hâlâ **karar mantığı**
+> kanıtlanmadı. 5. ve 6. halkalar da sonradan canlı doğrulandı — cihaz değişimi ve çağrı yönlendirme, kapıdan `gercek` iziyle geçiyor. 3. ve 4. halkayı engelleyen kod değil hesap: ücretsiz Simulator katmanında her Device Status yolu `404 Endpoint does not exist` dönerken, çalışan üç halka aynı anahtarla `200` veriyor. Yeşil test süiti hâlâ **karar mantığı**
 > hakkında kanıttır, telin çalıştığının değil.
 >
 > Tekrarlamaya değer bir bulgu: SDK `X-RapidAPI-Host` başlığını göndermiyor ve o başlık
