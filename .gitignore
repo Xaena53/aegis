@@ -16,3 +16,7 @@ coverage/
 *.db-wal
 *.db-shm
 .mcp.json
+
+# Growth Brain koşu çıktıları: her çalıştırmada yeniden üretilir ve hesaba özel
+# plan/kreatif içerir. Kaynak değil, artefakt — depoya girmez.
+rapor-brain-*.md
