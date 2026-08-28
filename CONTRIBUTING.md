@@ -102,3 +102,23 @@ files need the SPDX header:
 
 If you deploy a modified version as a network service, AGPL §13 obliges you to offer
 its source to that service's users — set `ADSPILOT_SOURCE_URL` to your own repository.
+
+## Commit messages
+
+History follows [Conventional Commits](https://www.conventionalcommits.org/): a type, an
+optional scope naming the subsystem, and an imperative subject that fits in 72 characters.
+
+    feat(trust-gate): add reachability and roaming links to the chain
+    fix(brain): treat EOF on an approval prompt as refusal
+    test: require every spend-increasing tool to be gate-covered
+
+Types in use: `feat`, `fix`, `test`, `docs`, `chore`. Scopes in use: `trust-gate`, `brain`,
+`meta`, `demo`.
+
+The body matters more than the subject. State *why*, not what the diff already shows — the
+constraint you were working against, the alternative you rejected, the trap that cost you
+an afternoon. Several guards in this repository exist because a body explained a
+non-obvious hazard; a subject alone would not have carried it.
+
+If a change touches the spending path, say in the body how you verified it and what you
+did not verify. "Not exercised live" is a legitimate and useful thing for a commit to say.
