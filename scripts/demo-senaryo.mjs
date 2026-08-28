@@ -176,6 +176,25 @@ async function sunucuBaslat(simDegeri, elicitHandler) {
   env.ADSPILOT_NAC_SIMULATE = simDegeri;
   env.ADSPILOT_APPROVER_PHONE = DEMO_TELEFON;
 
+  /**
+   * GERÇEK TOKEN BİLEREK BOŞALTILIR.
+   *
+   * Sunucu, token ile simülasyon değişkeninin BİRLİKTE tanımlı olmasını çelişkili
+   * yapılandırma sayar ve harcamayı reddeder (belirsizlikte gevşek kanal seçilmez).
+   * O kural doğrudur ve kalmalıdır — ama sahne demosunu da kırar: .env'de gerçek bir
+   * ADSPILOT_NAC_TOKEN bulunduğu an, yukarıdaki döngü onu spawn ortamına kopyalar ve
+   * her perde "çelişkili yapılandırma" retiyle biter. Bu yaşandı: token geldiği gün
+   * demo, kodda hiçbir şey değişmeden çalışmaz oldu.
+   *
+   * Boş dize yeterli: config.ts `?.trim() || undefined` ile okuduğu için boş değer
+   * "tanımsız" demektir. Sunucu .env'i kendi de yüklediğinden, DEĞİŞKENİ ATLAMAK
+   * yetmez — üzerine boş yazmak gerekir.
+   *
+   * Demo bir SİMÜLASYON gösterisidir; gerçek CAMARA sorgusu için demo değil,
+   * `docs/CAMARA.md` §3 kontrol listesi izlenir.
+   */
+  env.ADSPILOT_NAC_TOKEN = "";
+
   const client = new Client(
     { name: "adspilot-demo-senaryo", version: "1.0.0" },
     { capabilities: { elicitation: { form: {} } } } // form yeteneği açıkça İLAN edilir

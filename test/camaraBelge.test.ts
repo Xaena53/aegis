@@ -52,7 +52,7 @@ function bolum(basligiIceren: string): string {
 test("belge: dört bölümün dördü de var (envanter, canlı-koşmadı, kontrol listesi, NV mimarisi)", () => {
   for (const baslik of [
     "Signal inventory",
-    "What has never run live",
+    "What has run live",
     "Token arrival checklist",
     "Number Verification",
   ]) {
@@ -74,17 +74,43 @@ test("belge: NV hükmü açıkça 'sunucudan çağrılamaz' — ve gerekçesi ci
 
 /* ── 2) "Hiç canlı koşmadı" beyanı ────────────────────────────────────────────── */
 
-test("belge: hiçbir gerçek CAMARA çağrısının canlı koşmadığı AÇIKÇA yazıyor", () => {
-  const b = bolum("What has never run live");
+test("belge: NE koştuğu ve NE koşmadığı ayrı ayrı, yumuşatılmadan yazıyor", () => {
+  /**
+   * Bu bölümün sözleşmesi 2026-08-28'de yön değiştirdi. Önce "hiçbir çağrı canlı koşmadı"
+   * beyanını koruyordu; SIM Swap gerçekten koşunca o beyan YANLIŞ oldu ve test kızardı —
+   * tam olarak istenen davranış. Yeni sözleşme aynı dürüstlüğü iki yönde birden ister:
+   * koşanı sahiplenmek ve koşmayanı gizlememek. Abartma da eksiltme kadar hatadır.
+   */
+  const b = bolum("What has run live");
+
+  // Koşan: iddia somut olmalı — hangi yanıt geldi, kapı ne karar verdi.
+  assert.match(b, /swapped/i, "canlı yanıtın kendisi (swapped) gösterilmeli");
+  assert.match(b, /simSwapKanali":"gercek"|simSwapKanali.*gercek/i,
+    "denetim izindeki 'gercek' kanal kaydı gösterilmeli — iddia kontrol edilebilir olsun");
+
+  // Koşmayan: hem katmanın sınırı (Simulator kipi) hem kalan halkalar söylenmeli.
+  assert.match(b, /Simulator mode/i,
+    "canlı uç nokta ile SİMÜLE ABONE ayrımı yazılmalı — 'operatör entegrasyonu kanıtlandı' izlenimi verilemez");
   assert.match(
     b,
-    /never reached a live endpoint|Zero real\s+network queries/i,
-    "canlı koşulmadığı beyanı yumuşatılmış ya da silinmiş — bu beyan belgenin varlık sebebi"
+    /has not run live|have not been exercised|not been exercised|not yet/i,
+    "henüz koşmayan halkalar açıkça söylenmeli"
   );
-  // Testlerin sahte kanal enjekte ettiği de söylenmeli: yeşil test = kararın kanıtı,
-  // entegrasyonun kanıtı DEĞİL.
-  assert.match(b, /__setSimSwapKanalForTests/, "test seam'inin sahte kanal enjekte ettiği yazılmalı");
-  assert.match(b, /fake channel/i, "sahte kanal ifadesi kayıp");
+
+  // Yeşil test süiti hâlâ kararın kanıtı, telin değil.
+  assert.match(b, /decision logic|karar mantığı/i,
+    "yeşil süitin neyin kanıtı OLMADIĞI yazılmalı");
+});
+
+test("belge: SDK'nın atladığı X-RapidAPI-Host başlığı ve sonucu kayıtlı", () => {
+  /**
+   * Bu başlık olmadan platform her çağrıya 404 "API doesn't exists" diyor. Bulgu belgede
+   * durmalı: bir sonraki kişi (ya da altı ay sonraki biz) aynı yanıltıcı hatayı saatlerce
+   * kovalamasın. Kodda test/nacIstemci.test.ts pinliyor; burada da anlatılıyor.
+   */
+  const b = bolum("What has run live");
+  assert.match(b, /X-RapidAPI-Host/, "başlık adı belgede geçmeli");
+  assert.match(b, /API doesn't exists|404/, "başlıksız gelen hata yanıtı yazılmalı");
 });
 
 /* ── 3) Kopyalanabilir kontrol listesi gerçekten uygulanabilir mi ─────────────── */
@@ -176,12 +202,22 @@ test("sdk: NV hükmünün dayandığı tip-tanımı alıntıları SDK'da hâlâ 
 /* ── 6) Belge sır sızdırmıyor ─────────────────────────────────────────────────── */
 
 test("belge: tam numara/token görünümlü uzun rakam dizisi içermiyor", () => {
-  // Onaylayıcı numarası ve NaC anahtarı belgeye ASLA girmemeli; örnekler yer tutucudur.
-  const uzunDizi = belge.match(/\d{9,}/g);
-  assert.equal(
+  /**
+   * Onaylayıcı numarası ve NaC anahtarı belgeye ASLA girmemeli.
+   *
+   * TEK MUAFİYET: Nokia'nın kendi belgesinde YAYIMLADIĞI simülatör MSISDN'leri
+   * (+9999999xxxx). Bunlar sır değil, herkese açık test kimlikleridir ve demo
+   * senaryosunu anlatabilmek için belgede geçmeleri gerekir — hangi numaranın
+   * "değişmiş SIM", hangisinin "temiz" cevabı verdiği bilgisi olmadan §2 okunamaz.
+   * Muafiyet dar tutulur: yalnız bu önek, gerçek bir abone numarasına benzemeyecek
+   * kadar özel olduğu için güvenlidir.
+   */
+  const SIMULATOR_ONEKI = /^9999999\d{4}$/;
+  const uzunDizi = (belge.match(/\d{9,}/g) ?? []).filter((d) => !SIMULATOR_ONEKI.test(d));
+  assert.deepEqual(
     uzunDizi,
-    null,
-    `docs/CAMARA.md sır görünümlü uzun rakam dizisi içeriyor: ${uzunDizi?.join(", ")}`
+    [],
+    `docs/CAMARA.md sır görünümlü uzun rakam dizisi içeriyor: ${uzunDizi.join(", ")}`
   );
   // Maskeleme örneği verilmişse maskeli olmalı (en az bir '*').
   const ornekler = belge.match(/\+90[0-9X*]{4,}/g) ?? [];

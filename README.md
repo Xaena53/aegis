@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-431-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-454-brightgreen.svg)](test/)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -71,13 +71,19 @@ another CAMARA round trip to every approval — and another way to refuse a legi
 A configured-but-disabled link records `kapali` in the audit trail, so "I did not ask" is
 never mistaken for "asked and passed".
 
-> **No CAMARA API call made by this repository has ever reached a live endpoint. Zero real
-> network queries have been executed, on any signal, at any time.** No Network-as-Code token
-> has ever been held, so the SDK's lazy import has never once been taken; every gate run so
-> far has come from a simulation channel, and every string such a run produces is stamped
-> `SİMÜLASYON` and states that no network query was made. A green test suite is evidence
-> about the **decision logic** — refusal on swapped SIM, on an unanswering API, on
-> incomplete configuration — not evidence that the wire works.
+> **SIM Swap now runs against Nokia's live Network-as-Code endpoint** (verified 2026-08-28):
+> a clean line returns `{"swapped":false}` and passes, a swapped line returns
+> `{"swapped":true}` and is refused before any prompt, and a line that makes the platform
+> return `500` is refused fail-closed with the upstream body redacted. All three landed in
+> the decision log as `"simSwapKanali":"gercek"`. **The caveat that matters:** the account is
+> in the platform's *Simulator mode*, so the request, auth, routing and response shape are
+> real while the subscriber behind the number is Nokia's simulation — the wire is proven, the
+> operator integration is not. Links 2–6 have **not** been exercised live yet. A green test
+> suite remains evidence about **decision logic**, not about the wire.
+>
+> One finding worth repeating: the SDK does not send the `X-RapidAPI-Host` header, and
+> without it every call returns `404 "API doesn't exists"` — correct URL, correct path, valid
+> key. One header is the difference between a dead integration and a working one.
 
 The full signal inventory, the type-level proof that Number Verification is uncallable from
 a server, and the step-by-step checklist that turns the first live query into recorded fact
@@ -118,7 +124,7 @@ glossary of the Turkish runtime strings: **[docs/DEMO.md](docs/DEMO.md)**.
 | **Fail-closed guards** | n/a | Budget ceiling, paused-by-default, mandatory geo targeting, shared-budget protection |
 | **Multi-tenant hosting** | ❌ self-host, single identity | ✅ per-user OAuth, encrypted tokens, session isolation |
 | **Site → campaign** | ❌ | ✅ `analyze_site` turns any URL into campaign raw material |
-| **Network trust anchor** | ❌ | A six-link CAMARA chain (SIM swap · number verification · reachability · roaming · device swap · call forwarding) *before* the human is prompted — real paths written, never yet run live ([docs](docs/CAMARA.md)) |
+| **Network trust anchor** | ❌ | A six-link CAMARA chain (SIM swap · number verification · reachability · roaming · device swap · call forwarding) *before* the human is prompted — SIM Swap verified live in Simulator mode, links 2-6 written but not yet exercised ([docs](docs/CAMARA.md)) |
 | **License** | Apache-2.0 | AGPL-3.0 |
 
 > This table compares Google's official server, which is deliberately read-only and
@@ -339,7 +345,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 431 offline tests
+npm test           # 454 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run prova -- --musteri <id>   # stage-day preflight for the demo (writes nothing)
 npm run demo  -- --musteri <id>   # the three-act network-trust demo, dry by default

@@ -572,6 +572,32 @@ let gercekKanal: SimSwapKanali | undefined;
 let gercekKanalAnahtari: string | undefined;
 
 /**
+ * NaC SDK istemcisi — X-RapidAPI-Host başlığı ELLE eklenir.
+ *
+ * SDK'nın kendisi bu başlığı GÖNDERMİYOR ve platform onsuz her çağrıya
+ * `404 {"message":"API doesn't exists"}` cevabı veriyor: uç nokta yolu ve taban URL
+ * doğru olsa bile istek hiçbir API'ye eşlenmiyor. Ölçülerek bulundu — aynı gövde ve
+ * aynı anahtarla, yalnız bu başlık eklendiğinde yanıt `200 {"swapped":true}` oluyor.
+ *
+ * Değer platformun kendi belgesindeki sabittir (Nokia API Hub · "Getting client
+ * credentials" bölümündeki curl örnekleri). SDK ileride başlığı kendisi göndermeye
+ * başlarsa bu satır zararsız biçimde aynı değeri tekrar yazar.
+ */
+const RAPIDAPI_HOST = "network-as-code.nokia.rapidapi.com";
+
+export function nacIstemciSecenekleri(token: string): {
+  apiKey: string;
+  headers: Record<string, string>;
+} {
+  return { apiKey: token, headers: { "X-RapidAPI-Host": RAPIDAPI_HOST } };
+}
+
+async function nacIstemci(token: string) {
+  const { NetworkAsCodeApiClient } = await import("network-as-code");
+  return new NetworkAsCodeApiClient(nacIstemciSecenekleri(token));
+}
+
+/**
  * The SDK is imported lazily: deployments without a NaC token never load it, and a
  * broken optional dependency cannot take down the stdio server at startup.
  *
@@ -583,8 +609,7 @@ async function kanalGetir(ayar: AgAyar): Promise<SimSwapKanali> {
   if (kanalOverride && kanalOverride !== "reset") return kanalOverride;
   const anahtar = `${ayar.nacToken}\u0000${ayar.approverPhone}`;
   if (gercekKanal && gercekKanalAnahtari === anahtar) return gercekKanal;
-  const { NetworkAsCodeApiClient } = await import("network-as-code");
-  const client = new NetworkAsCodeApiClient({ apiKey: ayar.nacToken! });
+  const client = await nacIstemci(ayar.nacToken!);
   const phoneNumber = ayar.approverPhone!;
   gercekKanal = {
     verifySimSwap: async (maxAgeHours: number) => {
@@ -625,8 +650,7 @@ async function erisimKanaliGetir(ayar: AgAyar): Promise<ErisilebilirlikKanali> {
   if (erisimOverride && erisimOverride !== "reset") return erisimOverride;
   const anahtar = `${ayar.nacToken}\u0000${ayar.approverPhone}`;
   if (gercekErisimKanal && gercekErisimAnahtari === anahtar) return gercekErisimKanal;
-  const { NetworkAsCodeApiClient } = await import("network-as-code");
-  const client = new NetworkAsCodeApiClient({ apiKey: ayar.nacToken! });
+  const client = await nacIstemci(ayar.nacToken!);
   const phoneNumber = ayar.approverPhone!;
   gercekErisimKanal = {
     cihazErisilebilirMi: async () => {
@@ -663,8 +687,7 @@ async function konumKanaliGetir(ayar: AgAyar): Promise<KonumKanali> {
   if (konumOverride && konumOverride !== "reset") return konumOverride;
   const anahtar = `${ayar.nacToken}\u0000${ayar.approverPhone}`;
   if (gercekKonumKanal && gercekKonumAnahtari === anahtar) return gercekKonumKanal;
-  const { NetworkAsCodeApiClient } = await import("network-as-code");
-  const client = new NetworkAsCodeApiClient({ apiKey: ayar.nacToken! });
+  const client = await nacIstemci(ayar.nacToken!);
   const phoneNumber = ayar.approverPhone!;
   gercekKonumKanal = {
     ulkeDurumu: async () => {
@@ -707,8 +730,7 @@ async function cihazDegisimKanaliGetir(ayar: AgAyar): Promise<CihazDegisimKanali
   if (cihazDegisimOverride && cihazDegisimOverride !== "reset") return cihazDegisimOverride;
   const anahtar = `${ayar.nacToken}\u0000${ayar.approverPhone}`;
   if (gercekCihazDegisimKanal && gercekCihazDegisimAnahtari === anahtar) return gercekCihazDegisimKanal;
-  const { NetworkAsCodeApiClient } = await import("network-as-code");
-  const client = new NetworkAsCodeApiClient({ apiKey: ayar.nacToken! });
+  const client = await nacIstemci(ayar.nacToken!);
   const phoneNumber = ayar.approverPhone!;
   gercekCihazDegisimKanal = {
     cihazDegistiMi: async (maxAgeHours: number) => {
@@ -756,8 +778,7 @@ async function cagriYonlendirmeKanaliGetir(ayar: AgAyar): Promise<CagriYonlendir
   if (gercekCagriYonlendirmeKanal && gercekCagriYonlendirmeAnahtari === anahtar) {
     return gercekCagriYonlendirmeKanal;
   }
-  const { NetworkAsCodeApiClient } = await import("network-as-code");
-  const client = new NetworkAsCodeApiClient({ apiKey: ayar.nacToken! });
+  const client = await nacIstemci(ayar.nacToken!);
   const phoneNumber = ayar.approverPhone!;
   gercekCagriYonlendirmeKanal = {
     kosulsuzYonlendirmeAcikMi: async () => {

@@ -38,18 +38,44 @@ before(async () => {
       GOOGLE_ADS_CLIENT_SECRET: "sahte-secret",
       ADSPILOT_RATE_PER_MINUTE: "8",
     },
-    stdio: "ignore",
+    // stdio yutulmaz: sunucu başlangıçta düşerse SEBEBİNİ görmek gerekir. Yutulduğunda
+    // her arıza aynı "ayağa kalkmadı" cümlesine dönüşüyordu ve gerçek neden kayboluyordu.
+    stdio: ["ignore", "ignore", "pipe"],
   });
-  for (let i = 0; i < 100; i++) {
+
+  let sunucuHatasi = "";
+  sunucu.stderr?.on("data", (d) => {
+    sunucuHatasi += String(d);
+  });
+  sunucu.once("exit", (kod) => {
+    if (kod !== 0 && kod !== null) sunucuHatasi += `\n(süreç ${kod} koduyla çıktı)`;
+  });
+
+  /**
+   * BEKLEME BÜTÇESİ: 10 sn değil 45 sn.
+   *
+   * Bu test dosyası TEK BAŞINA koşarken 10 saniye fazlasıyla yetiyordu; ama `npm test`
+   * yirmiden fazla test dosyasını paralel koşuyor ve bu makinede sunucunun ayağa kalkması
+   * o yük altında sınırı aşabiliyordu. Sonuç, ürün hatası olmadığı hâlde süitin yarı yarıya
+   * kırmızı olması — ve gerçek bir regresyonu gürültüden ayıramaz hâle gelmemizdi.
+   * Bütçeyi yüke göre değil, "gerçekten bozuksa yine de hızlı biter" ilkesine göre seçtik:
+   * sağlıklı durumda ilk denemede döner, bozuk durumda 45 sn sonra SEBEBİYLE birlikte düşer.
+   */
+  const AZAMI_BEKLEME_MS = 45_000;
+  const ADIM_MS = 100;
+  for (let gecen = 0; gecen < AZAMI_BEKLEME_MS; gecen += ADIM_MS) {
     try {
       const r = await fetch(`${BASE}/health`);
       if (r.ok) return;
     } catch {
       /* not listening yet */
     }
-    await bekle(100);
+    await bekle(ADIM_MS);
   }
-  throw new Error("sunucu 10 saniyede ayağa kalkmadı");
+  throw new Error(
+    `sunucu ${AZAMI_BEKLEME_MS / 1000} saniyede ayağa kalkmadı` +
+      (sunucuHatasi.trim() ? ` — sunucu stderr: ${sunucuHatasi.trim().slice(0, 400)}` : "")
+  );
 });
 
 after(() => {

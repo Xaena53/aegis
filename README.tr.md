@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-451-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-454-brightgreen.svg)](test/)
 
 🇬🇧 [English README](README.md)
 
@@ -63,13 +63,19 @@ tasarımın kendisinden daha önemlidir.
 | 5 | `deviceSwap.check` | Hat son N saatte yeni bir cihaza mı taşındı? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_DEVICESWAP_CHECK`), yüksek katman. SIM Swap'ın yapısal ikizi; okunamayan yanıt "değişim yok" sayılmaz, RET olur |
 | 6 | `callForwardingSignal` | Hatta koşulsuz çağrı yönlendirme açık mı? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_CALLFWD_CHECK`), yüksek katman. OTP ele geçirmenin klasik yolu ve önceki beş halkanın göremediği saldırı: aynı SIM, aynı cihaz, hat erişilebilir, ülke beklenen. Yalnız koşulsuz varyant sorulur — tek boolean, PII yok |
 
-> **Bu deponun yaptığı hiçbir CAMARA çağrısı bugüne dek canlı bir uç noktaya ulaşmadı.
-> Hiçbir sinyalde, hiçbir zaman, tek bir gerçek ağ sorgusu koşulmadı.** Elimizde hiç
-> Network-as-Code token'ı olmadı, dolayısıyla SDK'nın tembel import'u bir kez bile
-> alınmadı; bugüne kadarki her kapı koşusu bir simülasyon kanalından geldi ve böyle bir
-> koşunun ürettiği her metin `SİMÜLASYON` damgalıdır ve ağ sorgusu yapılmadığını söyler.
-> Yeşil bir test süiti **karar mantığı** hakkında kanıttır — değişmiş SIM'de ret, cevap
-> vermeyen API'de ret, eksik yapılandırmada ret — telin çalıştığının kanıtı değildir.
+> **SIM Swap artık Nokia'nın canlı Network-as-Code uç noktasına karşı koşuyor**
+> (2026-08-28'de doğrulandı): temiz hat `{"swapped":false}` döndürüp geçiyor, SIM'i değişmiş
+> hat `{"swapped":true}` döndürüp istem gösterilmeden reddediliyor, platformun `500`
+> döndürdüğü hat ise upstream gövdesi maskelenerek kapalı arızaya gidiyor. Üçü de karar
+> günlüğüne `"simSwapKanali":"gercek"` olarak düştü. **Önemli çekince:** hesap platformun
+> *Simulator* kipinde, yani istek, kimlik doğrulama, yönlendirme ve yanıt biçimi gerçek ama
+> numaranın arkasındaki abone Nokia'nın simülasyonu — tel kanıtlandı, operatör entegrasyonu
+> kanıtlanmadı. 2-6. halkalar henüz canlı denenmedi. Yeşil test süiti hâlâ **karar mantığı**
+> hakkında kanıttır, telin çalıştığının değil.
+>
+> Tekrarlamaya değer bir bulgu: SDK `X-RapidAPI-Host` başlığını göndermiyor ve o başlık
+> olmadan her çağrı `404 "API doesn't exists"` dönüyor — doğru URL, doğru yol, geçerli
+> anahtarla. Ölü bir entegrasyonla çalışan bir entegrasyon arasındaki fark tek bir başlık.
 
 Tam sinyal envanteri, Number Verification'ın sunucudan çağrılamadığının tip düzeyindeki
 kanıtı ve ilk canlı sorguyu kayda geçirecek adım adım kontrol listesi:
@@ -122,7 +128,7 @@ giderme: **[docs/DOCKER.md](docs/DOCKER.md)**.
 | **Kapalı-arıza kapılar** | yok | Bütçe tavanı, duraklatılmış doğma, zorunlu ülke hedefi, paylaşımlı bütçe koruması |
 | **Çok kiracılı barındırma** | ❌ tek kimlik, kendi sunucunda | ✅ kullanıcı başına OAuth, şifreli token, oturum izolasyonu |
 | **Siteden kampanyaya** | ❌ | ✅ `analyze_site` herhangi bir URL'yi kampanya hammaddesine çevirir |
-| **Ağ güven çapası** | ❌ | İnsana sorulmadan *önce* CAMARA SIM-Swap kontrolü — gerçek yol yazılı, henüz canlı koşmadı ([belge](docs/CAMARA.md)) |
+| **Ağ güven çapası** | ❌ | İnsana sorulmadan *önce* CAMARA SIM-Swap kontrolü — canlı uç noktaya karşı doğrulandı, Simulator kipi ([belge](docs/CAMARA.md)) |
 | **Lisans** | Apache-2.0 | AGPL-3.0 |
 
 > Tablo, Google'ın bilinçli olarak salt-okunur tasarlanmış resmi sunucusunu
@@ -308,7 +314,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 451 çevrimdışı test
+npm test           # 454 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 ```
 
