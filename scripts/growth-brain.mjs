@@ -273,6 +273,43 @@ async function efektifTavanBelirle(mcp, musteri, cliTavan) {
 
 /* ── Ana akış ───────────────────────────────────────────────────────────────── */
 
+/**
+ * Operatör onayını klavyeden okur — ve stdin KAPANIRSA cevap beklemez.
+ *
+ * NEDEN: `rl.question` girdi tükendiğinde (boru sonu, `< /dev/null`, kopmuş oturum)
+ * HİÇBİR ZAMAN çözülmez. Node bunu "unsettled top-level await" diye bildirip süreci
+ * ÇIKIŞ KODU 0 ile sonlandırır — yani çağıran taraf, onay hiç alınmamışken koşuyu
+ * başarılı sanır. Bu yaşandı: borulanmış bir koşuda yayına alma sorusu asılı kaldı ve
+ * betik sessizce "başarıyla" bitti.
+ *
+ * EOF bir cevap DEĞİLDİR: boş dize döner, çağıran onu 'Evet' saymadığı için sonuç
+ * RET olur. Susan bir kanal onay yerine geçmez (kapalı arıza) — demo betiğindeki
+ * operatoreSor ile aynı sözleşme.
+ *
+ * BUNUN İKİNCİ BİR SONUCU VAR VE O DA BİLEREKTİR: her çağrı kendi arayüzünü kurduğu
+ * için, borulanmış girdide ilk soru stdin'i tüketir ve İKİNCİ soru anında EOF görür.
+ * Yani `printf 'Evet
+Evet
+' | npm run brain -- --uygula --yayinla` ile yayına alma
+ * ADIMI OTOMATİKLEŞTİRİLEMEZ; ikinci onay reddedilir ve kampanya PAUSED kalır.
+ *
+ * Bu bir eksiklik değil, kapının varlık sebebinin ta kendisi: insan onayı borudan
+ * beslenebiliyorsa insan onayı değildir. Betikle sürülen gösterim için `npm run demo`
+ * vardır ve o, onayı kendisinin verdiğini ekranda açıkça söyler.
+ */
+async function operatorOnayi(soru) {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await Promise.race([
+      rl.question(soru).then((c) => c.trim(), () => ""),
+      new Promise((coz) => rl.once("close", () => coz(""))),
+    ]);
+  } finally {
+    rl.close();
+  }
+}
+
 async function ana() {
   const ham = argumanlariAyristir(process.argv.slice(2));
   if (ham.yardim) {
@@ -287,7 +324,6 @@ async function ana() {
   const jsonUret2 = (sistem, kullanici) => jsonUret(anthropic, { sistem, kullanici });
 
   let mcp = null;
-  let rl = null;
   try {
     let efektifTavan = girdi.butce;
     let tavanKaynagi = "CLI --butce tavanı (kuru mod — sunucu tavanı okunmadı)";
@@ -341,13 +377,9 @@ async function ana() {
       })) {
         console.log(satir);
       }
-      const { createInterface } = await import("node:readline/promises");
-      rl = createInterface({ input: process.stdin, output: process.stdout });
-      const cevap = (
-        await rl.question("Bu plan hesabına TASLAK (PAUSED) olarak yazılsın mı? Yalnız 'Evet' devam ettirir: ")
-      ).trim();
-      rl.close();
-      rl = null;
+      const cevap = await operatorOnayi(
+        "Bu plan hesabına TASLAK (PAUSED) olarak yazılsın mı? Yalnız 'Evet' devam ettirir: "
+      );
       if (cevap.toLocaleLowerCase("tr-TR") !== "evet") {
         console.log("Onay verilmedi — hiçbir yazma yapılmadı. Kuru mod raporu üretiliyor.");
         uygulamaSonucu = undefined;
@@ -386,13 +418,9 @@ async function ana() {
         })) {
           console.log(satir);
         }
-        const { createInterface } = await import("node:readline/promises");
-        rl = createInterface({ input: process.stdin, output: process.stdout });
-        const cevap2 = (
-          await rl.question("Bu kampanya YAYINA ALINSIN mı? Yalnız 'Evet' devam ettirir: ")
-        ).trim();
-        rl.close();
-        rl = null;
+        const cevap2 = await operatorOnayi(
+          "Bu kampanya YAYINA ALINSIN mı? Yalnız 'Evet' devam ettirir: "
+        );
         if (cevap2.toLocaleLowerCase("tr-TR") !== "evet") {
           console.log("Onay verilmedi — yayına alma çağrısı hiç yapılmadı. Kampanya PAUSED kalıyor.");
           yayinSonucu = {
@@ -449,7 +477,6 @@ async function ana() {
     }
     return 0;
   } finally {
-    if (rl) rl.close();
     if (mcp) await mcp.kapat();
   }
 }
