@@ -179,18 +179,37 @@ export function slugUret(ad) {
 }
 
 /** Onay öncesi terminalde gösterilecek tam plan özeti (yalnız doğrulanmış alanlar). */
-function planOzetiSatirlari({ plan, kreatif, efektifTavan, tavanKaynagi, musteri, url, yayinla }) {
+function planOzetiSatirlari({ plan, kreatif, efektifTavan, tavanKaynagi, musteri, url, yayinla, dagitim }) {
   const gruplar = Array.isArray(plan.adGruplari) ? plan.adGruplari : [];
   const kelimeSayisi = gruplar.reduce(
     (t, g) => t + (Array.isArray(g?.anahtarKelimeler) ? g.anahtarKelimeler.length : 0),
     0
   );
   const negatifSayisi = Array.isArray(plan.negatifKelimeler) ? plan.negatifKelimeler.length : 0;
+  /**
+   * BÜTÇE BÖLÜNDÜYSE ONAY EKRANI BUNU SÖYLEMEK ZORUNDA.
+   *
+   * Aksi hâlde satır "45 TL (bağlayıcı tavan: 100 TL)" diye okunur ve operatör bunu
+   * "100'lük tavanın altında 45 harcıyorum" sanır. Oysa 100 bir tavan değil, BÖLÜNEN
+   * TOPLAMDIR ve kalanı başka bir kanala önerilmiştir. Yazmayı onaylayan kişi, onayladığı
+   * şeyin toplamın bir PARÇASI olduğunu görmeden onaylamamalı.
+   */
+  const coklu = Array.isArray(dagitim) && dagitim.length > 1;
+  const kanalAdi = Array.isArray(dagitim) && dagitim.length ? dagitim[0].kanal : null;
+  const butceSatirlari = coklu
+    ? [
+        `│ Günlük bütçe : ${plan.butceGunlukTL} TL — '${kanalAdi}' kanalının PAYI`,
+        `│ Toplam bütçe : ${efektifTavan} TL, ${dagitim.length} kanala bölündü (${dagitimOzeti(dagitim)})`,
+        `│ DİKKAT       : bu onay YALNIZ '${kanalAdi}' payı içindir; diğer kanalların payı`,
+        "│                yalnızca ÖNERİDİR — bu koşuda o platformlara hiçbir çağrı yapılmaz.",
+      ]
+    : [`│ Günlük bütçe : ${plan.butceGunlukTL} TL (bağlayıcı tavan: ${efektifTavan} TL — ${tavanKaynagi})`];
+
   return [
     "┌─ PLAN ÖZETİ — YAZMADAN ÖNCE KONTROL ET ─────────────────",
     `│ Kampanya adı : ${terminalTemiz(plan.kampanyaAdi)}`,
     `│ Müşteri ID   : ${terminalTemiz(musteri)}`,
-    `│ Günlük bütçe : ${plan.butceGunlukTL} TL (bağlayıcı tavan: ${efektifTavan} TL — ${tavanKaynagi})`,
+    ...butceSatirlari,
     `│ Hedef ülke   : ${terminalTemiz(plan.hedefUlke)} · Dil: ${terminalTemiz(plan.dil)}`,
     `│ Kelimeler    : ${kelimeSayisi} pozitif / ${negatifSayisi} negatif`,
     `│ Kreatif      : ${kreatif.basliklar.length} başlık / ${kreatif.aciklamalar.length} açıklama`,
@@ -398,6 +417,7 @@ async function ana() {
     if (!kuruMod) {
       console.log(`\n[4/${N}] Uygulama — insan onayı gerekiyor.`);
       for (const satir of planOzetiSatirlari({
+        dagitim,
         plan,
         kreatif,
         efektifTavan,

@@ -11,6 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   butceDagit,
   dagitimDogrula,
@@ -189,4 +190,26 @@ test("dagitimOzeti okunur tek satır üretir", () => {
     ]),
     "google: 70 · meta: 30"
   );
+});
+
+/* ── Onay ekranı dürüstlüğü ──────────────────────────────────────────────── */
+
+test("KRİTİK: çok kanallı onay ekranı, onaylananın bir PAY olduğunu söyler", async () => {
+  /**
+   * Bütçe bölündüğünde tek satırlık "45 TL (bağlayıcı tavan: 100 TL)" biçimi operatörü
+   * yanıltır: 100'ü tavan sanır, oysa o BÖLÜNEN TOPLAMDIR ve kalanı başka kanala
+   * önerilmiştir. Yazmayı onaylayan kişi, onayladığı şeyin toplamın parçası olduğunu
+   * görmeden onaylamamalıdır — bu test o satırın kaybolmasını engeller.
+   */
+  const kaynak = await readFile(
+    new URL("../../scripts/growth-brain.mjs", import.meta.url),
+    "utf8"
+  );
+  for (const beklenen of ["kanalının PAYI", "kanala bölündü", "yalnızca ÖNERİDİR"]) {
+    assert.ok(
+      kaynak.includes(beklenen),
+      `Çok kanallı onay ekranından "${beklenen}" ifadesi kaybolmuş — operatör bütçenin ` +
+        `bölündüğünü göremezse, toplamın bir parçasını tamamı sanarak onaylar.`
+    );
+  }
 });
