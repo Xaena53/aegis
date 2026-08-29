@@ -395,3 +395,129 @@ test("okuma araçları readOnlyHint, yazma araçları destructiveHint bildirir",
   assert.equal(bul("set_meta_campaign_status").annotations.destructiveHint, true);
   assert.equal(bul("update_meta_campaign_budget").annotations.destructiveHint, true);
 });
+
+/**
+ * AŞAĞIDAKİ DÖRT TEST MUTASYONLA BULUNAN BOŞLUKLARI KAPATIR.
+ *
+ * Dördü de sessiz arızalar: hiçbiri hata üretmez, hepsi ajana yanlış bir tablo verir ve
+ * ajan o tabloya bakarak para harcatan bir öneri yapar.
+ */
+
+test("KRİTİK israf: HİÇ PARA HARCAMAMIŞ terim israf adayı sayılmaz", async () => {
+  /**
+   * `israfAdayi = conv === 0 && cost > 0` içindeki maliyet koşulu düşürüldüğünde takım
+   * yeşil kalıyordu. Koşulsuz hâlde gösterim almış ama tıklanmamış her terim "boşa
+   * harcama" diye işaretlenir — oysa hiçbir şey harcanmamıştır. Kullanıcı o terimi
+   * negatife ekler ve henüz para harcamamış, ileride dönüşebilecek bir aramayı kapatır.
+   *
+   * İsraf, harcanmış paradır. Harcanmamış para israf değildir.
+   */
+  const { ctx } = sahteContext({
+    queries: [
+      [
+        /FROM search_term_view/,
+        [
+          {
+            campaign: { name: "K" },
+            ad_group: { id: 1, name: "G" },
+            search_term_view: { search_term: "harcamayan terim", status: enums.SearchTermTargetingStatus.ADDED },
+            metrics: { cost_micros: 0, clicks: 0, impressions: 40, conversions: 0 },
+          },
+          {
+            campaign: { name: "K" },
+            ad_group: { id: 1, name: "G" },
+            search_term_view: { search_term: "para yakan terim", status: enums.SearchTermTargetingStatus.ADDED },
+            metrics: { cost_micros: 50_000_000, clicks: 20, impressions: 200, conversions: 0 },
+          },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "search_terms_report", { customerId: MUSTERI, minClicks: 0 });
+
+  const harcamayanSatiri = out.split("\n").find((s) => s.includes("harcamayan terim")) ?? "";
+  assert.doesNotMatch(
+    harcamayanSatiri,
+    /boşa-harcama-adayı/,
+    "maliyeti 0 olan terim israf değildir — negatife eklenmesi öneriliyor olurdu"
+  );
+  const yakanSatiri = out.split("\n").find((s) => s.includes("para yakan terim")) ?? "";
+  assert.match(yakanSatiri, /boşa-harcama-adayı/, "gerçek israf yine işaretlenmeli");
+});
+
+test("KRİTİK: includePaused=false gerçekten YALNIZ yayındakileri sorar", async () => {
+  /**
+   * Bu bayrağın sorguya hiç yansımadığı fark edilmezdi: kullanıcı "sadece yayındakiler"
+   * der, duraklatılmışları da içeren bir tablo alır ve durmuş bir kampanyanın verisine
+   * bakarak karar verir. Sorgunun KENDİSİ ölçülüyor, çünkü çıktı iki durumda da makul
+   * görünür.
+   */
+  const { ctx, rec } = sahteContext({ queries: [[/FROM campaign/, []]] });
+  const c = await baglanti(ctx);
+
+  await cagir(c, "campaign_performance", { customerId: MUSTERI, includePaused: false });
+  assert.match(rec.queries.at(-1)!, /campaign\.status = 'ENABLED'/, "yalnız yayındakiler istenmeli");
+
+  await cagir(c, "campaign_performance", { customerId: MUSTERI, includePaused: true });
+  assert.match(rec.queries.at(-1)!, /campaign\.status != 'REMOVED'/);
+
+  await cagir(c, "campaign_performance", { customerId: MUSTERI });
+  assert.match(rec.queries.at(-1)!, /campaign\.status != 'REMOVED'/, "varsayılan: duraklatılmışlar dahil");
+});
+
+test("KRİTİK: bozuk satır rapora GİRMEZ, tabloyu da bozmaz", async () => {
+  /**
+   * API bir satırı eksik döndürebilir. Süzgeç olmadan o satır rapora `undefined` alanlarla
+   * girer; ajan onu gerçek bir arama terimi sanır ve tablodaki toplamlar sessizce kayar.
+   */
+  const { ctx } = sahteContext({
+    queries: [
+      [
+        /FROM search_term_view/,
+        [
+          { metrics: { cost_micros: 90_000_000, clicks: 10, conversions: 0 } }, // campaign/ad_group YOK
+          {
+            campaign: { id: 77, name: "K" },
+            ad_group: { id: 1, name: "G" },
+            search_term_view: { search_term: "sağlam terim", status: enums.SearchTermTargetingStatus.ADDED },
+            metrics: { cost_micros: 10_000_000, clicks: 5, impressions: 50, conversions: 0 },
+          },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "search_terms_report", { customerId: MUSTERI });
+
+  assert.match(out, /sağlam terim/, "sağlam satır kalmalı");
+  assert.doesNotMatch(out, /undefined/, "eksik alanlar rapora sızmamalı");
+  /**
+   * DUYURULAN SAYI TABLOYLA UYUŞMALI. Bu testi yazarken çıkan gerçek hata buydu: özet
+   * `rows.length` sayıyordu, tablo ise süzülmüş listeyi basıyordu — "2 arama terimi"
+   * yazıp tek satır gösteriyordu. Ajan için bu, "bir terim gösterilmemiş, belki
+   * kırpıldı" anlamına gelir ve olmayan bir veriyi aramaya iter.
+   */
+  assert.match(out, /1 arama terimi/, "başlıktaki sayı tablodaki satır sayısıyla aynı olmalı");
+  assert.doesNotMatch(out, /2 arama terimi/);
+  // İsraf yüzdesi de yalnız sağlam satırdan hesaplanır: bozuk satırın 90'ı sayılmamalı.
+  assert.match(out, /Toplam maliyet: 10\.00/);
+});
+
+test("list_accounts: hesap sayısı sınırlı — tek çağrı yüzlerce sorguya açılmaz", async () => {
+  /**
+   * Sınır kalktığında hiçbir test kızarmıyordu. Büyük bir MCC'de bu, tek bir
+   * list_accounts çağrısını yüzlerce API turuna çevirir ve paylaşılan kotayı tüketir.
+   */
+  const cokHesap = Array.from({ length: 50 }, (_, i) => String(1000000000 + i));
+  const { ctx, rec } = sahteContext({
+    hesaplar: cokHesap,
+    queries: [[/FROM customer/, [{ customer: { descriptive_name: "H", currency_code: "TRY", manager: false } }]]],
+  });
+  const c = await baglanti(ctx);
+  await cagir(c, "list_accounts", {});
+  assert.ok(
+    rec.queries.length <= 30,
+    `hesap sorguları 30 ile sınırlı olmalı, ${rec.queries.length} sorgu yapıldı`
+  );
+});

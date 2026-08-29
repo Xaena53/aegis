@@ -327,7 +327,9 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             `#${k.id} ${k.ad} [${k.durum}] (${k.kanal})\n` +
             `  günlük bütçe: ${k.gunlukButce.toFixed(2)} | maliyet: ${k.maliyet.toFixed(2)} | tıklama: ${k.tiklama} | gösterim: ${k.gosterim} | dönüşüm: ${k.donusum} | CTR: %${k.ctrYuzde.toFixed(2)} | ort.TBM: ${k.ortTbm.toFixed(2)}`
         );
-        return ikili(`Son ${d} gün, ${rows.length} kampanya:\n\n` + lines.join("\n"), { pencereGun: d, kampanyalar });
+        // Duyurulan sayı SÜZÜLMÜŞ listeden gelir: `rows.length` kullanmak, tabloda
+        // görünmeyen satırları da saymak demekti — başlık ile tablo birbirini tutmazdı.
+        return ikili(`Son ${d} gün, ${kampanyalar.length} kampanya:\n\n` + lines.join("\n"), { pencereGun: d, kampanyalar });
       } catch (e) {
         return err(e);
       }
@@ -421,7 +423,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         );
         const israfYuzde = totalCost > 0 ? Number(((wastedCost / totalCost) * 100).toFixed(0)) : 0;
         return ikili(
-          `Son ${d} gün, ${rows.length} arama terimi. Toplam maliyet: ${totalCost.toFixed(2)}, ` +
+          `Son ${d} gün, ${terimler.length} arama terimi. Toplam maliyet: ${totalCost.toFixed(2)}, ` +
             `dönüşümsüz terim maliyeti: ${wastedCost.toFixed(2)} (%${israfYuzde}).\n\n` +
             lines.join("\n") +
             `\n\nSONRAKİ ADIM: 🔥 işaretli terimlerden alakasız olanları belirle, kullanıcıya negatif kelime ` +
@@ -489,7 +491,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           (k) =>
             `"${k.kelime}" [${k.eslemeTuru}] (${k.kampanya} / ${k.reklamGrubu}) — maliyet: ${k.maliyet.toFixed(2)}, tıklama: ${k.tiklama}, dönüşüm: ${k.donusum}`
         );
-        return ikili(`Son ${d} gün, ${rows.length} anahtar kelime:\n` + lines.join("\n"), { pencereGun: d, kelimeler });
+        return ikili(`Son ${d} gün, ${kelimeler.length} anahtar kelime:\n` + lines.join("\n"), { pencereGun: d, kelimeler });
       } catch (e) {
         return err(e);
       }
