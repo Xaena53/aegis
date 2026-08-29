@@ -46,6 +46,7 @@ const ALANLAR = [
   "callFwdKanali",
   "pencereSaat",
   "devSwapPencereSaat",
+  "tutar",
   "maskeliNumara",
   "retNedeniKisa",
 ];
@@ -58,6 +59,11 @@ const ALANLAR = [
  * yakaladığı için hiçbir test kızarmadı ve simüle bir halkanın ürettiği ret, kayıtta
  * yalnız "simSwapKanali":"gercek" görünerek gerçek bir CAMARA sorgusunun ürünü gibi
  * okunuyordu. Yeni halka eklendiğinde buraya da satır eklenmezse aşağıdaki test kırılır.
+ *
+ * KAPSAM: burası yalnız ZİNCİR HALKALARI içindir. `tutar` bir halka değildir — izden
+ * değil çağrı yerinden (okunan bütçeden) gelir ve karşılığı olan bir `iz.` alanı yoktur;
+ * buraya yazmak, hiç var olmayan bir halkayı varmış gibi göstermek olurdu. Onun kapsamı
+ * ALANLAR listesi ve aşağıdaki "riskteki tutar" testleridir.
  */
 const HALKA_ALANLARI = [
   { iz: "simSwap", kayit: "simSwapKanali" },
@@ -430,6 +436,156 @@ test("hesapId verilmezse alan HİÇ yazılmaz (boş dize 'bilinmiyor' ile karı�
   assert.equal(satirlar()[0].hesapId, undefined);
 });
 
+/* ── riskteki tutar ───────────────────────────────────────────────────────────── */
+
+/**
+ * Denetçinin sorusu iki parçalıdır: "geçen ay kaç kez VE NE BÜYÜKLÜKTE bir harcama
+ * reddedildi". İkinci parça `tutar` alanı olmadan cevapsızdı; aşağıdaki testler hem
+ * alanın düştüğünü hem de OKUNAMAYAN bütçenin uydurulmadığını sabitler.
+ */
+
+test("TUTAR: yayına alma kararı kampanyanın GÜNLÜK BÜTÇESİNİ kaydeder (micros değil)", async () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "temiz" });
+  const { client } = await elicitationliIstemci(ctx, "accept");
+
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+  });
+
+  assert.match(out, /YAYINDA/);
+  assert.equal(rec.mutations.length, 1);
+  const k = satirlar()[0];
+  assert.equal(k.karar, "gecti");
+  assert.equal(k.tutar, 50, "50.000.000 micros = 50 (hesabın para biriminde)");
+  assert.doesNotMatch(hamGunluk(), /50000000/, "micros kayda giremez: denetçi para birimini okur");
+});
+
+test("TUTAR: REDDEDİLEN harcamanın büyüklüğü de kayda geçer (denetçinin asıl sorusu)", async () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const butce: Array<[RegExp, any[]]> = [
+    [
+      /campaign_budget\.explicitly_shared/,
+      [{ campaign: { name: "K" }, campaign_budget: { resource_name: "r", amount_micros: 50_000_000, explicitly_shared: false } }],
+    ],
+  ];
+  const { ctx, rec } = sahteContext({ queries: butce, agSimulasyon: "degisti" });
+  const { client } = await elicitationliIstemci(ctx, "accept");
+
+  const out = await cagir(client, "update_campaign_budget", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    newDailyBudget: 400,
+    confirm: true,
+  });
+
+  assert.match(out, /AĞ DOĞRULAMASI BAŞARISIZ/);
+  assert.equal(rec.mutations.length, 0, "fail-closed gevşemedi");
+  const k = satirlar()[0];
+  assert.equal(k.karar, "ret");
+  assert.equal(k.tutar, 400, "riskteki tutar YENİ bütçedir — harcamanın çıkacağı tavan");
+  assert.equal(k.risk, "medium");
+});
+
+test("TUTAR: eski bütçe OKUNAMASA bile yeni bütçe bilinir ve yazılır", async () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  // amount_micros YOK: kod bunu "artış olabilir" sayıp onay ister (mevcut fail-closed).
+  const butce: Array<[RegExp, any[]]> = [
+    [
+      /campaign_budget\.explicitly_shared/,
+      [{ campaign: { name: "K" }, campaign_budget: { resource_name: "r", explicitly_shared: false } }],
+    ],
+  ];
+  const { ctx } = sahteContext({ queries: butce, agDurumu: "temiz" });
+  const { client } = await elicitationliIstemci(ctx, "accept");
+
+  await cagir(client, "update_campaign_budget", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    newDailyBudget: 120,
+  });
+
+  const k = satirlar()[0];
+  assert.equal(k.tutar, 120, "yeni bütçe çağıranın kendi girdisi: her hâlükârda bilinir");
+  assert.equal(k.karar, "gecti");
+});
+
+test("TUTAR: canlı kampanyaya reklam eklerken okunabilen bütçe kaydedilir", async () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const canli: Array<[RegExp, any[]]> = [
+    [/FROM ad_group\b/, [{ campaign: { id: 7, name: "Canlı", status: 2 /* ENABLED */ }, ad_group: { status: 2 } }]],
+    [/campaign_budget\.amount_micros/, [{ campaign_budget: { amount_micros: 25_000_000 } }]],
+  ];
+  const { ctx, rec } = sahteContext({ queries: canli, agSimulasyon: "temiz" });
+  const { client } = await elicitationliIstemci(ctx, "accept");
+
+  const out = await cagir(client, "create_responsive_search_ad", {
+    customerId: MUSTERI,
+    adGroupId: "200057393038",
+    finalUrl: "https://ornek.com",
+    headlines: ["Bir", "Iki", "Uc"],
+    descriptions: ["Aciklama bir", "Aciklama iki"],
+  });
+
+  assert.match(out, /RSA oluşturuldu/);
+  assert.equal(rec.mutations.length, 1);
+  const k = satirlar()[0];
+  assert.equal(k.karar, "gecti");
+  assert.equal(k.risk, "high");
+  assert.equal(k.tutar, 25, "yayındaki kampanyanın günlük bütçesi riskteki tutardır");
+});
+
+test("KRİTİK TUTAR: bütçe OKUNAMAZSA alan HİÇ yazılmaz — akış da düşmez", async () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  // Bütçe sorgusuna karşılık YOK: sahte API boş satır kümesi döner (okunamadı).
+  const canli: Array<[RegExp, any[]]> = [
+    [/FROM ad_group\b/, [{ campaign: { id: 7, name: "Canlı", status: 2 }, ad_group: { status: 2 } }]],
+  ];
+  const { ctx, rec } = sahteContext({ queries: canli, agSimulasyon: "temiz" });
+  const { client } = await elicitationliIstemci(ctx, "accept");
+
+  const out = await cagir(client, "create_responsive_search_ad", {
+    customerId: MUSTERI,
+    adGroupId: "200057393038",
+    finalUrl: "https://ornek.com",
+    headlines: ["Bir", "Iki", "Uc"],
+    descriptions: ["Aciklama bir", "Aciklama iki"],
+  });
+
+  assert.match(out, /RSA oluşturuldu/, "tutar bir gözlemdir: okunamaması onay akışını düşürmez");
+  assert.equal(rec.mutations.length, 1);
+  const k = satirlar()[0];
+  assert.equal(k.karar, "gecti");
+  assert.equal("tutar" in k, false, "'bilmiyorum' ile '0' aynı şey değildir: alan hiç yazılmaz");
+  assert.doesNotMatch(hamGunluk(), /tutar/, "undefined alan JSON'dan tamamen düşmeli");
+});
+
+test("TUTAR: geçersiz sayı (NaN) kayda giremez — sessizce de yutulmaz", () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const eskiError = console.error;
+  const uyarilar: string[] = [];
+  console.error = (...a: unknown[]) => void uyarilar.push(a.map(String).join(" "));
+  try {
+    kararYaz(
+      agKararKaydiOlustur(
+        "Kampanya YAYINA ALINACAK.",
+        "high",
+        { kanit: [], iz: { simSwap: "gercek", pencereSaat: 72 } },
+        MUSTERI,
+        // Çağrı yerinde okunamayan amount_micros'un sessizce NaN'a dönmesi senaryosu.
+        Number("okunamadi")
+      )
+    );
+  } finally {
+    console.error = eskiError;
+  }
+  assert.equal("tutar" in satirlar()[0], false, "uydurma büyüklük kayda giremez");
+  assert.doesNotMatch(hamGunluk(), /null|NaN/, "NaN JSON'da null'a dönüşüp 'ölçüldü' gibi görünemez");
+  assert.equal(uyarilar.length, 1, "çağrı yerindeki hata operatörden gizlenmez");
+});
+
 /* ── sır sızıntısı ────────────────────────────────────────────────────────────── */
 
 test("KRİTİK: kayıtta tam numara / token / 'Bearer' benzeri sır kalıbı YOK", async () => {
@@ -463,7 +619,24 @@ test("KRİTİK: kayıtta tam numara / token / 'Bearer' benzeri sır kalıbı YOK
    * burada rakamla sınırlanır: numara ya da kimlik oraya da sızamaz.
    */
   for (const k of satirlar()) assert.equal(k.hesapId, MUSTERI, "hesapId yalnız çağıranın hesabı olmalı");
-  const hamHesapsiz = ham.replace(/"hesapId":"[0-9]*"/g, '"hesapId":""');
+  /**
+   * İKİ ALAN TARAMADAN ÇIKARILIR ve ikisi de bilinçli istisnadır:
+   *
+   *   hesapId — sır değil, kiracı ayracı; deseni zaten yalnız rakamdır.
+   *   tutar   — meşru bir para büyüklüğü. Google Ads'in 1e6 ölçekli para birimlerinde
+   *             (VND, IDR, COP, IRR) SIRADAN bir günlük bütçe 7+ hanelidir:
+   *             "tutar":1500000 bir VND hesabında normaldir. Bu alanı taramaya dahil
+   *             bırakmak, meşru bir bütçeyi "numara/kimlik sızıntısı" diye raporlayan
+   *             bir testtir — ve tekrarlanan yanlış alarm, eninde sonunda ya testin
+   *             gevşetilmesine ya da görmezden gelinmesine yol açar. İkisi de gerçek
+   *             bir sızıntıyı görünmez kılar.
+   *
+   * eylem alanı BİLEREK taramada KALIR: kampanya adı oraya girer ve orada gerçekten
+   * uzun bir rakam dizisi belirirse görmek isteriz.
+   */
+  const hamHesapsiz = ham
+    .replace(/"hesapId":"[0-9]*"/g, '"hesapId":""')
+    .replace(/"tutar":[0-9.]+/g, '"tutar":0');
   assert.doesNotMatch(hamHesapsiz, /[0-9]{7,}/, "7+ haneli rakam dizisi (numara/kimlik) kayda giremez");
   for (const k of satirlar()) {
     // Alan kümesi kapalıdır: ileride eklenen bir alan bu testi kırar (bilinçli).

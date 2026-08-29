@@ -258,6 +258,7 @@ looks like "empty"):
 | `callFwdKanali` | link 6 (call forwarding) — same four values; `kapali` means `ADSPILOT_CALLFWD_CHECK` is off. **Absent** when never configured |
 | `pencereSaat` | the SIM-swap lookback window actually queried |
 | `devSwapPencereSaat` | link 5's **own** lookback window — never merged into `pencereSaat`, because link 5 can run while the SIM-swap layer is off, and writing its window into link 1's field would show an auditor a query that never happened |
+| `tutar` | the **daily amount at risk**, in the account's own currency and in currency units — never micros (`50`, not `50000000`). For a budget change it is the **new** budget (the ceiling the money would run to); for a go-live, and for writing into a campaign that is already serving (a new ad, new keywords), it is that campaign's current daily budget. **An absent `tutar` does not mean "no money was at stake" — it means the budget could not be read.** `0` is a real measurement ("read as zero") and *is* written; an unreadable budget writes no field at all, because logging `0` would record "I don't know" as "zero spend". There is deliberately **no currency field**: the unit is already the account's context (`hesapId` and that account's own currency), and inventing a `paraBirimi` would record something the gate never measured |
 | `maskeliNumara` | masked approver number, e.g. `+905*******22` |
 | `retNedeniKisa` | fixed refusal code, from the gate's own closed vocabulary — never free or upstream text. The full set: `sim-degisti`, `nv-uyusmadi`, `cihaz-erisilemez`, `konum-beklenmedik`, `cihaz-degisti`, `cagri-yonlendirme-acik`, `beklenen-ulke-gecersiz`, `ag-yanitsiz`, `yapilandirma-celiskili`, `simulasyon-degeri-tanimsiz`, `onaylayici-numarasi-yok`, `ag-ayari-kapiya-ulasmadi` |
 
@@ -272,9 +273,43 @@ Two real lines — act 2's refusal, and a high-tier pass with both links (contai
 secret; this is exactly what lands on disk):
 
 ```jsonl
-{"zaman":"2026-08-28T09:14:02.517Z","eylem":"\"Demo Kampanya\" kampanyasının GÜNLÜK BÜTÇESİ DEĞİŞTİRİLECEK.","hesapId":"1234567890","risk":"medium","karar":"ret","simSwapKanali":"simulasyon","pencereSaat":24,"maskeliNumara":"+905*******22","retNedeniKisa":"sim-degisti"}
-{"zaman":"2026-08-28T09:15:41.902Z","eylem":"\"Demo Kampanya\" kampanyası YAYINA ALINACAK — bu andan itibaren gerçek para harcanır.","hesapId":"1234567890","risk":"high","karar":"gecti","simSwapKanali":"simulasyon","nvKanali":"simulasyon","pencereSaat":72,"maskeliNumara":"+905*******22"}
+{"zaman":"2026-08-28T09:14:02.517Z","eylem":"\"Demo Kampanya\" kampanyasının GÜNLÜK BÜTÇESİ DEĞİŞTİRİLECEK.","hesapId":"1234567890","risk":"medium","karar":"ret","simSwapKanali":"simulasyon","pencereSaat":24,"tutar":51,"maskeliNumara":"+905*******22","retNedeniKisa":"sim-degisti"}
+{"zaman":"2026-08-28T09:15:41.902Z","eylem":"\"Demo Kampanya\" kampanyası YAYINA ALINACAK — bu andan itibaren gerçek para harcanır.","hesapId":"1234567890","risk":"high","karar":"gecti","simSwapKanali":"simulasyon","nvKanali":"simulasyon","pencereSaat":72,"tutar":50,"maskeliNumara":"+905*******22"}
 ```
+
+**Checking the "no secrets" claim yourself — exclude `tutar` first.** The usual way to
+audit a log for leaked numbers is to scan it for long digit runs; this project's own test
+treats **7 or more consecutive digits** as a suspected number/ID. Two fields must be cut
+out of that scan before it runs, or it reports legitimate values as leaks:
+
+- `tutar` — in **1e6-scale currencies (VND, IDR, COP, IRR) an ordinary daily budget is
+  already 7+ digits.** On a VND account `"tutar":1500000` is a perfectly normal budget,
+  not a secret. Excluding the field costs nothing: it is a plain decimal amount, never a
+  place a phone number or token could land.
+- `hesapId` — a deliberate exception too (a tenant separator, not a secret).
+
+Drop both, then scan what remains:
+
+```bash
+# Legitimately-numeric fields out, then look for long digit runs in everything else.
+jq -c 'del(.tutar, .hesapId, .eylem)' kararlar.jsonl \
+  | grep -nE '[0-9]{7,}' && echo "REVIEW: unexpected long digit run" || echo "clean"
+```
+
+Three fields are excluded, and each exclusion is a judgement rather than convenience.
+`tutar` is a legitimate money figure: on Google Ads' 1e6-scale currencies (VND, IDR, COP,
+IRR) an ordinary daily budget already runs to seven digits, so `"tutar":1500000` is normal.
+`hesapId` is a tenant separator, not a secret. `eylem` carries the campaign name, and
+campaign names routinely carry date stamps — this repository's own demo campaign is called
+`GB-20260828-1705`, which trips an eight-digit run on its own.
+
+That last exclusion costs something and it is worth naming: a real secret pasted into a
+campaign name would now slip past this recipe. The trade is deliberate. A scan that cries
+wolf on every ordinary log is a scan people stop running, and a scan nobody runs catches
+nothing at all. The repository's own test scans `eylem` — it controls its fixtures and can
+afford the precision; an operator reading real logs cannot.
+
+A hit in what remains is worth investigating.
 
 In containers, put the file on the existing data volume so it survives restarts:
 

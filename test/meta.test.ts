@@ -11,6 +11,9 @@
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -52,6 +55,12 @@ afterEach(() => {
   __setSimSwapKanalForTests(undefined);
   cagrilar = [];
   istemSayisi = 0;
+  // Günlük bir SÜREÇ AYARI: açık bırakılırsa sonraki testler farkında olmadan yazar.
+  delete process.env.ADSPILOT_DECISION_LOG;
+  if (gunlukKok) {
+    rmSync(gunlukKok, { recursive: true, force: true });
+    gunlukKok = undefined;
+  }
 });
 
 async function kur(opts: SahteSecenek = {}) {
@@ -281,4 +290,116 @@ test("hesapYolu: act_ öneki tekrarlanmaz, çıplak rakam normalize edilir", () 
   assert.equal(hesapYolu("act_123"), "act_123");
   assert.equal(hesapYolu("123"), "act_123");
   assert.equal(hesapYolu(" 123 "), "act_123");
+});
+
+/* ── 6) Karar günlüğü: RİSKTEKİ TUTAR Meta tarafında da ölçülüyor ─────────── */
+
+/**
+ * Denetçinin sorusu iki parçalıdır: "kaç kez VE NE BÜYÜKLÜKTE bir harcama". İkinci
+ * parça `tutar` alanıyla cevaplanır ve Meta'nın iki çağrı yeri de onu geçer — ama
+ * kuralın asıl sivri ucu tersi: OKUNAMAYAN bütçe uydurulmaz, alan HİÇ yazılmaz.
+ *
+ * Bu bölümün varlık nedeni kapsam boşluğuydu: alan src/tools/meta.ts'e eklendiğinde
+ * Google tarafı (kararGunlugu.test.ts) davranışsal olarak sınandı, Meta tarafı hiç
+ * sınanmadı — "okunamayan bütçe kayda girmez" kuralının Meta'daki tek ifadesi
+ * yorumdan ibaret kaldı. Aşağıdakiler onu ÖLÇÜME çevirir.
+ */
+
+/** Günlüğün yazıldığı geçici dizin; afterEach siler. */
+let gunlukKok: string | undefined;
+
+/** Günlüğü AÇAR: geçici dizin + env. Dönüş, okunacak JSONL dosyasının yoludur. */
+function gunlukAc(): string {
+  gunlukKok = mkdtempSync(path.join(tmpdir(), "adspilot-meta-karar-"));
+  const dosya = path.join(gunlukKok, "kararlar.jsonl");
+  process.env.ADSPILOT_DECISION_LOG = dosya;
+  return dosya;
+}
+
+function satirlar(dosya: string): any[] {
+  return readFileSync(dosya, "utf8")
+    .split("\n")
+    .filter((x) => x.trim() !== "")
+    .map((x) => JSON.parse(x));
+}
+
+test("TUTAR: Meta bütçe artışı geçtiğinde kayda YENİ bütçe düşer", async () => {
+  const gunluk = gunlukAc();
+  const c = await kur({ mevcutButce: 100, onay: true });
+
+  await c.callTool({
+    name: "update_meta_campaign_budget",
+    arguments: { campaignId: "120200000000001", dailyBudget: 200 },
+  });
+
+  assert.ok(cagrilar.includes("butceGuncelle:200"), "önce işlemin gerçekten olduğu sabitlensin");
+  const k = satirlar(gunluk);
+  assert.equal(k.length, 1, "risk etiketli tek karar, tek satır");
+  assert.equal(k[0].karar, "gecti");
+  assert.equal(k[0].risk, "medium", "bütçe ARTIŞI orta risk");
+  assert.equal(k[0].tutar, 200, "riskteki tutar YENİ bütçedir — harcamanın çıkacağı tavan");
+  assert.equal(k[0].hesapId, HESAP, "hangi Meta hesabının kararı olduğu kayıttan okunmalı");
+});
+
+test("TUTAR: Meta bütçe artışı AĞ tarafından reddedilse de tutar kayda düşer", async () => {
+  const gunluk = gunlukAc();
+  const c = await kur({ mevcutButce: 100, simDegisti: true });
+
+  const r: any = await c.callTool({
+    name: "update_meta_campaign_budget",
+    arguments: { campaignId: "120200000000001", dailyBudget: 350 },
+  });
+
+  assert.match(metin(r), /AĞ DOĞRULAMASI BAŞARISIZ/);
+  assert.ok(!cagrilar.some((x) => x.startsWith("butceGuncelle")), "fail-closed gevşemedi");
+  const k = satirlar(gunluk);
+  assert.equal(k[0].karar, "ret");
+  assert.equal(
+    k[0].tutar,
+    350,
+    "ret kaydı 'ne büyüklükte bir harcama engellendi' sorusunu da cevaplamalı"
+  );
+});
+
+test("TUTAR: Meta yayına almada OKUNABİLEN günlük bütçe kaydedilir", async () => {
+  const gunluk = gunlukAc();
+  const c = await kur({ mevcutButce: 150, onay: true });
+
+  await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  assert.ok(cagrilar.includes("durumDegistir:ACTIVE"));
+  const k = satirlar(gunluk);
+  assert.equal(k[0].karar, "gecti");
+  assert.equal(k[0].risk, "high", "yayına alma yüksek risk");
+  assert.equal(k[0].tutar, 150, "yayına alınan kampanyanın günlük bütçesi riskteki tutardır");
+});
+
+test("KRİTİK TUTAR: Meta bütçesi OKUNAMAZSA alan kayıtta HİÇ BULUNMAZ — akış da düşmez", async () => {
+  const gunluk = gunlukAc();
+  // mevcutButce verilmedi: kanal undefined döner, yani bütçe OKUNAMADI.
+  const c = await kur({ onay: true });
+
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  assert.match(metin(r), /ACTIVE/, "tutar bir gözlemdir: okunamaması onay akışını düşürmez");
+  assert.ok(cagrilar.includes("durumDegistir:ACTIVE"));
+
+  const k = satirlar(gunluk)[0];
+  assert.equal(k.karar, "gecti");
+  /**
+   * Değere DEĞİL varlığa bakılıyor: `k.tutar === 0` iddiası, alanın hiç yazılmamış
+   * olmasıyla 0 yazılmış olmasını ayırt edemezdi — ayırt edilmesi gereken tam da bu.
+   */
+  assert.equal("tutar" in k, false, "'bilmiyorum' 0 diye kaydedilemez: alan hiç yazılmaz");
+  assert.doesNotMatch(
+    readFileSync(gunluk, "utf8"),
+    /tutar/,
+    "undefined alan JSON satırından tamamen düşmeli"
+  );
 });

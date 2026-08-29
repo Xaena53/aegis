@@ -40,6 +40,23 @@ function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: num
 }
 
 /**
+ * Google Ads `amount_micros` → hesabın para birimindeki günlük tutar (denetim izi için).
+ *
+ * KAPALI ARIZA OKUMA: yalnız gerçekten sayıya dönen bir değer tutar sayılır. `Number(null)`
+ * ve `Number("")` sıfır ürettiği için tip önce kontrol edilir — okunamayan bir bütçeyi "0"
+ * diye kaydetmek, denetçiye "bu kararda ortada para yoktu" demek olurdu. Okunamadıysa
+ * undefined döner ve alan JSON'dan tamamen düşer.
+ *
+ * Micros DEĞİL, para birimi döndürülür: kayda düşen sayı denetçinin okuduğu sayıdır.
+ */
+function mikrodanTutar(ham: unknown): number | undefined {
+  if (typeof ham !== "number" && typeof ham !== "string") return undefined;
+  const sayi = typeof ham === "string" ? (ham.trim() === "" ? NaN : Number(ham)) : ham;
+  if (!Number.isFinite(sayi) || sayi < 0) return undefined;
+  return sayi / 1e6;
+}
+
+/**
  * Live-campaign guard. Adding an ad or a keyword to a serving campaign starts
  * spending real money immediately, which carries the same weight as enabling the
  * campaign and therefore demands the same explicit approval. A PAUSED campaign is
@@ -77,6 +94,33 @@ async function liveCampaignGuard(
   const kampanyaAdi = rows.length ? String(rows[0]?.campaign?.name ?? "(adsız)") : "(bulunamadı)";
   const belirsiz = durumAdi === "" ? " (kampanya durumu doğrulanamadı — güvenli tarafa geçildi)" : "";
 
+  /**
+   * Denetim izi için RİSKTEKİ TUTAR: kampanya yayında olduğuna göre bu bütçe, onay
+   * verilirse harcanmaya devam edecek günlük büyüklüktür.
+   *
+   * AYRI SORGU, bilinçli: `campaign_budget.*` alanları GAQL'de `FROM ad_group` üzerinden
+   * seçilemez, dolayısıyla yukarıdaki guard sorgusuna eklenmesi guard'ın TAMAMINI kırardı.
+   * Bu okuma yalnız onay istenecek yolda (kampanya yayında ya da durumu belirsiz) koşar.
+   *
+   * OKUNAMAZSA ALAN YAZILMAZ ve akış etkilenmez: tutar bir gözlemdir, kapı değildir —
+   * bütçe okuması patladı diye meşru bir onay istemi düşürülmez, kayıt yalnızca bu
+   * kararın büyüklüğünü BİLMEDİĞİNİ söyler (uydurmaz).
+   */
+  const kampanyaNo = where.campaignId ? cleanId(where.campaignId) : String(rows[0]?.campaign?.id ?? "");
+  let tutar: number | undefined;
+  if (/^\d+$/.test(kampanyaNo)) {
+    try {
+      const [butceSatiri]: any[] = await ctx.queryWithRetry(
+        customerId,
+        `SELECT campaign_budget.amount_micros FROM campaign
+         WHERE campaign.id = ${Number(kampanyaNo)} LIMIT 1`
+      );
+      tutar = mikrodanTutar(butceSatiri?.campaign_budget?.amount_micros);
+    } catch {
+      tutar = undefined;
+    }
+  }
+
   const onay = await onayAl(
     server,
     {
@@ -87,6 +131,8 @@ async function liveCampaignGuard(
       agAyar: ctx.config,
       // Denetim günlüğü çok-kiracılı modda hangi hesabın kararı olduğunu bilmeli.
       hesapId: normalizeCustomerId(customerId),
+      // Okunabildiyse riskteki günlük tutar; okunamadıysa undefined (alan hiç yazılmaz).
+      tutar,
     },
     confirm
   );
@@ -371,6 +417,12 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               risk: "medium",
               agAyar: ctx.config,
               hesapId: normalizeCustomerId(customerId),
+              /**
+               * Riskteki tutar YENİ bütçedir: karar verilirse günlük harcamanın çıkacağı
+               * tavan budur. Eski bütçe okunamamış olabilir (eskiBilinmiyor) ama yeni
+               * değer çağıranın kendi girdisidir — her iki durumda da bilinir.
+               */
+              tutar: newDailyBudget,
             },
             confirm
           );
@@ -592,6 +644,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               risk: "high",
               agAyar: ctx.config,
               hesapId: normalizeCustomerId(customerId),
+              /**
+               * Riskteki tutar kampanyanın günlük bütçesidir — ama YALNIZ okunabildiyse.
+               * Yukarıdaki `daily` okunamayan bütçeyi 0'a çeviriyor (tavan kontrolü onu
+               * zaten reddediyor); o 0 denetim kaydına GİREMEZ, çünkü "bilinmiyor" ile
+               * "sıfır" aynı şey değildir. Bu yüzden ham alan ayrıca okunur.
+               */
+              tutar: mikrodanTutar(row.campaign_budget?.amount_micros),
             },
             confirm
           );

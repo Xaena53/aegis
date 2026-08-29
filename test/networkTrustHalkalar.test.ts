@@ -367,6 +367,40 @@ test("KRİTİK loc: beklenmedik ülke REDDEDER ve GÖZLENEN ülke ASLA yankılan
   assert.equal(k.iz.maskeliNumara, MASKELI);
 });
 
+test("KRİTİK loc: ÇELİŞKİLİ küme (beklenen ülke + başka ülke) fail-open OLAMAZ", async () => {
+  simSwapTemiz();
+  const AYAR = { ...TEMEL, nacToken: "gercek-token", expectedCountry: "TR" };
+
+  // Ağ hattı aynı anda iki ülkede bildiriyor ve küme beklenen ülkeyi İÇERİYOR.
+  // "İçeriyor" ölçütü bunu temiz sayardı; doğru ölçüt "YALNIZCA beklenen ülkede mi".
+  for (const karisik of [["NL", "TR"], ["TR", "NL"]]) {
+    __setKonumKanalForTests({ ulkeDurumu: async () => ({ yurtDisinda: true, ulkeler: karisik }) });
+    const celiski = await agDogrula(AYAR, "high");
+    assert.ok(celiski.engel, `çelişkili küme ${karisik.join("+")} geçirilemez`);
+    assert.match(celiski.engel!, /AĞ DOĞRULAMASI BAŞARISIZ/);
+    assert.doesNotMatch(celiski.engel!, /NL/, "gözlenen ikinci ülke ajana yankılanmaz");
+    assert.equal(celiski.kanit.length, 0, "reddedilen halka kanıt satırı yazmaz");
+    assert.equal(celiski.iz.loc, "gercek");
+    assert.equal(celiski.iz.retNedeni, "konum-beklenmedik", "yeni ret kodu uydurulmaz");
+  }
+
+  // Kontrol grubu: tek elemanlı küme (yalnızca beklenen ülke) hâlâ GEÇER — büyük/küçük
+  // harf ve boşluk toleransı ile birlikte, aynı listede tekrar eden beklenen ülke de.
+  for (const temiz of [["TR"], [" tr "], ["TR", "tr"]]) {
+    __setKonumKanalForTests({ ulkeDurumu: async () => ({ yurtDisinda: true, ulkeler: temiz }) });
+    const gecti = await agDogrula(AYAR, "high");
+    assert.equal(gecti.engel, undefined, `yalnızca beklenen ülke ${temiz.join("+")} reddedilmez`);
+    assert.match(gecti.kanit[1], /YALNIZCA beklenen ülkede \(TR\)/);
+    assert.equal(gecti.iz.loc, "gercek");
+  }
+
+  // Mevcut davranış bozulmadı: beklenen ülkeyi hiç içermeyen küme de RET.
+  __setKonumKanalForTests({ ulkeDurumu: async () => ({ yurtDisinda: true, ulkeler: ["NL", "BE"] }) });
+  const disarida = await agDogrula(AYAR, "high");
+  assert.ok(disarida.engel);
+  assert.equal(disarida.iz.retNedeni, "konum-beklenmedik");
+});
+
 test("loc: okunamayan roaming alanı ve boş ülke listesi KAPALI ARIZAYA gider", async () => {
   simSwapTemiz();
   const AYAR = { ...TEMEL, nacToken: "gercek-token", expectedCountry: "TR" };
@@ -1101,4 +1135,54 @@ test("halkalar akışı bozmaz: temiz ALTI halka yayına almayı geçirir, insan
   assert.match(sorulanlar[0], /Konum doğrulaması/, "4. halka kanıtı istemde olmalı");
   assert.match(sorulanlar[0], /Cihaz değişimi/, "5. halka kanıtı istemde olmalı");
   assert.match(sorulanlar[0], /Çağrı yönlendirme/, "6. halka kanıtı istemde olmalı");
+});
+
+/** Konum halkasını verilen ağ yanıtıyla çalıştırır — SIM-Swap temiz tutulur. */
+async function konumKarari(
+  durum: { yurtDisinda?: boolean; ulkeler?: string[] },
+  beklenen: string
+) {
+  simSwapTemiz();
+  __setKonumKanalForTests({ ulkeDurumu: async () => durum });
+  return agDogrula({ ...TEMEL, nacToken: "gercek-token", expectedCountry: beklenen }, "high");
+}
+
+/* ── Halka 4: ÇELİŞKİ, roaming bayrağından BAĞIMSIZ olarak reddedilir ──────── */
+
+test("KRİTİK konum: roaming=false iken bile bildirilen yabancı ülke REDDEDİLİR", async () => {
+  /**
+   * Bu vaka bir denetim turunda ölçülerek bulundu: ülke karşılaştırması yalnız
+   * `yurtDisinda === true` dalındaydı, dolayısıyla ağ "ana şebekede" derken bir yandan
+   * yabancı ülke bildirdiğinde karar TEMİZ çıkıyor ve kanıt satırı "çelişen coğrafya yok"
+   * diye kodun hiç doğrulamadığı bir şey beyan ediyordu. Çelişkiyi hangi alanın ele
+   * verdiği önemli değildir; kapının bakması gereken şey çelişkinin kendisidir.
+   */
+  const k = await konumKarari({ yurtDisinda: false, ulkeler: ["NL"] }, "TR");
+  assert.ok(k.engel, "ana şebeke bayrağı, bildirilen yabancı ülkeyi aklamaz");
+  assert.match(k.engel!, /AĞ DOĞRULAMASI BAŞARISIZ/);
+  assert.equal(k.iz.retNedeni, "konum-beklenmedik");
+  assert.doesNotMatch(k.engel!, /NL/, "gözlenen ülke ret metnine sızmamalı");
+});
+
+test("KRİTİK konum: OKUNAMAYAN ülke girdisi düşürülmez, RET üretir", async () => {
+  /**
+   * Eski `.filter(u => u.length > 0)` "okunamayan alan = temiz" kalıbını geri sokuyordu:
+   * [""] tek başına RET alırken ["TR",""] geçiyordu — aynı "bilinmiyor" anlamı, gövdedeki
+   * temsiline göre bazen ret bazen temiz üretiyordu.
+   */
+  for (const ulkeler of [["TR", ""], ["TR", "   "], ["TR", null as any]]) {
+    const k = await konumKarari({ yurtDisinda: true, ulkeler }, "TR");
+    assert.ok(k.engel, `okunamayan girdi geçirilmemeli: ${JSON.stringify(ulkeler)}`);
+  }
+});
+
+test("konum: meşru vakalar geçmeye devam eder (aşırı sıkılaşma yok)", async () => {
+  const anaSebeke = await konumKarari({ yurtDisinda: false, ulkeler: [] }, "TR");
+  assert.equal(anaSebeke.engel, undefined, "ana şebeke + ülke bildirilmemiş → temiz");
+
+  const tekUlke = await konumKarari({ yurtDisinda: true, ulkeler: ["TR"] }, "TR");
+  assert.equal(tekUlke.engel, undefined, "yurt dışında ama YALNIZ beklenen ülkede → temiz");
+
+  const bosluklu = await konumKarari({ yurtDisinda: true, ulkeler: [" tr "] }, "TR");
+  assert.equal(bosluklu.engel, undefined, "büyük/küçük harf ve boşluk toleransı korunmalı");
 });

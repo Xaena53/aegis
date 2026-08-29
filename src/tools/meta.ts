@@ -168,6 +168,12 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
               risk: "medium",
               agAyar: ctx.config,
               hesapId: ctx.config.metaAdAccountId,
+              /**
+               * Riskteki tutar YENİ bütçedir: karar verilirse günlük harcamanın çıkacağı
+               * tavan budur ve çağıranın kendi girdisi olduğu için eski bütçe okunamamış
+               * olsa bile bilinir (Google tarafındaki update_campaign_budget ile aynı kural).
+               */
+              tutar: dailyBudget,
             },
             confirm
           );
@@ -230,6 +236,12 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
               risk: "high",
               agAyar: ctx.config,
               hesapId: ctx.config.metaAdAccountId,
+              /**
+               * Riskteki tutar kampanyanın günlük bütçesidir — ama YALNIZ okunabildiyse.
+               * Meta okuması bütçeyi vermediğinde (yukarıdaki "OKUNAMADI" satırı) alan
+               * hiç yazılmaz: kayıtta 0 görmek, denetçiye ortada para yokmuş gibi görünürdü.
+               */
+              tutar: Number.isFinite(mevcut.gunlukButce as number) ? mevcut.gunlukButce : undefined,
             },
             confirm
           );

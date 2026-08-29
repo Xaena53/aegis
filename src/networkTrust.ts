@@ -71,6 +71,9 @@
  * ── Halka 4: Location Verification (beklenen ülke) ────────────────────────────
  *
  * Sorduğu soru: "onaylayıcının hattı beklenen ülkenin DIŞINDA bir ülkede mi?".
+ * Ölçüt "beklenen ülke ağın bildirdiği kümede VAR MI" değil, "hat YALNIZCA beklenen
+ * ülkede mi görüldü"dür: {NL, TR} gibi ÇELİŞKİLİ bir küme, TR'yi içerse bile RET
+ * üretir (gerekçe ve dürüst takas: konumKatmani içindeki karşılaştırma yorumu).
  * Beklenti UYDURULMAZ: ADSPILOT_EXPECTED_COUNTRY (ISO 3166-1 alpha-2) tanımlı
  * değilse halka hiç koşmaz ve izine "kapali" yazar. "Bugünün değeri" tipi bir
  * varsayılan üretmek, cevabı her zaman "temiz" çıkaran sessiz bir güvenlik kaybı
@@ -143,10 +146,21 @@
  * simülasyon" ayrımını kaybediyordu; iz o ayrımı taşıyan tek yapıdır.
  */
 
-/** The single network capability this gate needs; the SDK client is adapted to it. */
+/**
+ * The single network capability this gate needs; the SDK client is adapted to it.
+ *
+ * Dönüş BİLEREK `boolean | undefined` — zincirin diğer beş halkasıyla AYNI sözleşme
+ * (bkz. ErisilebilirlikKanali, CihazDegisimKanali): `undefined` "yanıt okunamadı"
+ * demektir ve "SIM değişmemiş" ile ASLA aynı şey değildir. Çağıran onu kapalı arızaya
+ * (RET) çevirir; tip garantisi bir ÇALIŞMA ZAMANI garantisi değildir.
+ */
 export interface SimSwapKanali {
-  /** True when the SIM changed within the last `maxAgeHours` hours. */
-  verifySimSwap(maxAgeHours: number): Promise<boolean>;
+  /**
+   * True when the SIM changed within the last `maxAgeHours` hours; false when the
+   * operator says it demonstrably did not; `undefined` when the answer could not be
+   * read (unreadable body, missing or mistyped field) — "bilmiyorum", "temiz" DEĞİL.
+   */
+  verifySimSwap(maxAgeHours: number): Promise<boolean | undefined>;
 }
 
 /**
@@ -592,7 +606,41 @@ export function nacIstemciSecenekleri(token: string): {
   return { apiKey: token, headers: { "X-RapidAPI-Host": RAPIDAPI_HOST } };
 }
 
-async function nacIstemci(token: string) {
+/** Üretim istemcisiyle BİREBİR aynı tip: aşağıdaki test dikişi tipi gevşetmez. */
+type NacIstemci = import("network-as-code").NetworkAsCodeApiClient;
+
+/**
+ * SDK İSTEMCİSİ İÇİN TEST DİKİŞİ — `__set*KanalForTests` yetmediği için var.
+ *
+ * O dikişler UYARLANMIŞ kanalı (SimSwapKanali vb.) değiştirir, yani CAMARA gövdesini
+ * boolean'a çeviren asıl kodu ATLAR. Zincirin tek canlı fail-open'ı tam orada yaşadı:
+ * SIM-Swap uyarlayıcısı `res.swapped === true` diyordu, bozuk bir gövde ({} / "true" /
+ * null / 1) sessizce "SIM DEĞİŞMEMİŞ"e çevriliyordu ve hiçbir birim testi kızarmıyordu —
+ * çünkü hepsi sahte KANAL enjekte ediyor, sahte GÖVDE değil.
+ *
+ * Bu fabrika ile testler gerçek uyarlayıcı kapanışlarını sahte bir SDK istemcisi üzerinden
+ * koşturur: bozuk gövde matrisi ağa çıkmadan, üretimdeki asıl kodla sınanır.
+ */
+let nacIstemciFabrikasi: ((token: string) => Promise<NacIstemci>) | undefined;
+export function __setNacIstemciFabrikasiForTests(
+  fabrika: ((token: string) => Promise<NacIstemci>) | undefined
+): void {
+  nacIstemciFabrikasi = fabrika;
+  // Önbellekli kanallar ESKİ istemcinin kapanışını taşır; hepsi düşürülmezse dikiş sızar.
+  gercekKanal = undefined;
+  gercekKanalAnahtari = undefined;
+  gercekErisimKanal = undefined;
+  gercekErisimAnahtari = undefined;
+  gercekKonumKanal = undefined;
+  gercekKonumAnahtari = undefined;
+  gercekCihazDegisimKanal = undefined;
+  gercekCihazDegisimAnahtari = undefined;
+  gercekCagriYonlendirmeKanal = undefined;
+  gercekCagriYonlendirmeAnahtari = undefined;
+}
+
+async function nacIstemci(token: string): Promise<NacIstemci> {
+  if (nacIstemciFabrikasi) return nacIstemciFabrikasi(token);
   const { NetworkAsCodeApiClient } = await import("network-as-code");
   return new NetworkAsCodeApiClient(nacIstemciSecenekleri(token));
 }
@@ -620,7 +668,14 @@ async function kanalGetir(ayar: AgAyar): Promise<SimSwapKanali> {
         { phoneNumber, maxAge: maxAgeHours },
         { timeoutInSeconds: 10, maxRetries: 1 }
       );
-      return res.swapped === true;
+      /**
+       * `swapped` SDK tipinde zorunlu boolean, ama tip garantisi ÇALIŞMA ZAMANI garantisi
+       * DEĞİLDİR: {"swapped":"true"} (string), {} (alan yok), {"swapped":null}, {"swapped":1}
+       * gibi bir gövde eski `=== true` kısayolundan sessizce false çıkıyordu — yani
+       * "SIM DEĞİŞMEMİŞ" sayılıyor ve harcama GEÇİYORDU. undefined = "yanıt okunamadı",
+       * çağıran onu kapalı arızaya çevirir (halka 3/4/5/6 ile aynı sözleşme).
+       */
+      return typeof res.swapped === "boolean" ? res.swapped : undefined;
     },
   };
   gercekKanalAnahtari = anahtar;
@@ -740,9 +795,14 @@ async function cihazDegisimKanaliGetir(ayar: AgAyar): Promise<CihazDegisimKanali
       );
       /**
        * `swapped` SDK tipinde zorunlu boolean, ama tip garantisi ÇALIŞMA ZAMANI garantisi
-       * değildir. Burada SIM-Swap kanalındaki `=== true` kısayolu BİLEREK kullanılmaz:
-       * o kısayol okunamayan bir gövdeyi sessizce "değişmedi"ye çevirirdi ve halkanın
-       * tek işi olan reti yutardı. undefined = "yanıt okunamadı" → kapalı arıza.
+       * değildir; okunamayan alan "değişmedi" DEĞİL "bilinmiyor"dur → kapalı arıza.
+       *
+       * TARİHÇE: burada bir zamanlar "SIM-Swap'taki `=== true` kısayolu bilerek
+       * kullanılmaz" yazıyordu. Fark doğru saptanmıştı ama yanlış çözülmüştü — eski halka
+       * düzeltilmek yerine sapma BELGELENMİŞTİ, yani zincirin en kritik ve tek canlı
+       * koşan halkası okunamayan gövdeyi sessizce "temiz" sayıyordu. Kısayol artık orada
+       * da yok: altı halkanın hepsi bu tek sözleşmeyi paylaşır, sapma anlatılacak bir
+       * istisna değil kapatılmış bir açıktır.
        */
       return typeof res.swapped === "boolean" ? res.swapped : undefined;
     },
@@ -1258,26 +1318,41 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
         retNedeni: "ag-yanitsiz",
       };
     }
-    if (durum.yurtDisinda === false) {
+    /**
+     * ÜLKE KARŞILAŞTIRMASI ROAMING BAYRAĞINDAN ÖNCE VE ONDAN BAĞIMSIZ YAPILIR.
+     *
+     * Önceki hâlde bayrak dalı kapıyı ikiye bölüyordu ve yalnız biri korunuyordu:
+     * `yurtDisinda === false` dalı `durum.ulkeler`e HİÇ bakmadan temiz dönüyor, üstelik
+     * kanıt satırı "beklenen ülkeyle çelişen bir coğrafya yok" diye kodun hiç
+     * doğrulamadığı bir şeyi beyan ediyordu. Ölçülerek gösterildi:
+     * {yurtDisinda:false, ulkeler:["NL"]} GEÇİYORDU. Ağ "ana şebekede" derken bir yandan
+     * yabancı ülke bildiriyorsa bu, kapının tam da bakması gereken çelişkidir; hangi
+     * alanın onu ele verdiği önemli değildir.
+     *
+     * BOŞ/OKUNAMAYAN GİRDİ DE DÜŞÜRÜLMEZ. Eski `.filter(u => u.length > 0)`,
+     * "okunamayan alan = temiz" kalıbını buraya geri sokuyordu: [""] tek başına RET
+     * alırken ["TR",""] geçiyordu — aynı "bilinmiyor" anlamı, gövdedeki temsiline göre
+     * bazen ret bazen temiz üretiyordu. Artık okunamayan girdi beklenene eşit olmadığı
+     * için doğal olarak RET'e düşer.
+     */
+    const ulkeler = (durum.ulkeler ?? []).map((u) => String(u ?? "").trim().toUpperCase());
+
+    if (durum.yurtDisinda === false && !ulkeler.length) {
       /**
-       * Hat kendi ana şebekesinde: beklenmedik YURT DIŞI coğrafya anomalisi YOK.
-       * Halkanın kapsamı bilerek burada biter — CAMARA bu durumda ülke döndürmez ve
-       * ülke-altı (şehir/yarıçap) doğrulama bu kapının bugünkü vaadi değildir
-       * (bkz. dosya başı, Halka 4: SDK'nın Area tipinde koordinat alanı yok).
+       * Hat kendi ana şebekesinde ve ağ hiç ülke bildirmedi: karşılaştırılacak bir
+       * çelişki yok. Halkanın kapsamı bilerek burada biter — ülke-altı (şehir/yarıçap)
+       * doğrulama bu kapının bugünkü vaadi değildir (bkz. dosya başı, Halka 4).
        */
       return {
         kanit: [
-          `Konum doğrulaması: onaylayıcının hattı yurt dışında değil, beklenen ülkeyle (${beklenen}) ` +
-            `çelişen bir coğrafya yok (${maskeli}) — GSMA Open Gateway Device Roaming Status`,
+          `Konum doğrulaması: onaylayıcının hattı yurt dışında değil ve ağ beklenen ülkeyle ` +
+            `(${beklenen}) çelişen bir ülke bildirmedi (${maskeli}) — GSMA Open Gateway Device Roaming Status`,
         ],
         halka: "gercek",
         maskeliNumara: maskeli,
       };
     }
-    const ulkeler = (durum.ulkeler ?? [])
-      .map((u) => String(u).trim().toUpperCase())
-      .filter((u) => u.length > 0);
-    if (!ulkeler.length) {
+    if (durum.yurtDisinda === true && !ulkeler.length) {
       // Yurt dışında ama hangi ülkede belli değil: beklentiyle karşılaştırılamaz → kapalı arıza.
       return {
         engel:
@@ -1290,18 +1365,39 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
         retNedeni: "ag-yanitsiz",
       };
     }
-    if (!ulkeler.includes(beklenen)) {
+    /**
+     * ÖLÇÜT "beklenen ülke kümede VAR MI" DEĞİL, "hat YALNIZCA beklenen ülkede mi
+     * görüldü": bildirilen ülkelerin HEPSİ beklenene eşit değilse RET. Kümede
+     * beklenen ülkeyi aramak fail-open'dı — ağ {NL, TR} bildirdiğinde karar "temiz"
+     * çıkar, oysa hat aynı anda beklenmedik bir coğrafyada da görülmüştür; üstelik
+     * kanıt satırı denetçiye tek yanlı ("beklenen ülkede") beyan verir ve ikinci
+     * ülkenin varlığı kayıttan hiç okunamaz. Bu, halkanın birkaç satır yukarıdaki
+     * davranışıyla da çelişirdi: ülke HİÇ okunamadığında "karşılaştırılamaz" deyip
+     * reddederken, ÇELİŞKİLİ okunduğunda geçirmek olurdu.
+     *
+     * DÜRÜST TAKAS — bilerek yazıyoruz: sınır bölgesi, MVNO ve uydu kapsaması
+     * yüzünden ağ MEŞRU olarak iki ülke bildirebilir ve o durumda MEŞRU kullanıcı
+     * REDDEDİLİR. Bunu kabul ediyoruz, çünkü (1) halka YALNIZ "high" katmanda ve
+     * YALNIZ beklenen ülke yapılandırılmışsa koşar, (2) "aynı anda iki ülkede
+     * görünen hat" tam olarak bu kapının bakması gereken şeydir. Kapalı arıza
+     * ilkesi gereği çelişki de belirsizlik gibi RET üretir; ret nedeni yeni bir kod
+     * değil, aynı "konum-beklenmedik" kodudur.
+     */
+    if (!ulkeler.every((u) => u === beklenen)) {
       /**
        * GÖZLENEN ülke ASLA yazılmaz — ne ret metnine, ne ize. Dışarı çıkan tek şey
-       * türetilmiş karar ve YAPILANDIRMADAN gelen beklenen ülke kodudur.
+       * türetilmiş karar ve YAPILANDIRMADAN gelen beklenen ülke kodudur; ağın kaç
+       * ülke bildirdiği de dahil hiçbir upstream ayrıntı sızmaz.
        */
       return {
         engel:
           `Reddedildi: AĞ DOĞRULAMASI BAŞARISIZ — onaylayıcının (${maskeli}) hattı beklenen ülkenin ` +
-          `(${beklenen}) DIŞINDA bir ülkede (GSMA Open Gateway Device Roaming Status; gözlenen ülke ` +
-          `güvenlik gereği burada gösterilmez). Harcama onayının beklenmedik bir coğrafyadan gelmesi ` +
-          `hesap ele geçirmenin tipik işaretidir; onay istemi hiç gösterilmedi ve harcama artışı ` +
-          `uygulanmaz. Hesap sahibi durumu doğrulayana kadar tekrar deneme.`,
+          `(${beklenen}) DIŞINDA bir ülkede de görüldü (GSMA Open Gateway Device Roaming Status; ` +
+          `gözlenen ülkeler güvenlik gereği burada gösterilmez). Ağ hattı aynı anda birden çok ülkede ` +
+          `bildirdiyse, küme beklenen ülkeyi İÇERSE BİLE bu çelişki reddedilir. Harcama onayının ` +
+          `beklenmedik bir coğrafyadan gelmesi hesap ele geçirmenin tipik işaretidir; onay istemi hiç ` +
+          `gösterilmedi ve harcama artışı uygulanmaz. Hesap sahibi durumu doğrulayana kadar tekrar ` +
+          `deneme.`,
         kanit: [],
         halka: "gercek",
         maskeliNumara: maskeli,
@@ -1310,7 +1406,8 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
     }
     return {
       kanit: [
-        `Konum doğrulaması: onaylayıcının hattı beklenen ülkede (${beklenen}) — ` +
+        `Konum doğrulaması: onaylayıcının hattı YALNIZCA beklenen ülkede (${beklenen}) — ağın ` +
+          `bildirdiği ülkelerin tamamı beklenenle aynı, çelişkili ikinci ülke yok — ` +
           `GSMA Open Gateway Device Roaming Status (${maskeli})`,
       ],
       halka: "gercek",
@@ -1774,7 +1871,7 @@ async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   try {
     const kanal = await kanalGetir(ayar);
     const degisti = await kanal.verifySimSwap(pencere);
-    if (degisti) {
+    if (degisti === true) {
       return {
         engel:
           `Reddedildi: AĞ DOĞRULAMASI BAŞARISIZ — onaylayıcının (${maskeli}) SIM kartı ` +
@@ -1785,9 +1882,24 @@ async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
         iz: { simSwap: "gercek", pencereSaat: pencere, maskeliNumara: maskeli, retNedeni: "sim-degisti" },
       };
     }
+    if (degisti === false) {
+      return {
+        kanit: [`Ağ doğrulaması: SIM değişimi yok (son ${pencere} saat, ${maskeli}) — GSMA Open Gateway`],
+        iz: { simSwap: "gercek", pencereSaat: pencere, maskeliNumara: maskeli },
+      };
+    }
+    /**
+     * Yanıt geldi ama OKUNAMADI (bkz. kanalGetir). "Değişmedi" demek sessiz gevşeme,
+     * "değişti" demek yanlış suçlama olurdu; ikisi de değil — kontrol cevaplanamadı.
+     * İz "gercek": yapılandırma sağlamdı ve sorgu bu pencereyle gerçekten DENENDİ.
+     */
     return {
-      kanit: [`Ağ doğrulaması: SIM değişimi yok (son ${pencere} saat, ${maskeli}) — GSMA Open Gateway`],
-      iz: { simSwap: "gercek", pencereSaat: pencere, maskeliNumara: maskeli },
+      engel:
+        "Reddedildi: ağ doğrulaması tamamlanamadı — SIM Swap kontrolünden okunabilir yanıt " +
+        "alınamadı. Güvenlik gereği cevaplanamayan kontrolde harcama artışı uygulanmaz; " +
+        "daha sonra tekrar dene.",
+      kanit: [],
+      iz: { simSwap: "gercek", pencereSaat: pencere, maskeliNumara: maskeli, retNedeni: "ag-yanitsiz" },
     };
   } catch (e: any) {
     /**

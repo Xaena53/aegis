@@ -51,6 +51,16 @@ export interface OnayOzeti {
    * kararları tek dosyaya düştüğü için bu alan olmadan kayıtlar ayırt edilemiyordu.
    */
   hesapId?: string;
+  /**
+   * RİSKTEKİ TUTAR: bu kararın konusu olan GÜNLÜK para büyüklüğü (hesabın kendi para
+   * biriminde, micros değil). hesapId gibi yalnız denetim günlüğüne yazılır, karar
+   * mantığını ETKİLEMEZ — kapının eşiği bütçe tavanıdır, bu alan değil.
+   *
+   * OKUNAMAYAN TUTAR GEÇİLMEZ. Çağrı yeri bütçeyi gerçekten okuyabildiyse geçer;
+   * okuyamadıysa alanı hiç vermez ve kayda da düşmez. 0 ya da tahmin geçmek
+   * "bilmiyorum"u "temiz/sıfır" diye kaydetmek olurdu.
+   */
+  tutar?: number;
 }
 
 /**
@@ -107,7 +117,8 @@ export async function onayAl(
             // Kapı hiç çağrılamadı: hiçbir halka sorgu yapmadı, pencere de yok.
             iz: { simSwap: "calismadi", retNedeni: "ag-ayari-kapiya-ulasmadi" },
           },
-          ozet.hesapId
+          ozet.hesapId,
+          ozet.tutar
         )
       );
       return { onaylandi: false, kanal: "ag", mesaj };
@@ -118,7 +129,7 @@ export async function onayAl(
      * yalnız retleri yazmak "hiç sorulmadı" ile "sorulup geçti"yi ayırt edilemez
      * kılardı. kararYaz asla fırlatmaz; günlük gözlemdir, kapı değildir.
      */
-    kararYaz(agKararKaydiOlustur(ozet.eylem, ozet.risk, ag, ozet.hesapId));
+    kararYaz(agKararKaydiOlustur(ozet.eylem, ozet.risk, ag, ozet.hesapId, ozet.tutar));
     if (ag.engel) return { onaylandi: false, kanal: "ag", mesaj: ag.engel };
     if (ag.kanit.length) ozet = { ...ozet, satirlar: [...ozet.satirlar, ...ag.kanit] };
   }
