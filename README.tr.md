@@ -8,7 +8,8 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-554-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-646-brightgreen.svg)](test/)
+[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-94.27%25-brightgreen.svg)](#test-metrikleri)
 
 🇬🇧 [English README](README.md)
 
@@ -28,7 +29,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Üç CAMARA halkası Nokia'nın canlı platformuna karşı doğrulandı; 487 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Üç CAMARA halkası Nokia'nın canlı platformuna karşı doğrulandı; %94.27 satır kapsamıyla 646 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Device Status halkaları (hesap katmanımızda uç nokta yok) · Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz) · Meta yazmaları (canlı jeton yok) |
 
 ## İçindekiler
@@ -352,7 +353,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 554 çevrimdışı test
+npm test           # 646 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 ```
 
@@ -360,6 +361,40 @@ Testler, enjekte edilmiş sahte bir Google Ads context'iyle `InMemoryTransport` 
 gerçek bir MCP istemci/sunucu çifti çalıştırır; böylece her kapı canlı hesaba
 dokunmadan, protokolün tamamı üzerinden sınanır. Pakette kapalı-arıza regresyonları ve
 kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var.
+
+### Test metrikleri
+
+```
+646 test · 0 hata          satır %94.27  ·  dal %88.86  ·  fonksiyon %92.80
+```
+
+| Alan | Satır | Dal | Fonksiyon |
+|---|---|---|---|
+| `kararGunlugu.ts` · `rateLimit.ts` · `approval.ts` · `config.ts` | %100 | %94–100 | %100 |
+| `networkTrust.ts` — altı halkalı güven zinciri | %98.60 | %95.82 | %97.06 |
+| `meta/client.ts` · `adsClient.ts` · `store.ts` | %97–99 | %86–92 | %80–100 |
+| `tools/` — write, read, site, meta | %94–98 | %65–83 | %80–96 |
+| `scripts/brain/` — Growth Brain modülleri | %93–100 | %86–99 | %95–100 |
+
+`scripts/growth-brain.mjs` %39.86'da duruyor; orası mantık değil CLI giriş noktası:
+argüman işleme ve terminal çıktısı kapsanmıyor. Asıl önemli parça — her yazmanın önünde
+duran insan onay kapısı — enjekte edilen bir akış üzerinden doğrudan test ediliyor.
+
+**Burada asıl ölçüt kapsam değil.** Kapsam bir satırın çalıştığını söyler, ne yaptığının
+kontrol edildiğini değil. Bu depodaki her kapı bunun yerine mutasyonla doğrulanır:
+kapıyı kır, paketin kızardığını gör, geri al. Kaldırıldığında paket yeşil kalan bir kapı,
+kapsamı ne olursa olsun test edilmiş bir kapı değildir.
+
+Bu ayrım defalarca "kapı çalışıyor sanmak" ile "çalıştığını bilmek" arasındaki fark oldu.
+Canlı kod olan, kapsamı görünen, ama arkasında testi olmayan kapılar arasında şunlar
+vardı: Google yayına alma yolundaki günlük bütçe tavanı (okunamayan bütçe `0` sayılıyor,
+`0` da her tavanı geçiyordu), Meta kampanyalarının duraklatılmış doğması, Meta hata
+metinlerinden erişim jetonunun temizlenmesi ve yönlendirme adımlarındaki SSRF protokol/port
+kontrolleri. Her biri paket yeşil kalarak silinebilirdi. Artık silinemez.
+
+Aynı disiplin, hiçbir testin sormadığı iki hatayı da ortaya çıkardı: rapor özetleri
+süzülmemiş satırları sayarken süzülmüş tabloyu basıyordu ve negatif tutarı eleyen iki
+katman birbirini maskeliyordu — yani ikisinin de çalıştığı gösterilemiyordu.
 
 ### Canlı duman testi
 

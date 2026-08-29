@@ -8,7 +8,8 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-554-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-646-brightgreen.svg)](test/)
+[![Coverage](https://img.shields.io/badge/line%20coverage-94.27%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -28,7 +29,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. Three CAMARA links verified against Nokia's live platform; 487 automated tests; Docker deployment |
+| **Status** | Working software. Three CAMARA links verified against Nokia's live platform; 646 automated tests at 94.27% line coverage; Docker deployment |
 | **Not yet** | Device Status links (absent on our account tier) · Number Verification (device-side OIDC, uncallable from a server) · Meta writes (no live token) |
 
 ## Contents
@@ -383,7 +384,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 554 offline tests
+npm test           # 646 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run prova -- --musteri <id>   # stage-day preflight for the demo (writes nothing)
 npm run demo  -- --musteri <id>   # the three-act network-trust demo, dry by default
@@ -395,6 +396,41 @@ touching a live account. The suite includes fail-closed regressions and adversar
 scenarios that try to reach a bad outcome by every known route. The network gate is tested
 the same way — through an injected fake channel, which is what makes the unreachable-API
 refusal assertable, and also why those green tests say nothing about the live CAMARA wire.
+
+### Test metrics
+
+```
+646 tests · 0 failures        line 94.27%  ·  branch 88.86%  ·  function 92.80%
+```
+
+| Area | Line | Branch | Function |
+|---|---|---|---|
+| `kararGunlugu.ts` · `rateLimit.ts` · `approval.ts` · `config.ts` | 100% | 94–100% | 100% |
+| `networkTrust.ts` — the six-link trust chain | 98.60% | 95.82% | 97.06% |
+| `meta/client.ts` · `adsClient.ts` · `store.ts` | 97–99% | 86–92% | 80–100% |
+| `tools/` — write, read, site, meta | 94–98% | 65–83% | 80–96% |
+| `scripts/brain/` — Growth Brain modules | 93–100% | 86–99% | 95–100% |
+
+`scripts/growth-brain.mjs` sits at 39.86%, and that is the CLI entry point rather than
+the logic: its argument parsing and terminal output are uncovered, while the part that
+matters — the human approval gate standing in front of every write — is tested directly
+through an injected stream.
+
+**Coverage is not the metric that matters here.** It says a line ran, not that anything
+checked what it did. Every guard in this repository is instead verified by mutation:
+break the guard, confirm the suite goes red, revert. A guard whose removal leaves the
+suite green is not a tested guard, whatever its coverage says.
+
+That distinction has repeatedly been the difference between believing a gate works and
+knowing it does. Guards that were live code with real coverage and no test behind them
+included: the daily-budget ceiling on Google's go-live path (an unreadable budget read
+as `0`, which clears every ceiling), Meta campaigns being created paused, access tokens
+being stripped from Meta error text, and the SSRF protocol and port checks on redirect
+hops. Each of those could be deleted with the suite still passing. They cannot now.
+
+The same discipline surfaced two defects that no test was asking about: report summaries
+counted unfiltered rows while printing the filtered table, and a negative amount was
+rejected by two layers that masked each other, so neither could be shown to work.
 
 ### Live smoke test
 
