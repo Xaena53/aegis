@@ -562,6 +562,76 @@ test("KRİTİK TUTAR: bütçe OKUNAMAZSA alan HİÇ yazılmaz — akış da dü�
   assert.doesNotMatch(hamGunluk(), /tutar/, "undefined alan JSON'dan tamamen düşmeli");
 });
 
+test("KRİTİK TUTAR: NEGATİF bütçe kayda negatif diye giremez — bilinmeyendir", async () => {
+  /**
+   * Bu boşluk mutasyonla bulundu: `mikrodanTutar` içindeki `sayi < 0` kontrolü
+   * kaldırıldığında takım yeşil kalıyordu.
+   *
+   * Alan denetim günlüğünün `tutar`ıdır, yani "bu kararda risk altındaki para".
+   * Negatif bir risk tutarı anlamsızdır; API'den öyle bir değer geldiyse okuma
+   * başarısız olmuştur, tutar sıfırın altında değil. Onu olduğu gibi yazmak, sonradan
+   * güvenilmesi gereken TEK kayda uydurma bir büyüklük koymak olurdu — üstelik
+   * "ölçüldü" görünümüyle, çünkü alan mevcut olur.
+   *
+   * Kural bu dosyanın her yerindekiyle aynı: anlamsız değer bilinmeyendir ve
+   * bilinmeyen alan HİÇ yazılmaz.
+   */
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const canli: Array<[RegExp, any[]]> = [
+    [/FROM ad_group\b/, [{ campaign: { id: 7, name: "Canlı", status: 2 }, ad_group: { status: 2 } }]],
+    [/campaign_budget\.amount_micros/, [{ campaign_budget: { amount_micros: -50_000_000 } }]],
+  ];
+  const { ctx } = sahteContext({ queries: canli, agSimulasyon: "temiz" });
+  const { client } = await elicitationliIstemci(ctx, "accept");
+
+  await cagir(client, "create_responsive_search_ad", {
+    customerId: MUSTERI,
+    adGroupId: "200057393038",
+    finalUrl: "https://ornek.com",
+    headlines: ["Bir", "Iki", "Uc"],
+    descriptions: ["Aciklama bir", "Aciklama iki"],
+  });
+
+  const k = satirlar()[0];
+  assert.equal("tutar" in k, false, "negatif tutar 'ölçülmüş' gibi kaydedilemez");
+  assert.doesNotMatch(hamGunluk(), /-5|"tutar"/, "negatif değer kayda hiç sızmamalı");
+});
+
+test("KRİTİK TUTAR: kayıt katmanı negatifi TEK BAŞINA reddeder", () => {
+  /**
+   * Yukarıdaki uçtan uca test, sistemin negatifi reddettiğini kanıtlar ama HANGİ katmanın
+   * reddettiğini kanıtlamaz — ve bu fark mutasyonla ortaya çıktı.
+   *
+   * Negatif tutar İKİ yerde eleniyor: write.ts'teki `mikrodanTutar` okumayı geçersiz
+   * sayıyor, buradaki `tutarDogrula` da yazmayı reddediyor. Birbirlerini MASKELİYORLAR:
+   * tek tek bozulduklarında diğeri yakaladığı için uçtan uca test hiçbirini kızdırmıyor.
+   * Yani "iki kapı da çalışıyor" iddiasının uçtan uca kanıtı YOKTU.
+   *
+   * Bu yüzden kayıt katmanı burada DOĞRUDAN sınanıyor. Fazlalık bilinçli — biri
+   * kaldırılırsa sistem hâlâ doğru davranır, ama artık hangisinin kaldırıldığı görülür.
+   */
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const eskiError = console.error;
+  const uyarilar: string[] = [];
+  console.error = (...a: unknown[]) => void uyarilar.push(a.map(String).join(" "));
+  try {
+    kararYaz(
+      agKararKaydiOlustur(
+        "Kampanya YAYINA ALINACAK.",
+        "high",
+        { kanit: [], iz: { simSwap: "gercek", pencereSaat: 72 } },
+        MUSTERI,
+        -50
+      )
+    );
+  } finally {
+    console.error = eskiError;
+  }
+  assert.equal("tutar" in satirlar()[0], false, "negatif riskteki tutar anlamsızdır: yazılmaz");
+  assert.doesNotMatch(hamGunluk(), /-50/, "negatif değer JSON'a sızmamalı");
+  assert.equal(uyarilar.length, 1, "sessizce yutulmamalı: operatöre bildirilmeli");
+});
+
 test("TUTAR: geçersiz sayı (NaN) kayda giremez — sessizce de yutulmaz", () => {
   process.env.ADSPILOT_DECISION_LOG = gunluk;
   const eskiError = console.error;
