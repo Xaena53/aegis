@@ -238,21 +238,17 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
           const gunluk = mevcut.gunlukButce;
           if (gunluk === undefined || !Number.isFinite(gunluk)) {
             /**
-             * BİLİNEN KAPSAM SINIRI — ve bu ret, teorik bir kenar durum değil.
-             *
-             * Meta'da bütçe iki yerden birinde durur: kampanya düzeyinde (CBO) ya da
-             * REKLAM SETİ düzeyinde. kampanyaOku yalnız `daily_budget` alanını istiyor,
-             * yani reklam-seti bütçeli kampanyalarda bütçe HİÇ görünmez. O kampanyalar
-             * bu araçla yayına alınamaz. Doğru onarım reddi gevşetmek değil, GÖZLEMİ
-             * düzeltmektir: reklam setlerinin bütçelerini de okuyup toplamak. Yapılana
-             * kadar tavan doğrulanamıyor ve doğrulanamayan tavan tavan değildir.
+             * SEBEP TAHMİN EDİLMEZ, İSTEMCİDEN GELİR. Okuma artık iki katmanlı (kampanya
+             * düzeyi CBO, yoksa reklam setleri toplamı), dolayısıyla "okunamadı" birden
+             * çok farklı duruma karşılık gelir: sayfa taşması, ömürlük bütçe, ACTIVE set
+             * bulunmaması, biçimsiz yanıt. Operatöre hangisi olduğunu söylemeyen bir ret,
+             * onu neyi düzelteceğini bilmeden bırakır.
              */
             return text(
-              `Reddedildi: "${mevcut.ad}" kampanyasının günlük bütçesi Meta'dan OKUNAMADI, ` +
+              `Reddedildi: "${mevcut.ad}" kampanyasının günlük bütçesi doğrulanamadı, ` +
                 `dolayısıyla hesap güvenlik tavanına (${ctx.config.maxDailyBudget}) uyup uymadığı ` +
-                `doğrulanamadı. Güvenlik gereği doğrulanamayan bütçeyle yayına alınmaz. ` +
-                `En olası sebep: bütçe kampanyada değil REKLAM SETİ düzeyinde tanımlı — ` +
-                `AdsPilot şu an yalnız kampanya düzeyi bütçeyi okuyabiliyor.`
+                `bilinmiyor. Güvenlik gereği doğrulanamayan bütçeyle yayına alınmaz.` +
+                (mevcut.butceNotu ? ` Sebep: ${mevcut.butceNotu}.` : "")
             );
           }
           const tavanHatasiYayin = budgetGuardPure(gunluk, ctx.config.maxDailyBudget);
@@ -272,7 +268,10 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
                 `Kampanya: ${mevcut.ad} (id ${campaignId})`,
                 gunluk === undefined
                   ? `Günlük bütçe OKUNAMADI — yayına alma yine de gerçek harcama başlatır`
-                  : `Günlük bütçe: ${mevcut.gunlukButce}`,
+                  : `Günlük bütçe: ${mevcut.gunlukButce}` +
+                    (mevcut.butceKaynagi === "reklam-setleri"
+                      ? " (reklam setlerinin toplamı — Ads Manager'da kampanyada tek bir sayı olarak görünmez)"
+                      : ""),
               ],
               soru: "Meta kampanyasını yayına almayı onaylıyor musun?",
               risk: "high",

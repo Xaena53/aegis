@@ -37,6 +37,8 @@ interface SahteSecenek {
   agKapali?: boolean;
   /** Kampanyanın mevcut bütçesi; undefined = okunamadı. */
   mevcutButce?: number;
+  /** Bütçe okunamadıysa istemcinin bildirdiği sebep (ret mesajına geçmeli). */
+  butceNotu?: string;
   /** İnsan onay istemine verilecek cevap. */
   onay?: boolean;
   /** Yazma izni. */
@@ -69,6 +71,7 @@ async function kur(opts: SahteSecenek = {}) {
     ad: "Test Kampanyası",
     durum: "PAUSED",
     gunlukButce: opts.mevcutButce,
+    butceNotu: opts.butceNotu,
   };
 
   __setMetaKanalForTests({
@@ -412,9 +415,17 @@ test("KRİTİK: Meta yayına alma, günlük bütçe TAVANI aşıyorsa reddedilir
   assert.equal(existsSync(gunluk), false, "onaya hiç gelinmedi: kayda karar düşmez");
 });
 
-test("KRİTİK: Meta bütçesi OKUNAMAZSA yayına alma reddedilir — doğrulanamayan tavan tavan değildir", async () => {
-  // mevcutButce verilmedi: kanal undefined döner, yani bütçe OKUNAMADI.
-  const c = await kur({ onay: true });
+test("KRİTİK: Meta bütçesi doğrulanamazsa yayına alma reddedilir ve SEBEBİ söylenir", async () => {
+  /**
+   * Okuma iki katmanlı olduğundan (kampanya düzeyi CBO, yoksa reklam setleri toplamı)
+   * "doğrulanamadı" birden çok duruma karşılık gelir. Ret, hangisi olduğunu söylemezse
+   * operatör neyi düzelteceğini bilemez — bu yüzden sebep sabit bir tahmin değil,
+   * istemciden gelen not olmalı ve mesaja aynen geçmeli.
+   */
+  const c = await kur({
+    onay: true,
+    butceNotu: '"Yaz Seti" reklam seti ömürlük bütçe kullanıyor; günlük tavana çevrilemez',
+  });
 
   const r: any = await c.callTool({
     name: "set_meta_campaign_status",
@@ -422,13 +433,23 @@ test("KRİTİK: Meta bütçesi OKUNAMAZSA yayına alma reddedilir — doğrulana
   });
 
   assert.match(metin(r), /Reddedildi/, "bilinmiyor, tavanın altında demek değildir");
-  assert.match(metin(r), /OKUNAMADI/);
-  assert.match(
-    metin(r),
-    /REKLAM SETİ/,
-    "ret, en olası sebebi söylemeli: operatör neyi düzelteceğini bilmeli"
-  );
+  assert.match(metin(r), /ömürlük bütçe/, "sebep ret mesajında aynen görünmeli");
+  assert.match(metin(r), /Yaz Seti/, "hangi reklam setinin sorun olduğu söylenmeli");
   assert.ok(!cagrilar.includes("durumDegistir:ACTIVE"), "ret sonrası Meta'ya çağrı gitmez");
+});
+
+test("bütçe reklam setlerinden geldiyse onay özeti bunu SÖYLER", async () => {
+  /**
+   * Operatör onay ekranında gördüğü rakamı Ads Manager'da doğrulamak isterse, reklam
+   * setleri toplamını kampanya sayfasında ARAYAMAZ — orada öyle bir sayı yoktur.
+   * Özet, rakamın nereden geldiğini söylemezse operatör yanlış yere bakar.
+   */
+  const c = await kur({ onay: true, mevcutButce: 300 });
+  await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+  assert.equal(istemSayisi, 1, "onay istemi gösterilmeli");
 });
 
 test("Tavanın ALTINDAKİ bütçe yayına almayı engellemez — kapı geçirgen kalmalı", async () => {

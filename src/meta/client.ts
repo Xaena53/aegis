@@ -14,9 +14,12 @@
  * get it right and one place to forget.
  *
  * HONESTY: no call in this file has ever reached Meta's servers. There is no access token,
- * no app review, no ad account. The request shapes come from the Marketing API reference;
- * tests inject a fake client. Green tests are evidence about our decision logic, not about
- * the wire — the same sentence that stood over the CAMARA links until a token arrived.
+ * no app review, no ad account. The request shapes come from the Marketing API reference.
+ * Tests reach this code two ways — the tool tests inject a fake channel, and the budget
+ * tests stub `fetch` to drive the real client — but both feed it responses we wrote
+ * ourselves. That covers our parsing and our refusals; it says nothing about whether Meta
+ * actually answers in these shapes. Green tests are evidence about our decision logic, not
+ * about the wire — the same sentence that stood over the CAMARA links until a token arrived.
  */
 
 /** The Graph API version this module is written against. Pinned deliberately: Meta ships
@@ -40,6 +43,18 @@ export interface MetaKampanya {
   durum: MetaDurum;
   /** Günlük bütçe, hesabın para biriminde (minor unit DEĞİL — çeviri istemcide yapılır). */
   gunlukButce?: number;
+  /**
+   * Rakamın NEREDEN geldiği. Meta bütçeyi iki yerden birinde tutar ve ikisi aynı şey
+   * değildir: kampanya düzeyi (CBO) tek bir sayıdır, reklam seti düzeyi ise toplamdır.
+   * Onay özetine bunu yazmak, operatörün gördüğü rakamı Ads Manager'da nerede
+   * arayacağını bilmesini sağlar.
+   */
+  butceKaynagi?: "kampanya" | "reklam-setleri";
+  /**
+   * Bütçe okunamadıysa SEBEBİ — "okunamadı" tek başına operatöre ne yapacağını
+   * söylemez. Ret mesajı bu notu aynen taşır.
+   */
+  butceNotu?: string;
 }
 
 /** The capability surface the tools need; the HTTP client is adapted to it. */
@@ -147,6 +162,94 @@ async function graf(
 }
 
 /**
+ * Tek çağrıda okunacak en fazla reklam seti. Aşılırsa toplam EKSİK olurdu ve eksik bir
+ * toplam tavanı yanlışlıkla geçirir — bu yüzden sayfa taşması sessizce kırpılmaz, RET olur.
+ */
+const REKLAM_SETI_TAVANI = 200;
+
+/**
+ * KAMPANYA DÜZEYİNDE BÜTÇE YOKSA REKLAM SETLERİNDEN TOPLA.
+ *
+ * Meta'da bütçe ya kampanyadadır (CBO) ya da reklam setlerinde. Yalnız `daily_budget`
+ * alanına bakmak, CBO olmayan her kampanyayı "bütçesi okunamıyor" durumuna düşürüyordu;
+ * o kampanyalar bu araçla yayına alınamıyordu. Doğru çözüm reddi gevşetmek değil,
+ * GÖZLEMİ tamamlamaktı: burası o gözlem.
+ *
+ * Her belirsizlik RET tarafına düşer, çünkü buradan çıkan sayı doğrudan harcama tavanına
+ * karşı ölçülüyor: eksik bir toplam, tavanın altında görünen bir aşımdır.
+ */
+async function reklamSetiButcesi(
+  ayar: MetaAyar,
+  kampanyaId: string
+): Promise<{ gunlukButce?: number; not?: string }> {
+  let yanit: any;
+  try {
+    yanit = await graf(
+      ayar,
+      `${kampanyaId}/adsets`,
+      { fields: "id,name,status,daily_budget,lifetime_budget", limit: String(REKLAM_SETI_TAVANI) },
+      "GET"
+    );
+  } catch (e) {
+    return { not: `reklam setleri okunamadı (${e instanceof Error ? e.message : String(e)})` };
+  }
+
+  const setler = Array.isArray(yanit?.data) ? yanit.data : undefined;
+  if (!setler) return { not: "Meta reklam seti listesi beklenen biçimde gelmedi" };
+
+  /**
+   * SAYFA TAŞMASI RET. `paging.next` varsa elimizdeki liste eksiktir ve eksik listeden
+   * çıkan toplam GERÇEĞİNDEN KÜÇÜKTÜR — yani tavanı aşan bir kampanya tavanın altında
+   * görünür. Sessizce ilk sayfayla yetinmek, kapının en tehlikeli biçimde yanılmasıdır.
+   */
+  if (yanit?.paging?.next) {
+    return {
+      not:
+        `kampanyada ${REKLAM_SETI_TAVANI}'den fazla reklam seti var; toplam bütçe eksik ` +
+        `hesaplanacağı için doğrulanamıyor`,
+    };
+  }
+
+  /**
+   * Yalnız ACTIVE setler harcar. Duraklatılmış bir setin bütçesini toplama katmak,
+   * kampanyayı olmadığı kadar pahalı gösterip meşru bir yayına almayı engellerdi.
+   * Setin KENDİ `status` alanı doğru olandır: kampanya ACTIVE olduğunda yayına girecek
+   * olanlar bunlardır (`effective_status` üst nesnenin bugünkü hâlini de katar).
+   */
+  const aktif = setler.filter((r: any) => String(r?.status) === "ACTIVE");
+  if (!aktif.length) {
+    return {
+      not:
+        "kampanyada ACTIVE reklam seti yok — yayına alınsa da gösterim yapamaz " +
+        "(Google tarafındaki 'yayınlanabilir reklam yok' kuralının Meta karşılığı)",
+    };
+  }
+
+  let toplamMinor = 0;
+  for (const r of aktif) {
+    const ad = String(r?.name ?? r?.id ?? "adsız");
+    const gunluk = r?.daily_budget;
+    if (gunluk !== undefined && gunluk !== null && Number.isFinite(Number(gunluk))) {
+      toplamMinor += Number(gunluk);
+      continue;
+    }
+    /**
+     * ÖMÜRLÜK BÜTÇE GÜNLÜK TAVANA ÇEVRİLEMEZ. Toplam tutarı süreye bölmek bir tahmindir
+     * ve Meta teslimatı gün içinde öne yükleyebilir; tahmini gerçek bir tavanmış gibi
+     * ölçmek, kapının doğruladığını sandığı ama doğrulamadığı bir sayı üretir.
+     */
+    if (r?.lifetime_budget !== undefined && r?.lifetime_budget !== null) {
+      return { not: `"${ad}" reklam seti ömürlük bütçe kullanıyor; günlük tavana çevrilemez` };
+    }
+    return { not: `"${ad}" reklam setinin günlük bütçesi okunamadı` };
+  }
+
+  // Minor unit'ler ÖNCE tam sayı olarak toplanır: her set için ayrı ayrı bölmek
+  // kayan nokta artığı biriktirirdi.
+  return { gunlukButce: minorUnitTers(toplamMinor) };
+}
+
+/**
  * Gerçek kanal. Önbellek token + hesap kimliğine göre anahtarlanır — anahtarsız bir
  * singleton ilk çağıranın hesabını sonsuza dek kapatırdı (CAMARA tarafında yaşanan
  * hatanın aynısı).
@@ -177,11 +280,25 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
     },
     async kampanyaOku(kampanyaId) {
       const c = await graf(ayar, kampanyaId, { fields: "id,name,status,daily_budget" }, "GET");
-      return {
+      const temel = {
         id: String(c.id),
         ad: String(c.name ?? ""),
-        durum: c.status === "ACTIVE" ? "ACTIVE" : "PAUSED",
-        gunlukButce: c.daily_budget === undefined ? undefined : minorUnitTers(Number(c.daily_budget)),
+        durum: (c.status === "ACTIVE" ? "ACTIVE" : "PAUSED") as MetaDurum,
+      };
+
+      const kampanyaDuzeyi = c.daily_budget;
+      if (kampanyaDuzeyi !== undefined && kampanyaDuzeyi !== null && Number.isFinite(Number(kampanyaDuzeyi))) {
+        return { ...temel, gunlukButce: minorUnitTers(Number(kampanyaDuzeyi)), butceKaynagi: "kampanya" };
+      }
+
+      // CBO değil: bütçe reklam setlerinde. Tek bir alana bakıp "okunamadı" demek yerine
+      // ikinci katmana inilir.
+      const setler = await reklamSetiButcesi(ayar, kampanyaId);
+      return {
+        ...temel,
+        gunlukButce: setler.gunlukButce,
+        butceKaynagi: "reklam-setleri",
+        butceNotu: setler.not,
       };
     },
     async butceGuncelle(kampanyaId, gunlukButce) {
