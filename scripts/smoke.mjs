@@ -251,6 +251,28 @@ try {
 
   /* ── refusal paths: the guards, verified against the live account ─────────────── */
 
+  /**
+   * BU BÖLÜM CANLI HESAPTA GERÇEK PARA ÜZERİNDE KOŞAR ve bir çelişki taşır: kapıların
+   * reddettiğini kanıtlamak için gerçekten yasak çağrıyı yapar. Testin güvenliği, tam
+   * da sınadığı kapıya bağlıdır — kapı düşerse kanıt üreten çağrı, zararın kendisi olur
+   * (tavan üstü bütçe yazılır ya da duraklatılmış bir kampanya yayına girer).
+   *
+   * Test kaldırılmıyor: kapıların canlı kanıtı bu ürünün asıl iddiası ve simülasyonla
+   * yerine konamaz. Bunun yerine YARIÇAP sınırlanıyor — geri alma, harcamayı DÜŞÜREN
+   * yönde olduğu için onay kapısına takılmaz ve her zaman çalışabilir.
+   */
+  async function geriAl(ne, cagri) {
+    const g = await arac(mcp, cagri.ad, cagri.arg);
+    const basarili = !/Reddedildi|İşlem yapılmadı|hata/i.test(g.metin);
+    if (basarili) {
+      console.error(`  !! GÜVENLİK KAPISI DÜŞTÜ — ${ne} geri alındı (kalıcı hasar yok)`);
+    } else {
+      console.error(`  !! GÜVENLİK KAPISI DÜŞTÜ ve GERİ ALMA DA BAŞARISIZ — ${ne}`);
+      console.error(`     ${g.metin.slice(0, 200)}`);
+      console.error("     ELLE MÜDAHALE GEREKİR: Google Ads arayüzünden düzeltin.");
+    }
+  }
+
   const kampanyalar = await arac(mcp, "run_gaql", {
     customerId: CID,
     query: "SELECT campaign.id, campaign.status, campaign_budget.amount_micros FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 1",
@@ -277,6 +299,13 @@ try {
         query: `SELECT campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${kampanyaId}`,
       });
       const butceSonra = Number((sonra.yapisal?.satirlar ?? [])[0]?.campaign_budget?.amount_micros ?? -1);
+      if (butceSonra !== butceOnce && butceOnce > 0) {
+        // Bütçe DÜŞÜRME onay istemez: geri alma her koşulda geçebilir.
+        await geriAl(`bütçe ${butceOnce / 1e6} değerine`, {
+          ad: "update_campaign_budget",
+          arg: { customerId: CID, campaignId: kampanyaId, newDailyBudget: butceOnce / 1e6 },
+        });
+      }
       dogrula(butceSonra === butceOnce, `bütçe DEĞİŞTİ: ${butceOnce} → ${butceSonra}`);
       return "reddedildi ve bütçe değişmedi";
     });
@@ -292,6 +321,13 @@ try {
         query: `SELECT campaign.status FROM campaign WHERE campaign.id = ${kampanyaId}`,
       });
       const durumSonra = String((sonra.yapisal?.satirlar ?? [])[0]?.campaign?.status ?? "");
+      if (durumSonra !== durumOnce && durumSonra === "ENABLED") {
+        // DURAKLATMA harcamayı düşürür: onay istemez, dolayısıyla geri alma geçebilir.
+        await geriAl("kampanya PAUSED durumuna", {
+          ad: "set_campaign_status",
+          arg: { customerId: CID, campaignId: kampanyaId, status: "PAUSED" },
+        });
+      }
       dogrula(durumSonra === durumOnce, `durum DEĞİŞTİ: ${durumOnce} → ${durumSonra}`);
       return "reddedildi ve durum değişmedi";
     });
