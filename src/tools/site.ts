@@ -25,6 +25,23 @@ const MAX_BODY_BYTES = 1_500_000; // 1.5MB ceiling against oversized pages
 const MAX_REDIRECTS = 5;
 
 /**
+ * Test seam for DNS resolution.
+ *
+ * The rebinding guard below is one of the few defences here that CANNOT be exercised with
+ * a literal address: it only matters when a NAME resolves to a private one, and asking the
+ * real resolver for that would make the test depend on the network and on somebody else's
+ * zone file. Without a seam the branch stays untested, which is how a guard quietly stops
+ * guarding. Production keeps the real resolver; only tests replace it.
+ */
+type Cozumleyici = (ad: string) => Promise<{ address: string }[]>;
+const gercekCozumleyici: Cozumleyici = (ad) => lookup(ad, { all: true, verbatim: true });
+let cozumleyici: Cozumleyici = gercekCozumleyici;
+
+export function __setSiteCozumleyiciForTests(f: Cozumleyici | undefined): void {
+  cozumleyici = f ?? gercekCozumleyici;
+}
+
+/**
  * DNS-rebinding and decimal-IP guard: the addresses a hostname RESOLVES to must be
  * public too, not just the literal name (e.g. http://2130706433/ → 127.0.0.1, or an
  * evil.com A record pointing at 192.168.1.1).
@@ -37,7 +54,7 @@ async function assertPublicHost(hostname: string): Promise<void> {
   }
   let addrs: { address: string }[];
   try {
-    addrs = await lookup(hostname, { all: true, verbatim: true });
+    addrs = await cozumleyici(hostname);
   } catch {
     throw new Error(`DNS çözümlenemedi: ${hostname}`);
   }
