@@ -317,9 +317,21 @@ Evet
  * beslenebiliyorsa insan onayı değildir. Betikle sürülen gösterim için `npm run demo`
  * vardır ve o, onayı kendisinin verdiğini ekranda açıkça söyler.
  */
-async function operatorOnayi(soru) {
+/**
+ * İNSAN KAPISI. Boş dize DAİMA rettir ve bu, sessiz bir varsayılan değil kuraldır.
+ *
+ * Soru, akışın kapanmasıyla YARIŞTIRILIR. Yarış olmadan, girdisi kapalı bir ortamda
+ * (boru hattı, CI, arka plan işi) `rl.question` hiç çözülmez: süreç asılı kalır ve
+ * dışarıdan "çalışıyor" gibi görünür. Kapanma "" döndürdüğü ve çağıran YALNIZ "evet"
+ * kabul ettiği için, cevaplanamayan bir soru ret olur — ve borudan onay geçirmek
+ * bilerek imkânsızdır: `echo evet | ...` da kapanma yarışına takılır.
+ *
+ * Akışlar parametre olarak alınır; üretimde varsayılanları kullanılır. Bu dikiş
+ * yalnız test içindir — kapının davranışı, gerçek bir terminal olmadan sınanabilsin.
+ */
+export async function operatorOnayi(soru, { girdi = process.stdin, cikti = process.stdout } = {}) {
   const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({ input: girdi, output: cikti });
   try {
     return await Promise.race([
       rl.question(soru).then((c) => c.trim(), () => ""),
@@ -328,6 +340,14 @@ async function operatorOnayi(soru) {
   } finally {
     rl.close();
   }
+}
+
+/**
+ * Onay cümlesinin TEK kabul kuralı. Çağrı yerlerinde tekrarlanmak yerine burada
+ * durur ki iki kapı (taslak yazma ve yayına alma) birbirinden ayrışmasın.
+ */
+export function onayVerildiMi(cevap) {
+  return String(cevap ?? "").trim().toLocaleLowerCase("tr-TR") === "evet";
 }
 
 async function ana() {
@@ -431,7 +451,7 @@ async function ana() {
       const cevap = await operatorOnayi(
         "Bu plan hesabına TASLAK (PAUSED) olarak yazılsın mı? Yalnız 'Evet' devam ettirir: "
       );
-      if (cevap.toLocaleLowerCase("tr-TR") !== "evet") {
+      if (!onayVerildiMi(cevap)) {
         console.log("Onay verilmedi — hiçbir yazma yapılmadı. Kuru mod raporu üretiliyor.");
         uygulamaSonucu = undefined;
       } else {
@@ -472,7 +492,7 @@ async function ana() {
         const cevap2 = await operatorOnayi(
           "Bu kampanya YAYINA ALINSIN mı? Yalnız 'Evet' devam ettirir: "
         );
-        if (cevap2.toLocaleLowerCase("tr-TR") !== "evet") {
+        if (!onayVerildiMi(cevap2)) {
           console.log("Onay verilmedi — yayına alma çağrısı hiç yapılmadı. Kampanya PAUSED kalıyor.");
           yayinSonucu = {
             denendi: false,
