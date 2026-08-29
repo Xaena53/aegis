@@ -45,8 +45,10 @@ this number registered as the approver". Passing today's date would make the ans
 come back clean — a silent loss of security dressed up as a passing check. Until a real
 registration date exists in config, this link must fail closed (`RET`), never default.
 
-**Trap note on `numberRecycling.check`.** Same shape of trap, same rule: without a real
-`ADSPILOT_APPROVER_SINCE` the link refuses; it does not invent a date.
+**Trap note on `numberRecycling.check`.** Same shape of trap, same rule. This link is not
+built, and `ADSPILOT_APPROVER_SINCE` does not exist in the configuration today — the name
+appears here only to fix the rule that will bind whoever writes it: without a real date the
+link must refuse rather than invent one.
 
 **Trap note on `callForwardingSignal`.** Two fail-closed hazards were read out of the type
 definitions before the link was written, and both are honoured by the implementation:

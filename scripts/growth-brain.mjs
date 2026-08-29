@@ -266,7 +266,7 @@ async function efektifTavanBelirle(mcp, musteri, cliTavan) {
     const limits = JSON.parse(metin);
     if (limits?.yazmaIzni === false) {
       throw new Error(
-        "Sunucuda yazma araçları kapalı (ADSPILOT_ENABLE_WRITE) — --uygula çalıştırılamaz. " +
+        "Sunucuda yazma araçları kapalı (ADSPILOT_WRITE_ENABLED) — --uygula çalıştırılamaz. " +
           "Kuru modda rapor üretebilirsin."
       );
     }
