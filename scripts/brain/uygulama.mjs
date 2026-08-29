@@ -555,11 +555,30 @@ function maddesizGovde(metin) {
 export function yayinSonucuSinifla(metin) {
   const m = String(metin ?? "").trim();
   if (!m || m === "(boş yanıt)") return "hata";
-  if (YAYIN_BASARI_IZI.test(m)) return "basarili";
+
+  /**
+   * BAŞARI İMZASI EN SONA BAKILIR — sıra bir üslup tercihi değil.
+   *
+   * Başarı imzası önce bakıldığında, İÇİNDE o imzayı taşıyan bir RET "basarili" çıkar.
+   * Bu kuramsal değil: ret metnine kampanya ADI giriyor (sunucu onu onay özetine koyar)
+   * ve kampanya adını MODEL seçiyor — yani "YAYINDA" gibi bir ifadeyi ret metninin
+   * içine sokan bir ad üretilebilir. Sonuç, raporun "⚠ KAMPANYA YAYINDA — GERÇEK HARCAMA
+   * BAŞLADI" basması ve "GÜVENLİK KAPISI ÇALIŞTI" bloğunun HİÇ basılmamasıdır: yani
+   * kapının çalıştığı an, kapının çalışmadığı an gibi raporlanır.
+   *
+   * Ret her zaman başarıyı yener. Bir metin hem ret hem başarı işareti taşıyorsa, o
+   * metin bir rettir.
+   *
+   * Ret türleri arasındaki sıra (insan → ağ) BİLEREK korundu: yukarıdaki
+   * INSAN_KAPISI_IZLERI açıklamasının anlattığı gibi, temiz geçen bir ağ kapısının
+   * kanıt satırları onay kapısının ret metnine ekleniyor. Bu düzeltme yalnız başarı
+   * imzasını sona taşır; ret türlerinin birbirine göre sırasına dokunmaz.
+   */
   if (INSAN_KAPISI_IZLERI.some((d) => d.test(m))) return "insan-onayi-gerekli";
   const govde = maddesizGovde(m);
   if (AG_KAPISI_IZLERI.some((d) => d.test(govde))) return "ag-retti";
   if (sonucBasarisizMi(m)) return "reddedildi";
+  if (YAYIN_BASARI_IZI.test(m)) return "basarili";
   return "hata";
 }
 

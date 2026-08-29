@@ -478,3 +478,53 @@ test("bayrak hatası, eksik argüman hatasından ÖNCE gelir (en spesifik hata k
     /--yayinla yalnız --uygula ile birlikte kullanılabilir/
   );
 });
+
+/**
+ * SINIFLANDIRICI SIRASI — raporun doğruluğu buna bağlı.
+ *
+ * `yayinSonucuSinifla` yalnız bir etiket üretmiyor: üç-perde raporu bu etikete bakarak
+ * ya "⚠ KAMPANYA YAYINDA — GERÇEK HARCAMA BAŞLADI" ya da "GÜVENLİK KAPISI ÇALIŞTI"
+ * basıyor. Yanlış sıralama, kapının çalıştığı anı kapının çalışmadığı an gibi
+ * gösterir — bir güvenlik ürününde bundan kötü bir hata yoktur.
+ *
+ * Mutasyonla ölçüldü: bu iki test yazılmadan önce sıra ikiye de çevrilebiliyor ve
+ * takım 556/556 yeşil kalıyordu.
+ */
+test("KRİTİK SIRA: içinde başarı imzası GEÇEN bir ret, başarı sayılamaz", () => {
+  /**
+   * Bu metin uydurma değil: ret özetine kampanya ADI giriyor ve adı MODEL seçiyor.
+   * "YAYINDA (ENABLED)" ifadesini adının içine koyan bir model, başarı imzası önce
+   * sınandığında kendi reddini başarı diye raporlatabilirdi.
+   */
+  const ret =
+    'Reddedildi: "Yaz Kampanyası YAYINDA (ENABLED)" kampanyasının günlük bütçesi 900 — hesap tavanı 500.';
+  assert.equal(
+    yayinSonucuSinifla(ret),
+    "reddedildi",
+    "ret her zaman başarıyı yener: aksi hâlde rapor gerçek harcama başladı der"
+  );
+});
+
+test("KRİTİK SIRA: temiz ağ geçişinin kanıtları, insan kapısı retini 'ag-retti' yapmaz", () => {
+  /**
+   * Ret türlerinin birbirine göre sırası (insan → ağ) da korunmalı: ağ kapısı TEMİZ
+   * geçtiğinde kanıt satırları onay kapısının ret metnine madde olarak ekleniyor.
+   * Bu test o sırayı sabitler, böylece başarı imzası düzeltmesi onu bozamaz.
+   */
+  const insanReti = [
+    "İşlem yapılmadı: kullanıcı onayı alınamadı.",
+    "• AĞ DOĞRULAMASI BAŞARISIZ ifadesi bu satırda yalnızca KANIT olarak geçiyor",
+  ].join("\n");
+  assert.equal(
+    yayinSonucuSinifla(insanReti),
+    "insan-onayi-gerekli",
+    "madde satırlarındaki kanıt metni ağ reddi gibi okunmamalı"
+  );
+});
+
+test("gerçek başarı hâlâ başarı sayılır — sıra düzeltmesi kapıyı duvara çevirmedi", () => {
+  assert.equal(
+    yayinSonucuSinifla('Kampanya "Yaz" durumu: YAYINDA (ENABLED). Gerçek harcama başladı.'),
+    "basarili"
+  );
+});

@@ -599,7 +599,21 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
              AND campaign.status != 'REMOVED' LIMIT 1`
           );
           if (!row) return text(`Kampanya bulunamadı: ${campaignId}`);
-          const daily = Number(row.campaign_budget?.amount_micros ?? 0) / 1e6;
+          /**
+           * `?? 0` BURADAN KALDIRILDI: okunamayan bütçeyi 0 sayıyordu ve 0 her tavanı
+           * geçtiği için, bütçesi görünmeyen bir kampanya sessizce yayına alınabiliyordu.
+           * Bu, deponun her yerde savunduğu "bilinmiyor ile düşük aynı şey değildir"
+           * kuralının tam tersiydi ve sessiz olduğu için Meta'daki eksik kapıdan daha
+           * tehlikeliydi: orada kapı hiç yoktu, burada kapı VAR ama hep yeşil yanıyordu.
+           */
+          const micros = row.campaign_budget?.amount_micros;
+          if (micros === undefined || micros === null || !Number.isFinite(Number(micros))) {
+            return text(
+              `Reddedildi: "${row.campaign.name}" kampanyasının günlük bütçesi okunamadı, ` +
+                `hesap güvenlik tavanına (${ctx.config.maxDailyBudget}) uyduğu doğrulanamıyor.`
+            );
+          }
+          const daily = Number(micros) / 1e6;
           const capMsg = budgetGuardFor(ctx, daily);
           if (capMsg) {
             return text(

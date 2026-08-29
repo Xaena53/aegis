@@ -220,6 +220,48 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
 
         // Duraklatma harcamayı DÜŞÜRÜR: onay istenmez (Google tarafıyla aynı kural).
         if (status === "ACTIVE") {
+          /**
+           * BÜTÇE TAVANI YAYINA ALMADA DA GEÇERLİ — ve bu, bütçeyi bu araç
+           * belirlemediği için atlanması en kolay yerdir.
+           *
+           * Kampanya başka bir yerde (Meta Ads Manager'da elle) kurulmuş olabilir ve
+           * bizim hiç görmediğimiz bir günlük bütçe taşıyabilir. Tavan yalnız BİZİM
+           * yazdığımız bütçelere uygulanırsa, hesap sahibinin koyduğu kelepçe "AdsPilot
+           * üzerinden kurulan kampanyalar" kelepçesine dönüşür — oysa vaat harcamanın
+           * kendisi üzerine. Google tarafındaki ikizi bunu zaten yapıyor
+           * (tools/write.ts, set_campaign_status ENABLED dalı); burada eksikti.
+           *
+           * OKUNAMAYAN BÜTÇE DE RET: tavanı doğrulayamıyorsak tavanın altında
+           * olduğunu varsayamayız. Bu, dosyanın birkaç fonksiyon yukarıdaki
+           * "bilinmiyor ile düşük aynı şey değildir" kuralının aynısıdır.
+           */
+          const gunluk = mevcut.gunlukButce;
+          if (gunluk === undefined || !Number.isFinite(gunluk)) {
+            /**
+             * BİLİNEN KAPSAM SINIRI — ve bu ret, teorik bir kenar durum değil.
+             *
+             * Meta'da bütçe iki yerden birinde durur: kampanya düzeyinde (CBO) ya da
+             * REKLAM SETİ düzeyinde. kampanyaOku yalnız `daily_budget` alanını istiyor,
+             * yani reklam-seti bütçeli kampanyalarda bütçe HİÇ görünmez. O kampanyalar
+             * bu araçla yayına alınamaz. Doğru onarım reddi gevşetmek değil, GÖZLEMİ
+             * düzeltmektir: reklam setlerinin bütçelerini de okuyup toplamak. Yapılana
+             * kadar tavan doğrulanamıyor ve doğrulanamayan tavan tavan değildir.
+             */
+            return text(
+              `Reddedildi: "${mevcut.ad}" kampanyasının günlük bütçesi Meta'dan OKUNAMADI, ` +
+                `dolayısıyla hesap güvenlik tavanına (${ctx.config.maxDailyBudget}) uyup uymadığı ` +
+                `doğrulanamadı. Güvenlik gereği doğrulanamayan bütçeyle yayına alınmaz. ` +
+                `En olası sebep: bütçe kampanyada değil REKLAM SETİ düzeyinde tanımlı — ` +
+                `AdsPilot şu an yalnız kampanya düzeyi bütçeyi okuyabiliyor.`
+            );
+          }
+          const tavanHatasiYayin = budgetGuardPure(gunluk, ctx.config.maxDailyBudget);
+          if (tavanHatasiYayin) {
+            return text(
+              `Reddedildi: "${mevcut.ad}" kampanyasının günlük bütçesi ${gunluk} — ${tavanHatasiYayin}`
+            );
+          }
+
           const onay = await onayAl(
             server,
             {
@@ -228,7 +270,7 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
                 `Platform: Meta (Facebook/Instagram)`,
                 `Reklam hesabı: ${ctx.config.metaAdAccountId}`,
                 `Kampanya: ${mevcut.ad} (id ${campaignId})`,
-                mevcut.gunlukButce === undefined
+                gunluk === undefined
                   ? `Günlük bütçe OKUNAMADI — yayına alma yine de gerçek harcama başlatır`
                   : `Günlük bütçe: ${mevcut.gunlukButce}`,
               ],
@@ -241,7 +283,8 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
                * Meta okuması bütçeyi vermediğinde (yukarıdaki "OKUNAMADI" satırı) alan
                * hiç yazılmaz: kayıtta 0 görmek, denetçiye ortada para yokmuş gibi görünürdü.
                */
-              tutar: Number.isFinite(mevcut.gunlukButce as number) ? mevcut.gunlukButce : undefined,
+              // Buraya gelindiyse bütçe okunmuş ve sonludur: yukarıdaki kapı aksini eler.
+              tutar: gunluk,
             },
             confirm
           );

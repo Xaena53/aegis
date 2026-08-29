@@ -11,7 +11,7 @@
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -134,7 +134,7 @@ const metin = (r: any) => String(r.content?.[0]?.text ?? "");
 /* ── 1) Alan-bağımsızlık: kapı Meta'da da ateşleniyor ─────────────────────── */
 
 test("KRİTİK: Meta yayına alma, SIM değişmişse İNSANA SORULMADAN reddedilir", async () => {
-  const c = await kur({ simDegisti: true });
+  const c = await kur({ simDegisti: true, mevcutButce: 100 });
   const r: any = await c.callTool({
     name: "set_meta_campaign_status",
     arguments: { campaignId: "120200000000001", status: "ACTIVE" },
@@ -184,7 +184,7 @@ test("Meta bütçe AZALTMA onay istemez (harcamayı düşürür)", async () => {
 });
 
 test("Meta DURAKLATMA onay istemez; YAYINA ALMA ister", async () => {
-  const c = await kur({ onay: true });
+  const c = await kur({ onay: true, mevcutButce: 100 });
   await c.callTool({
     name: "set_meta_campaign_status",
     arguments: { campaignId: "120200000000001", status: "PAUSED" },
@@ -377,8 +377,42 @@ test("TUTAR: Meta yayına almada OKUNABİLEN günlük bütçe kaydedilir", async
   assert.equal(k[0].tutar, 150, "yayına alınan kampanyanın günlük bütçesi riskteki tutardır");
 });
 
-test("KRİTİK TUTAR: Meta bütçesi OKUNAMAZSA alan kayıtta HİÇ BULUNMAZ — akış da düşmez", async () => {
+/**
+ * BÜTÇE TAVANI YAYINA ALMADA — bu üç test bir denetimde bulunan boşluğun bekçisidir.
+ *
+ * Bütçeyi bu araç yazmadığında tavanı kimse sınamıyordu: kampanya Meta Ads Manager'da
+ * elle kurulup AdsPilot'a yalnız "yayına al" dedirtilebiliyordu. Tavan yalnız BİZİM
+ * yazdığımız bütçelere uygulandığı sürece, hesap sahibinin koyduğu kelepçe harcamanın
+ * değil "AdsPilot üzerinden kurulan kampanyaların" kelepçesidir.
+ *
+ * Onaya HİÇ gelinmediği de sınanıyor: tavan aşımı bir soru değil, bir rettir. İnsana
+ * sorulsaydı, kapı "hayır" diyebilecek bir şeyi "emin misin?" diye pazarlığa açardı.
+ */
+test("KRİTİK: Meta yayına alma, günlük bütçe TAVANI aşıyorsa reddedilir", async () => {
   const gunluk = gunlukAc();
+  // Tavan test kurulumunda 500; kampanya onun iki katıyla yayına alınmak isteniyor.
+  const c = await kur({ onay: true, mevcutButce: 1000 });
+
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  assert.match(metin(r), /Reddedildi/, "tavanı aşan kampanya yayına alınamaz");
+  assert.match(metin(r), /1000/, "ret, reddedilen büyüklüğü adıyla söylemeli");
+  assert.ok(
+    !cagrilar.includes("durumDegistir:ACTIVE"),
+    "KRİTİK: ret sonrası Meta'ya durum değiştirme çağrısı GİTMEMELİ"
+  );
+  /**
+   * Dosyanın VARLIĞINA bakılıyor: karar günlüğü ilk yazımda oluşuyor, dolayısıyla
+   * "hiç satır yok" ile "dosya hiç açılmadı" burada aynı şeyin iki yüzü — ve ikincisi
+   * daha güçlü bir iddia: onay akışına adım bile atılmadı.
+   */
+  assert.equal(existsSync(gunluk), false, "onaya hiç gelinmedi: kayda karar düşmez");
+});
+
+test("KRİTİK: Meta bütçesi OKUNAMAZSA yayına alma reddedilir — doğrulanamayan tavan tavan değildir", async () => {
   // mevcutButce verilmedi: kanal undefined döner, yani bütçe OKUNAMADI.
   const c = await kur({ onay: true });
 
@@ -387,19 +421,24 @@ test("KRİTİK TUTAR: Meta bütçesi OKUNAMAZSA alan kayıtta HİÇ BULUNMAZ —
     arguments: { campaignId: "120200000000001", status: "ACTIVE" },
   });
 
-  assert.match(metin(r), /ACTIVE/, "tutar bir gözlemdir: okunamaması onay akışını düşürmez");
-  assert.ok(cagrilar.includes("durumDegistir:ACTIVE"));
-
-  const k = satirlar(gunluk)[0];
-  assert.equal(k.karar, "gecti");
-  /**
-   * Değere DEĞİL varlığa bakılıyor: `k.tutar === 0` iddiası, alanın hiç yazılmamış
-   * olmasıyla 0 yazılmış olmasını ayırt edemezdi — ayırt edilmesi gereken tam da bu.
-   */
-  assert.equal("tutar" in k, false, "'bilmiyorum' 0 diye kaydedilemez: alan hiç yazılmaz");
-  assert.doesNotMatch(
-    readFileSync(gunluk, "utf8"),
-    /tutar/,
-    "undefined alan JSON satırından tamamen düşmeli"
+  assert.match(metin(r), /Reddedildi/, "bilinmiyor, tavanın altında demek değildir");
+  assert.match(metin(r), /OKUNAMADI/);
+  assert.match(
+    metin(r),
+    /REKLAM SETİ/,
+    "ret, en olası sebebi söylemeli: operatör neyi düzelteceğini bilmeli"
   );
+  assert.ok(!cagrilar.includes("durumDegistir:ACTIVE"), "ret sonrası Meta'ya çağrı gitmez");
+});
+
+test("Tavanın ALTINDAKİ bütçe yayına almayı engellemez — kapı geçirgen kalmalı", async () => {
+  const c = await kur({ onay: true, mevcutButce: 100 });
+
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  assert.match(metin(r), /ACTIVE/, "meşru kampanya reddedilmemeli (aksi hâlde kapı bir duvar olur)");
+  assert.ok(cagrilar.includes("durumDegistir:ACTIVE"));
 });

@@ -153,3 +153,42 @@ test("formatAdsError enum değeri 0 olan kodu düşürmez", () => {
   const s = formatAdsError({ errors: [{ error_code: { authorization_error: 0 }, message: "x" }] });
   assert.match(s, /authorization_error/, "kod adı kaybolmamalı");
 });
+
+/**
+ * YAYINA ALMA BÜTÇE KAPISI (Google) — bu dosyanın başlığı "okunamayan bütçe"yi zaten
+ * vaat ediyordu, ama yalnız bütçe DEĞİŞTİRME yolu için. Yayına alma yolunda kapı
+ * `?? 0` ile yazılmıştı: okunamayan bütçe 0 sayılıyor, 0 her tavanın altında kaldığı
+ * için kapı hep yeşil yanıyordu. Mutasyonla ölçüldü — kapı tamamen kaldırıldığında
+ * takım 556/556 yeşil kalıyordu, yani kapının bekçisi yoktu.
+ */
+test("yayına alma: bütçe OKUNAMAZSA reddedilir (0 varsayılıp tavan geçilmez)", async () => {
+  const { ctx, rec } = sahteContext({
+    queries: [
+      // Kampanya var, adı okunuyor — ama campaign_budget alanı hiç dönmedi.
+      [/campaign_budget\.amount_micros/, [{ campaign: { name: "Bütçesi görünmeyen" } }]],
+      [/FROM ad_group_ad/, [{ ad_group_ad: { ad: { id: 1 } } }]],
+      [/FROM campaign_criterion/, []],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "set_campaign_status", { customerId: M, campaignId: K, status: "ENABLED" });
+  assert.match(out, /Reddedildi/, "bilinmeyen bütçe 'tavanın altında' demek değildir");
+  assert.doesNotMatch(out, /\b0\b günlük|bütçesi 0/, "okunamayan bütçe 0 diye raporlanamaz");
+  assert.equal(rec.mutations.length, 0, "KRİTİK: doğrulanamayan bütçeyle yayına alma yazması gitmemeli");
+});
+
+test("yayına alma: bütçe TAVANI aşıyorsa reddedilir — insana sorulmadan", async () => {
+  const { ctx, rec } = sahteContext({
+    // Tavan 500; kampanya 900 ile yayına alınmak isteniyor.
+    queries: [
+      [/campaign_budget\.amount_micros/, [{ campaign: { name: "Pahalı" }, campaign_budget: { amount_micros: 900_000_000 } }]],
+      [/FROM ad_group_ad/, [{ ad_group_ad: { ad: { id: 1 } } }]],
+      [/FROM campaign_criterion/, []],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "set_campaign_status", { customerId: M, campaignId: K, status: "ENABLED" });
+  assert.match(out, /Reddedildi/);
+  assert.match(out, /900/, "ret, reddedilen büyüklüğü adıyla söylemeli");
+  assert.equal(rec.mutations.length, 0);
+});
