@@ -106,3 +106,72 @@ test("yeniden bağlanma: aynı e-posta token'ı yeniler, ESKİ anahtar geçersiz
   assert.equal(store.findByApiKey(first.apiKey), undefined, "eski anahtar artık çalışmamalı");
   assert.equal(store.findByApiKey(second.apiKey)?.refreshToken, "yeni-token");
 });
+
+/**
+ * KİRACI DEVRALMA — bu üç test bir denetimde bulunan boşluğun bekçisidir.
+ *
+ * Kiracı anahtarı Google'ın `sub` iddiasıdır; bu dosyanın şema yorumu e-postanın
+ * kiracı anahtarı OLAMAYACAĞINI ("it can change, Workspace can reassign it") zaten
+ * söylüyordu. Buna rağmen upsertUser, `subject` verilmiş ama eşleşmemiş olsa bile
+ * e-postayla arıyor ve bulduğu satırı devralıyordu. Devralınan satır kurbanın Google
+ * Ads refresh token'ını taşıdığı için bedeli, başkasının reklam hesabında harcama
+ * yetkisidir.
+ */
+test("KRİTİK: farklı bir Google sub'ı, aynı e-postayla mevcut kiracıyı DEVRALAMAZ", () => {
+  const kurban = store.upsertUser({
+    subject: "sub-kurban",
+    email: "ortak@ornek.com",
+    refreshToken: "kurban-token",
+    maxDailyBudget: 50,
+  });
+
+  assert.throws(
+    () =>
+      store.upsertUser({
+        subject: "sub-saldirgan",
+        email: "ortak@ornek.com",
+        refreshToken: "saldirgan-token",
+      }),
+    /başka bir Google hesabına bağlı/,
+    "aynı e-postayla gelen yeni bir sub, sahipli satırı devralamaz"
+  );
+
+  // Ret bir mesajdan ibaret olamaz: kurbanın satırı el değmemiş kalmalı.
+  const u = store.findByApiKey(kurban.apiKey);
+  assert.ok(u, "KRİTİK: kurbanın API anahtarı hâlâ geçerli olmalı");
+  assert.equal(u!.refreshToken, "kurban-token", "KRİTİK: kurbanın token'ı değişmemeli");
+  assert.equal(u!.maxDailyBudget, 50, "kurbanın tavanı değişmemeli");
+});
+
+test("SAHİPSİZ satır sahiplenilebilir: stdio ile açılan hesap Google girişine bağlanır", () => {
+  /**
+   * E-posta yolu tamamen kapatılamaz. `subject` OLMADAN (stdio/test akışı) açılmış
+   * satırların sonradan Google girişine bağlanması meşru bir yükseltmedir; ayrım
+   * satırın daha önce bağlanmış olup olmadığıdır.
+   */
+  const once = store.upsertUser({ email: "yukselt@ornek.com", refreshToken: "ilk-token" });
+  const sonra = store.upsertUser({
+    subject: "sub-yukselt",
+    email: "yukselt@ornek.com",
+    refreshToken: "baglanmis-token",
+  });
+  assert.equal(sonra.userId, once.userId, "yeni satır açılmamalı: aynı kiracı bağlandı");
+  assert.equal(store.findByApiKey(sonra.apiKey)?.refreshToken, "baglanmis-token");
+});
+
+test("AYNI sub ile tekrar giriş, kendi satırını normal yeniler (kapı bir duvar değil)", () => {
+  const ilk = store.upsertUser({
+    subject: "sub-sabit",
+    email: "sabit@ornek.com",
+    refreshToken: "eski-token",
+  });
+  // E-posta değişse bile sub aynı olduğu için aynı kiracıdır.
+  const ikinci = store.upsertUser({
+    subject: "sub-sabit",
+    email: "sabit-yeni@ornek.com",
+    refreshToken: "yeni-token",
+  });
+  assert.equal(ikinci.userId, ilk.userId);
+  assert.equal(store.findByApiKey(ikinci.apiKey)?.refreshToken, "yeni-token");
+  assert.equal(store.findByApiKey(ilk.apiKey), undefined, "eski API anahtarı geçersizleşmeli");
+});

@@ -141,8 +141,37 @@ export class UserStore {
       const bySub = input.subject
         ? (this.db.prepare("SELECT id FROM users WHERE google_sub = ?").get(input.subject) as { id: number } | undefined)
         : undefined;
-      const existing =
-        bySub ?? (this.db.prepare("SELECT id FROM users WHERE email = ?").get(input.email) as { id: number } | undefined);
+      /**
+       * E-POSTAYA DÜŞÜŞ, YALNIZ HENÜZ HİÇ BAĞLANMAMIŞ SATIRA İZİNLİ.
+       *
+       * Önceki hâl `bySub ?? (email ile ara)` idi ve `subject` VERİLMİŞ ama eşleşmemiş
+       * olsa bile e-postaya düşüyordu. Bu, bu dosyanın kendi şema yorumunun ("Email
+       * CANNOT serve as the tenant key: it can change, Workspace can reassign it")
+       * tam tersiydi ve devralmaya açıktı: aynı e-postayla YENİ bir Google `sub`'ı
+       * gelen giriş, mevcut kiracının satırını buluyor, UPDATE ile google_sub'ı kendi
+       * değeriyle değiştiriyor ve yeni bir API anahtarı alıyordu. Devralınan satır
+       * kurbanın Google Ads refresh token'ını ve bütçe tavanını taşıdığı için sonuç,
+       * başkasının reklam hesabında harcama yetkisidir. Bu senaryo teorik de değil:
+       * Workspace'te bir kullanıcı silinip aynı adresle yeniden açıldığında sub değişir,
+       * e-posta aynı kalır.
+       *
+       * Ama e-posta yolu tamamen kapatılamaz: stdio/test akışıyla `subject` OLMADAN
+       * açılmış satırların sonradan Google girişine bağlanması meşru bir yükseltmedir.
+       * Ayrım, satırın DAHA ÖNCE bağlanmış olup olmadığıdır — sahipsiz satır sahiplenilir,
+       * sahipli satır asla devredilmez.
+       */
+      const byEmail = this.db
+        .prepare("SELECT id, google_sub FROM users WHERE email = ?")
+        .get(input.email) as { id: number; google_sub: string | null } | undefined;
+
+      if (!bySub && byEmail && byEmail.google_sub && byEmail.google_sub !== input.subject) {
+        throw new Error(
+          "Bu e-posta başka bir Google hesabına bağlı. Güvenlik gereği devralınmaz — " +
+            "hesap sahibiyle iletişime geçin."
+        );
+      }
+
+      const existing = bySub ?? byEmail;
 
       let userId: number;
       if (existing) {
