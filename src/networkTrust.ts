@@ -712,9 +712,27 @@ const RAPIDAPI_HOST = "network-as-code.nokia.rapidapi.com";
 
 export function nacIstemciSecenekleri(token: string): {
   apiKey: string;
+  rapidapiHost: string;
   headers: Record<string, string>;
 } {
-  return { apiKey: token, headers: { "X-RapidAPI-Host": RAPIDAPI_HOST } };
+  /**
+   * HOST İKİ YOLDAN DA VERİLİR ve bu bilinçli bir fazlalıktır.
+   *
+   * `rapidapiHost` SDK'nın kendi desteklediği seçenektir; Nokia'dan (Aleksi Puranen,
+   * 31.08.2026) gelen resmî cevap bunu kullanmamızı söyledi ve SDK'nın host'u
+   * kendiliğinden göndermemesinin bir eksiklik olduğunu, iletildiğini doğruladı.
+   *
+   * Elle konan başlık yine de kalıyor: bu kod tabanının canlıda ÖLÇEREK doğruladığı
+   * yol oydu ve hiçbir maliyeti yok. SDK bu konuda bir kez zaten eksik çıktı; aynı
+   * yerde ikinci bir sürprizin bedeli, kapının üretimde her çağrıda "ağ yanıtsız"
+   * diyerek kapalı arızaya gitmesi olurdu — harcama hiç onaylanmaz ve sebebi aylarca
+   * anlaşılmaz. İkisi de aynı değeri taşıdığı için çelişme ihtimali yok.
+   */
+  return {
+    apiKey: token,
+    rapidapiHost: RAPIDAPI_HOST,
+    headers: { "X-RapidAPI-Host": RAPIDAPI_HOST },
+  };
 }
 
 /** Üretim istemcisiyle BİREBİR aynı tip: aşağıdaki test dikişi tipi gevşetmez. */

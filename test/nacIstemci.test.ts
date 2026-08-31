@@ -36,3 +36,21 @@ test("NaC istemcisi anahtarı apiKey olarak taşır ve başlığa SIZDIRMAZ", ()
     );
   }
 });
+
+test("SDK'nın kendi rapidapiHost seçeneği de verilir (Nokia'nın resmî yolu)", () => {
+  /**
+   * Nokia'dan gelen cevap (Aleksi Puranen, 31.08.2026): SDK host'u kendiliğinden
+   * göndermiyor, bu bir eksiklik ve iletildi; doğru kullanım `rapidapiHost` seçeneği.
+   *
+   * Elle konan başlık kaldırılmadı — canlıda ölçülerek doğrulanan yol oydu ve fazlalığın
+   * maliyeti yok. Bu test ikisinin AYNI değeri taşıdığını sabitler: biri güncellenip
+   * diğeri unutulursa, iki host arasında sessiz bir çelişki doğardı.
+   */
+  const s = nacIstemciSecenekleri("sahte-token");
+  assert.equal(s.rapidapiHost, "network-as-code.nokia.rapidapi.com");
+  assert.equal(
+    s.rapidapiHost,
+    s.headers["X-RapidAPI-Host"],
+    "seçenek ile başlık aynı host'u göstermeli"
+  );
+});
