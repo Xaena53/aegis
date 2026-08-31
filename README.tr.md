@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-646-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-655-brightgreen.svg)](test/)
 [![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-94.27%25-brightgreen.svg)](#test-metrikleri)
 
 🇬🇧 [English README](README.md)
@@ -29,7 +29,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Üç CAMARA halkası Nokia'nın canlı platformuna karşı doğrulandı; %94.27 satır kapsamıyla 646 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Altı CAMARA halkasının beşi Nokia'nın canlı platformuna karşı doğrulandı; %94.27 satır kapsamıyla 655 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Device Status halkaları (hesap katmanımızda uç nokta yok) · Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz) · Meta yazmaları (canlı jeton yok) |
 
 ## İçindekiler
@@ -144,6 +144,44 @@ unit ister, Google micros. Aynı sayıyı iki API'ye göndermek birinde 100 kat 
 `1.005 * 100` ikili kayan noktada `100.49999999999999` olduğu için düz bir `Math.round`
 müşteriyi sessizce eksiltir. Dönüşüm sabit basamak üzerinden yuvarlanıyor ve bir test bunu
 sabitliyor.
+
+### Sinyal bozuk ama ortada bir kötülük yok
+
+Her kusurlu sinyalde reddeden bir kapı, çok sayıda dürüst insanı reddeder. Meşru SIM ve cihaz
+değişimleri her gün oluyor; seyahat, biten pil, cevap vermeyen şebeke de öyle. Düz kapalı-arıza
+kuralında bu kullanıcıların her biri, ileri gidecek hiçbir yol olmadan geri çevrilir — bu tasarımı
+inceleyen Nokia mentörümüz Aleksi Puranen'in işaret ettiği nokta tam da buydu.
+
+Artık bozuk bir sinyal isteği bitirmiyor. `ADSPILOT_STEPUP` açıkken, olağan bir insan durumunu
+anlatan bir neden — SIM değişti, cihaz değişti, hat yurt dışında, telefon erişilemez, ağ sessiz —
+reddetmek yerine kademeyi yükseltiyor: kalan halkalar yine de soruluyor ve hepsi **gerçek bir
+kanaldan** temiz cevap verirse işlem, bozulan sinyali adıyla söyleyerek başlayan bir insan
+istemine gidiyor. Onay artık sıradan bir harcamaya değil, o belirli bozuk duruma veriliyor.
+
+Asıl ilginç kısım sınırlar; her biri bir eksiklik değil, bilinçli bir çizgi:
+
+- **Çağrı yönlendirme açıkken asla yükseltilmez.** Sonuna kadar götürene dek tersmiş gibi
+  görünen kural bu. Yükseltme bir insana bir kanal üzerinden — çağrı, mesaj — ulaşır; koşulsuz
+  yönlendirme ise o kanalın tam olarak saldırganın eline geçtiği anlamına gelir. Orada yükseltmek,
+  güçlü doğrulamayı ona teslim etmektir. Her hâlükârda reddeder.
+- **Simüle bir halka, bozuk gerçek bir sinyale kefil olamaz.** Aksi hâlde demo kipinde tek bir
+  ortam değişkeni gerçek bir SIM değişimini örterdi; bu da demo kipini kapıdan geçmenin en ucuz
+  yolu yapardı.
+- **Doğrulayan gerçek halka yoksa yükseltme de yoktur.** Yükseltme ikinci bir kanıta dayanır;
+  kanıt yoksa "sinyal bozuktu ve soracak kimse yoktu, geçsin" demek olurdu — kapının tam
+  kapanması gereken anda açılması.
+- **İkinci bozuk sinyal işi bitirir.** Biri sıradan bir salı günüdür. İki bağımsız olanı bir
+  örüntüdür ve yükseltme yalnız birincisinin hesabını verir.
+- **Yapılandırma hataları yükseltilmez.** Çelişkili kurulum operatörün sorunudur, kullanıcının
+  değil; hiçbir kimlik kanıtı onu düzeltmez.
+
+Denetim izi `kademeli` sonucunu kendi başına yazar, asla `gecti` içine katlamaz — yanında nedeni
+ve hangi halkaların kefil olduğu durur. "Hiçbir şey bozuk değildi" ile "bir şey bozuktu ve
+yükselterek geçtik" farklı güven seviyeleridir; tek bir başarı etiketi, kapının yumuşadığı anları
+hiç zorlanmadığı anlardan ayırt edilemez kılardı.
+
+Varsayılan kapalı geliyor. Yükseltme bir gevşemedir ve gevşeme, operatörün sesli olarak seçtiği
+bir şey olmalıdır.
 
 ## Çalışırken görmek
 
@@ -353,7 +391,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 646 çevrimdışı test
+npm test           # 655 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 ```
 
@@ -365,7 +403,7 @@ kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var
 ### Test metrikleri
 
 ```
-646 test · 0 hata          satır %94.27  ·  dal %88.86  ·  fonksiyon %92.80
+655 test · 0 hata          satır %94.27  ·  dal %88.86  ·  fonksiyon %92.80
 ```
 
 | Alan | Satır | Dal | Fonksiyon |

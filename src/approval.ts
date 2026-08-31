@@ -132,6 +132,29 @@ export async function onayAl(
     kararYaz(agKararKaydiOlustur(ozet.eylem, ozet.risk, ag, ozet.hesapId, ozet.tutar));
     if (ag.engel) return { onaylandi: false, kanal: "ag", mesaj: ag.engel };
     if (ag.kanit.length) ozet = { ...ozet, satirlar: [...ozet.satirlar, ...ag.kanit] };
+
+    /**
+     * KADEMELİ DOĞRULAMA İSTEMİN BAŞINA YAZILIR — kanıt satırlarının arasına DEĞİL.
+     *
+     * Yükseltme, "ağ bir şey söyledi ama yine de sana soruyoruz" demektir; insanın
+     * onaylayacağı şey artık sıradan bir harcama değil, BOZUK BİR SİNYALE RAĞMEN
+     * yapılan bir harcamadır. Bu bilgi madde işaretlerinin arasında altıncı satır
+     * olarak dururken kimse onu okumaz — okunmayan bir uyarı, hiç gösterilmemiş bir
+     * uyarıyla aynıdır.
+     *
+     * Soru metni de değişir: "Onaylıyor musun?" yerine bozuk sinyalin adını taşıyan
+     * bir soru sorulur, böylece onay o sinyale VERİLMİŞ olur.
+     */
+    if (ag.kademe) {
+      ozet = {
+        ...ozet,
+        eylem:
+          `⚠ AĞ SİNYALİ BOZUK — ${ag.kademe.aciklama}.\n` +
+          `Bu, tek başına saldırı kanıtı değil; olağan bir durum da olabilir. Bu yüzden ` +
+          `işlem reddedilmedi, ONAYINA bağlandı.\n\n${ozet.eylem}`,
+        soru: `Bozuk ağ sinyaline RAĞMEN onaylıyor musun?`,
+      };
+    }
   }
 
   if (!elicitationVar(server)) {

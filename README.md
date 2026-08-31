@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-646-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-655-brightgreen.svg)](test/)
 [![Coverage](https://img.shields.io/badge/line%20coverage-94.27%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
@@ -29,7 +29,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. Three CAMARA links verified against Nokia's live platform; 646 automated tests at 94.27% line coverage; Docker deployment |
+| **Status** | Working software. Five of six CAMARA links verified against Nokia's live platform; 655 automated tests at 94.27% line coverage; Docker deployment |
 | **Not yet** | Device Status links (absent on our account tier) · Number Verification (device-side OIDC, uncallable from a server) · Meta writes (no live token) |
 
 ## Contents
@@ -120,7 +120,7 @@ never mistaken for "asked and passed".
 > the decision log as `"simSwapKanali":"gercek"`. **The caveat that matters:** the account is
 > in the platform's *Simulator mode*, so the request, auth, routing and response shape are
 > real while the subscriber behind the number is Nokia's simulation — the wire is proven, the
-> operator integration is not. Links 5 and 6 have since been verified live too — device swap and call forwarding both answer through the gate with a `gercek` trace. Links 3 and 4 are blocked by the account rather than the code: every Device Status path returns `404 Endpoint does not exist` on the free Simulator tier, while the three working links answer `200` with the same key. A green test
+> operator integration is not. Links 5 and 6 have since been verified live too — device swap and call forwarding both answer through the gate with a `gercek` trace. Links 3 and 4 went live on 31 Aug 2026: the `404 Endpoint does not exist` we had been chasing came from hand-built URLs carrying a `/passthrough/camara/v1/` prefix that the SDK does not use for Device Status. Nokia mentor Aleksi Puranen supplied the correct paths and both now answer `200` through the gate. Only Number Verification stays simulation-only, because a device-side OIDC flow cannot be called from a back end at all. A green test
 > suite remains evidence about **decision logic**, not about the wire.
 >
 > One finding worth repeating: the SDK does not send the `X-RapidAPI-Host` header, and
@@ -152,6 +152,45 @@ minor units, Google wants micros. The same number sent to both APIs is a 100× e
 of them, and `1.005 * 100` is `100.49999999999999` in binary floating point, so a plain
 `Math.round` silently shortchanges the customer. The conversion rounds through a fixed
 decimal, and a test pins it.
+
+### When the signal breaks but nothing is wrong
+
+A gate that refuses on every imperfect signal refuses a great many honest people. Legitimate
+SIM swaps and device changes happen every day; so do travel, flat batteries and networks that
+simply do not answer. Under a flat fail-closed rule each of those users is turned away with no
+way forward — a point made by our Nokia mentor, Aleksi Puranen, reviewing this design.
+
+So a degraded signal no longer ends the request. With `ADSPILOT_STEPUP` on, a reason that
+describes an ordinary human situation — SIM changed, device changed, line abroad, phone
+unreachable, network silent — escalates instead of refusing: the remaining links are asked
+anyway, and if every one of them answers clean **on a real channel**, the action proceeds to a
+human prompt that leads with the broken signal by name and asks consent to that specific
+degraded state rather than to a routine spend.
+
+The limits are the interesting part, and each is a deliberate line rather than an omission:
+
+- **Call forwarding active never escalates.** This is the one that looks backwards until you
+  follow it through. A step-up is carried to a person over a channel — a call, a message — and
+  unconditional forwarding means that channel is exactly what an attacker has taken. Escalating
+  there hands the stronger check to them. It refuses, always.
+- **A simulated link cannot vouch for a broken real one.** Otherwise a single environment
+  variable in demo mode would paper over a genuine SIM swap, which would make demo mode the
+  cheapest way through the gate.
+- **No corroborating real link, no escalation.** Escalation rests on a second piece of evidence;
+  without one it would mean "the signal was broken and there was nobody to ask, so let it
+  through" — opening the gate at precisely the moment it should close.
+- **A second broken signal ends it.** One is an ordinary Tuesday. Two independent ones are a
+  pattern, and the escalation only answers for the first.
+- **Configuration faults never escalate.** A contradictory setup is the operator's problem, not
+  the user's, and no amount of identity proof fixes it.
+
+The audit trail records `kademeli` as its own outcome, never folded into `gecti`, along with the
+reason and which links vouched for it. "Nothing was wrong" and "something was wrong and we
+escalated past it" are different levels of trust, and a single success label would make the
+moments the gate softened indistinguishable from the moments it was never tested.
+
+It ships default-off. Escalation is a loosening, and a loosening should be something an operator
+chooses out loud.
 
 ## Seeing it run
 
@@ -384,7 +423,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 646 offline tests
+npm test           # 655 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run prova -- --musteri <id>   # stage-day preflight for the demo (writes nothing)
 npm run demo  -- --musteri <id>   # the three-act network-trust demo, dry by default
@@ -400,7 +439,7 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-646 tests · 0 failures        line 94.27%  ·  branch 88.86%  ·  function 92.80%
+655 tests · 0 failures        line 94.27%  ·  branch 88.86%  ·  function 92.80%
 ```
 
 | Area | Line | Branch | Function |

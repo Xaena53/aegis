@@ -46,8 +46,17 @@
 import { appendFileSync } from "node:fs";
 import type { AgKarar, AgRisk, HalkaIzi, NvIzi, RetNedeni, SimSwapIzi } from "./networkTrust.js";
 
-/** Kapının verdiği karar: geçti / reddetti / hiçbir halka sorgu yapmadı. */
-export type KararSonucu = "gecti" | "ret" | "kapali";
+/**
+ * Kapının verdiği karar.
+ *
+ * "kademeli" AYRI bir sonuçtur ve "gecti"ye katlanmaz. Denetçi için bu ayrım işin
+ * kendisidir: "hiçbir sinyal bozuk değildi" ile "bir sinyal bozuktu, diğerleri temiz
+ * geldiği için insana sorularak geçildi" aynı güven seviyesi değildir. Tek bir "gecti"
+ * etiketi altında toplanırlarsa, kapının gevşediği anlar kapının hiç zorlanmadığı
+ * anlardan ayırt edilemez — ve sonradan "kaç kez yükseltme yaptık" sorusu
+ * cevaplanamaz hâle gelir.
+ */
+export type KararSonucu = "gecti" | "kademeli" | "ret" | "kapali";
 
 export interface KararKaydi {
   /** ISO-8601 zaman damgası. */
@@ -62,6 +71,12 @@ export interface KararKaydi {
   hesapId?: string;
   risk: AgRisk;
   karar: KararSonucu;
+  /**
+   * Kademeli doğrulama devreye girdiyse, yükseltmeyi TAŞIYAN halkaların id'leri.
+   * Yükseltme yoksa alan hiç yazılmaz — "yükseltme olmadı" ile "olduğu hâlde
+   * doğrulayanı kaydedilmedi" birbirine karışmasın.
+   */
+  kademeDogrulayan?: string[];
   /** 1. halka: gerçek CAMARA sorgusu mu, simülasyon mu, kapalı mı, hiç çalışamadı mı. */
   simSwapKanali: SimSwapIzi;
   /** 2. halka (Number Verification); halka hiç koşmadıysa alan YOKTUR. */
@@ -194,7 +209,7 @@ export function agKararKaydiOlustur(
     eylem: kisalt(eylem, EYLEM_AZAMI),
     hesapId: hesapId?.trim() ? kisalt(hesapId, HESAP_ID_AZAMI) : undefined,
     risk,
-    karar: ag.engel ? "ret" : hicSorguYok(iz.simSwap) ? "kapali" : "gecti",
+    karar: ag.engel ? "ret" : iz.kademe === "yukseltildi" ? "kademeli" : hicSorguYok(iz.simSwap) ? "kapali" : "gecti",
     simSwapKanali: iz.simSwap,
     nvKanali: iz.nv,
     reachKanali: iz.reach,
@@ -205,7 +220,13 @@ export function agKararKaydiOlustur(
     devSwapPencereSaat: iz.devSwapPencereSaat,
     tutar: tutarDogrula(tutar),
     maskeliNumara: maskeliDogrula(iz.maskeliNumara),
-    retNedeniKisa: ag.engel ? iz.retNedeni : undefined,
+    /**
+     * Yükseltilen kararda da yazılır. Ret nedeni burada "neden reddedildi"nin değil,
+     * "hangi sinyal bozuktu"nun adıdır; yükseltme kaydında o ad olmazsa denetçi
+     * kademenin NEDEN devreye girdiğini hiç öğrenemez.
+     */
+    retNedeniKisa: ag.engel || iz.kademe === "yukseltildi" ? iz.retNedeni : undefined,
+    kademeDogrulayan: iz.kademe === "yukseltildi" ? iz.kademeDogrulayan : undefined,
   };
 }
 

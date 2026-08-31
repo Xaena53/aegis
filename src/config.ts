@@ -38,6 +38,16 @@ export interface AdsPilotConfig {
   /** SIM-swap lookback window for high-risk actions (hours). */
   simSwapWindowHours: number;
   /**
+   * KADEMELİ DOĞRULAMA (ADSPILOT_STEPUP) — varsayılan KAPALI.
+   *
+   * Açıkken, olağan bir kullanıcı durumundan doğan bozuk ağ sinyali (SIM/cihaz
+   * değişimi, seyahat, kapalı telefon, cevapsız ağ) düz retle bitmez: kalan halkalar
+   * gerçek kanaldan temiz dönerse işlem, bozulan sinyali adıyla söyleyen daha güçlü
+   * bir insan doğrulamasına bağlanır. Kapalı varsayılan bilinçlidir — yükseltme bir
+   * gevşemedir ve operatör onu açıkça seçmelidir.
+   */
+  stepUp: boolean;
+  /**
    * SİMÜLASYON kanalı ("temiz" | "degisti"): tanımlıysa gerçek NaC SDK'sı yerine simüle
    * kanal kullanılır (jüri demosu token'sız çalışır). Değer burada DOĞRULANMAZ: bozuk
    * bir env değeri sunucuyu başlangıçta düşürmemeli, doğrulama anında Türkçe hatayla
@@ -128,8 +138,10 @@ export function nacConfigFromEnv(): Pick<
   | "devSwapCheck"
   | "callFwdSimulate"
   | "callFwdCheck"
+  | "stepUp"
 > {
   return {
+    stepUp: parseBool(process.env.ADSPILOT_STEPUP, false),
     nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
     approverPhone: process.env.ADSPILOT_APPROVER_PHONE?.trim() || undefined,
     // Bilerek ham geçirilir; "temiz"/"degisti" doğrulaması karar anında yapılır.
@@ -202,6 +214,9 @@ export function nacAnahtarDilimi(nac: NacDilimi): string[] {
     nac.devSwapSimulate ?? "",
     String(nac.callFwdCheck ?? ""),
     nac.callFwdSimulate ?? "",
+    // Kademe bir GEVŞEMEDİR: anahtara girmezse, yükseltmeyi açan operatör kapalıyken
+    // üretilmiş bağlamı almaya devam eder ve açtığını sandığı yol hiç koşmaz.
+    String(nac.stepUp ?? ""),
   ];
 }
 

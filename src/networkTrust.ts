@@ -312,7 +312,62 @@ export interface AgIz {
   /** maskele() çıktısı; numarayı gerçekten değerlendiren bir halka koştuysa vardır. */
   maskeliNumara?: string;
   retNedeni?: RetNedeni;
+  /**
+   * KADEMELİ DOĞRULAMA İZİ — karar düz bir "geçti" değilse burada görünür.
+   *
+   * "yukseltildi": bir halka bozuk sinyal verdi ama zincir onu reddetmek yerine
+   * KADEMEYİ YÜKSELTTİ — kalan bütün halkalar gerçek kanaldan temiz döndüğü için
+   * işlem, bozulan sinyali açıkça adlandıran daha güçlü bir insan doğrulamasına ve
+   * düşürülmüş bir tavana bağlandı.
+   *
+   * Denetçi için bu ayrım kritiktir: "temiz geçti" ile "bozuk sinyale rağmen
+   * yükseltilerek geçti" aynı şey değildir ve tek bir 'gecti' etiketi ikisini
+   * birbirine karıştırırdı. Yükseltmeye sebep olan sinyal `retNedeni` alanında,
+   * doğrulayan halkalar `kademeDogrulayan` alanında durur.
+   */
+  kademe?: "yukseltildi";
+  /** Yükseltmeyi taşıyan halkaların id'leri — hangi sinyallerin temiz geldiği. */
+  kademeDogrulayan?: string[];
 }
+
+/**
+ * KADEMELİ DOĞRULAMAYA UYGUN RET NEDENLERİ.
+ *
+ * Mentör geri bildirimi (Aleksi Puranen, Nokia, 31.08.2026): "Meşru SIM ve cihaz
+ * değişimleri her gün oluyor. Sert kapalı-arıza kapısıyla bu kullanıcıların her biri,
+ * ileri gidecek hiçbir yol olmadan reddediliyor."
+ *
+ * Buradaki nedenler "kullanıcının başına gelen olağan şeyler"dir: telefonunu
+ * değiştirmiştir, SIM'ini yenilemiştir, seyahattedir, telefonu kapalıdır ya da ağ
+ * cevap vermemiştir. Hiçbiri tek başına saldırı KANITI değildir; hepsi "bu sinyal
+ * artık kimlik kanıtı olarak kullanılamaz" demektir. Doğru cevap kapıyı kapatmak
+ * değil, daha güçlü bir kanıt istemektir.
+ */
+const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
+  "sim-degisti",
+  "cihaz-degisti",
+  "cihaz-erisilemez",
+  "konum-beklenmedik",
+  "ag-yanitsiz",
+]);
+
+/**
+ * KADEMEYE ASLA UYGUN OLMAYANLAR — ve listede olmayan her neden zaten uygun değildir
+ * (varsayılan RET tarafıdır). Burada yalnız GEREKÇELERİ yazılıdır:
+ *
+ * `cagri-yonlendirme-acik` — en önemlisi ve sezgiye aykırı olanı. Çağrı yönlendirme
+ *   açıkken kademeyi yükseltmek, daha güçlü doğrulamayı SALDIRGANA göndermek demektir:
+ *   yükseltmenin taşıyıcısı (çağrı, SMS) tam da ele geçirilmiş olan kanaldır. Yani
+ *   burada yükseltme güvenliği artırmaz, saldırganın işini kolaylaştırır.
+ *
+ * `nv-uyusmadi` — numara doğrulaması bir "okunamadı" değil, doğrudan bir UYUŞMAZLIK
+ *   ifadesidir: ağ, hattın beklenen numara olmadığını söylüyor.
+ *
+ * `yapilandirma-celiskili`, `beklenen-ulke-gecersiz`, `onaylayici-numarasi-yok`,
+ * `simulasyon-degeri-tanimsiz` — bunlar kullanıcının değil OPERATÖRÜN durumudur.
+ *   Daha güçlü bir kimlik doğrulaması yanlış yapılandırmayı düzeltmez; onları
+ *   yükseltmek, bir yapılandırma hatasını kullanıcı doğrulamasıyla örtmek olurdu.
+ */
 
 export interface AgKarar {
   /** Refusal text for the agent; undefined when the action may proceed. */
@@ -321,6 +376,22 @@ export interface AgKarar {
   kanit: string[];
   /** Kararın yapısal izi — HER dönüş noktası doldurur (bkz. AgIz). */
   iz: AgIz;
+  /**
+   * Karar kademeli doğrulamayla ayakta kaldıysa doldurulur; `engel` ile BİRLİKTE
+   * asla bulunmaz. Onay katmanı bunu görünce farklı bir istem gösterir ve tavanı
+   * düşürür — yani yükseltme sessiz bir "geçti" değildir.
+   */
+  kademe?: KademeKarari;
+}
+
+/** Kademeli doğrulamanın onay katmanına taşıdığı bilgi. */
+export interface KademeKarari {
+  /** Yükseltmeye sebep olan bozuk sinyal. */
+  neden: RetNedeni;
+  /** Bozulan sinyalin insan diliyle karşılığı — onay isteminde aynen gösterilir. */
+  aciklama: string;
+  /** Yükseltmeyi taşıyan, GERÇEK kanaldan temiz dönen halkaların id'leri. */
+  dogrulayan: string[];
 }
 
 /** NV halkasının kendi sonucu; zincir birleşiminde AgIz'e katılır. */
@@ -353,6 +424,18 @@ export interface AgAyar {
   nacToken?: string;
   approverPhone?: string;
   simSwapWindowHours: number;
+  /**
+   * KADEMELİ DOĞRULAMA (ADSPILOT_STEPUP). Varsayılan KAPALI ve bu bilinçli.
+   *
+   * Açıldığında, olağan bir kullanıcı durumundan doğan bozuk sinyal (SIM/cihaz
+   * değişimi, seyahat, kapalı telefon, cevapsız ağ) düz retle sonuçlanmaz: kalan
+   * bütün halkalar gerçek kanaldan temiz dönerse işlem, bozulan sinyali adıyla
+   * söyleyen daha güçlü bir insan doğrulamasına ve düşürülmüş bir tavana bağlanır.
+   *
+   * Kapalı varsayılan, kapının bugünkü davranışını değiştirmemek içindir: yükseltme
+   * bir GEVŞETMEDİR ve gevşemeyi operatör açıkça seçmelidir.
+   */
+  stepUp?: boolean;
   /**
    * SİMÜLASYON kanalı (ADSPILOT_NAC_SIMULATE): "temiz" | "degisti". Tanımlıysa gerçek
    * SDK hiç kullanılmaz — jüri demoları NaC token'sız çalışır. Değer burada tip olarak
@@ -1755,56 +1838,111 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
  * yalnızca reddetmek için yeni bir sebep ekleyebilir.
  */
 export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
-  const simSwap = await simSwapKatmani(ayar, risk);
-  if (simSwap.engel) return simSwap;
+  /**
+   * ZİNCİR BİRLEŞİMİ + KADEMELİ DOĞRULAMA.
+   *
+   * Koşan her halka KENDİ iz alanına yazar; tek bir alana ASLA ezilmez. "Gerçek CAMARA
+   * SIM-Swap sorgusu + NV simülasyonu + kapalı konum halkası" ile "hepsi simülasyon"
+   * farklı güven seviyeleridir ve denetim izinin tek işi bu ayrımı kanıtlamaktır.
+   * Halka eklendikçe bu kural yeniden kazanılır: yeni halka hem KENDİ AgIz alanını hem
+   * de kararGunlugu.ts'teki kendi kayıt alanını ister.
+   *
+   * BOZUK SİNYALDE NE OLUR. Kapı eskiden ilk engelde dönüyordu. Artık engelin CİNSİNE
+   * bakılıyor:
+   *
+   *   - Yükseltilemez bir neden (çağrı yönlendirme açık, numara uyuşmazlığı,
+   *     yapılandırma hataları) → eskisi gibi ANINDA ret. Kalan halkalar hiç çağrılmaz;
+   *     reddedilmiş bir işlem için ağa gitmenin anlamı yok.
+   *   - Yükseltilebilir bir neden (SIM/cihaz değişimi, seyahat, kapalı telefon, cevapsız
+   *     ağ) ve kademe AÇIK → zincir DURMAZ. Kalan halkalar, bozulan sinyali
+   *     doğrulayacak kanıt için koşturulur.
+   *
+   * Sonuçta üç şeyden biri olur ve üçü de izde ayırt edilebilir:
+   *   ret            — doğrulayan halka da bozuk çıktı, ya da hiç gerçek doğrulayan yok
+   *   yükseltilerek geçti — kalan halkaların HEPSİ gerçek kanaldan temiz döndü
+   *   temiz geçti    — hiç bozuk sinyal olmadı
+   */
+  const kademeAcik = ayar.stepUp === true;
+
+  /** Yükseltme beklemeye alındıysa: ilk bozuk sinyalin kaydı. */
+  let bekleyen: { engel: string; neden: RetNedeni; aciklama: string } | undefined;
+  /**
+   * GERÇEK kanaldan temiz dönen HER halka — sırasından bağımsız.
+   *
+   * İlk hâli yalnız bozuk sinyalden SONRA koşanları sayıyordu ve bu, doğrulamayı
+   * zincirdeki sıraya bağlıyordu: erişilebilirlik halkası konum halkasından önce
+   * koştuğu için, temiz ve gerçek olmasına rağmen doğrulayan sayılmıyordu. Oysa
+   * "bu sinyal temiz geldi" ifadesinin, bozuk sinyalin ondan önce mi sonra mı
+   * geldiğiyle ilgisi yoktur.
+   */
+  const temizGercek: string[] = [];
+
+  let kanit: string[] = [];
+  let iz: AgIz = { simSwap: "kapali" };
 
   /**
-   * ZİNCİR BİRLEŞİMİ. Koşan her halka KENDİ iz alanına yazar; tek bir alana ASLA
-   * ezilmez. "Gerçek CAMARA SIM-Swap sorgusu + NV simülasyonu + kapalı konum halkası"
-   * ile "hepsi simülasyon" farklı güven seviyeleridir ve denetim izinin tek işi bu
-   * ayrımı kanıtlamaktır. Halka eklendikçe bu kural yeniden kazanılır: yeni halka
-   * hem KENDİ AgIz alanını hem de kararGunlugu.ts'teki kendi kayıt alanını ister.
+   * Tek bir halkanın sonucunu zincire katar ve akışın devam edip etmeyeceğini söyler.
    *
-   * `retNedeni` yalnız reddeden halkadan gelebilir: önceki halkaların engeli zaten
-   * erken dönmüştür, dolayısıyla bu noktada tanımsızdır.
+   * `gercekMi` bilerek ayrı bir parametre: SİMÜLE bir halka, bozulmuş GERÇEK bir
+   * sinyali doğrulayamaz. Aksi hâlde demo kipinde tek bir env değeri, gerçek bir SIM
+   * değişimini "doğrulanmış" hâle getirirdi — kapının en kolay atlatılma yolu bu olurdu.
    */
-  let kanit = [...simSwap.kanit];
-  let iz: AgIz = simSwap.iz;
+  const kat = (
+    id: string,
+    sonuc: { engel?: string; kanit: string[]; retNedeni?: RetNedeni },
+    gercekMi: boolean,
+    aciklama: string
+  ): "devam" | "dur" => {
+    if (sonuc.engel) {
+      const neden = sonuc.retNedeni;
+      const yukseltilebilir = kademeAcik && !bekleyen && neden !== undefined && KADEME_UYGUN.has(neden);
+      if (!yukseltilebilir) return "dur";
+      bekleyen = { engel: sonuc.engel, neden: neden!, aciklama };
+      return "devam";
+    }
+    kanit = [...kanit, ...sonuc.kanit];
+    if (gercekMi) temizGercek.push(id);
+    return "devam";
+  };
+
+  const simSwap = await simSwapKatmani(ayar, risk);
+  kanit = [...simSwap.kanit];
+  iz = simSwap.iz;
+  if (simSwap.engel) {
+    const neden = simSwap.iz.retNedeni;
+    if (!kademeAcik || neden === undefined || !KADEME_UYGUN.has(neden)) return simSwap;
+    bekleyen = {
+      engel: simSwap.engel,
+      neden,
+      aciklama: "onaylayıcının SIM kartı yakın zamanda değişmiş",
+    };
+    kanit = [];
+  } else if (simSwap.iz.simSwap === "gercek") {
+    // Bozuk sinyal SONRADAN gelirse bu halka onu doğrulayanlar arasında sayılır.
+    temizGercek.push("simSwap");
+  }
 
   const nv = nvKatmani(ayar, risk);
   if (nv) {
-    iz = {
-      ...iz,
-      nv: nv.nv,
-      maskeliNumara: iz.maskeliNumara ?? nv.maskeliNumara,
-      retNedeni: nv.retNedeni,
-    };
-    if (nv.engel) return { engel: nv.engel, kanit: [], iz };
-    kanit = [...kanit, ...nv.kanit];
+    iz = { ...iz, nv: nv.nv, maskeliNumara: iz.maskeliNumara ?? nv.maskeliNumara, retNedeni: nv.retNedeni ?? iz.retNedeni };
+    // NV yalnız simülasyondur: doğrulayan sayılmaz (gercekMi = false).
+    if (kat("nv", nv, false, "numara doğrulaması") === "dur") return { engel: nv.engel, kanit: [], iz };
   }
 
   const reach = await erisilebilirlikKatmani(ayar, risk);
   if (reach) {
-    iz = {
-      ...iz,
-      reach: reach.halka,
-      maskeliNumara: iz.maskeliNumara ?? reach.maskeliNumara,
-      retNedeni: reach.retNedeni,
-    };
-    if (reach.engel) return { engel: reach.engel, kanit: [], iz };
-    kanit = [...kanit, ...reach.kanit];
+    iz = { ...iz, reach: reach.halka, maskeliNumara: iz.maskeliNumara ?? reach.maskeliNumara, retNedeni: reach.retNedeni ?? iz.retNedeni };
+    if (kat("reach", reach, reach.halka === "gercek", "onaylayıcının cihazı şebekeden erişilemez durumda") === "dur") {
+      return { engel: reach.engel, kanit: [], iz };
+    }
   }
 
   const loc = await konumKatmani(ayar, risk);
   if (loc) {
-    iz = {
-      ...iz,
-      loc: loc.halka,
-      maskeliNumara: iz.maskeliNumara ?? loc.maskeliNumara,
-      retNedeni: loc.retNedeni,
-    };
-    if (loc.engel) return { engel: loc.engel, kanit: [], iz };
-    kanit = [...kanit, ...loc.kanit];
+    iz = { ...iz, loc: loc.halka, maskeliNumara: iz.maskeliNumara ?? loc.maskeliNumara, retNedeni: loc.retNedeni ?? iz.retNedeni };
+    if (kat("loc", loc, loc.halka === "gercek", "onaylayıcının hattı beklenen ülke dışında görülüyor") === "dur") {
+      return { engel: loc.engel, kanit: [], iz };
+    }
   }
 
   const devSwap = await cihazDegisimKatmani(ayar, risk);
@@ -1813,7 +1951,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
       ...iz,
       devSwap: devSwap.halka,
       maskeliNumara: iz.maskeliNumara ?? devSwap.maskeliNumara,
-      retNedeni: devSwap.retNedeni,
+      retNedeni: devSwap.retNedeni ?? iz.retNedeni,
       /**
        * KENDİ alanına yazar, `pencereSaat`e DEĞİL: o alan SIM-Swap halkasınındır ve iki
        * halkanın penceresi tek alana ezilirse denetçi hangi sorunun hangi pencereyle
@@ -1821,23 +1959,49 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
        */
       devSwapPencereSaat: devSwap.pencereSaat,
     };
-    if (devSwap.engel) return { engel: devSwap.engel, kanit: [], iz };
-    kanit = [...kanit, ...devSwap.kanit];
+    if (kat("devSwap", devSwap, devSwap.halka === "gercek", "onaylayıcının cihazı yakın zamanda değişmiş") === "dur") {
+      return { engel: devSwap.engel, kanit: [], iz };
+    }
   }
 
   const callFwd = await cagriYonlendirmeKatmani(ayar, risk);
   if (callFwd) {
-    iz = {
-      ...iz,
-      callFwd: callFwd.halka,
-      maskeliNumara: iz.maskeliNumara ?? callFwd.maskeliNumara,
-      retNedeni: callFwd.retNedeni,
-    };
-    if (callFwd.engel) return { engel: callFwd.engel, kanit: [], iz };
-    kanit = [...kanit, ...callFwd.kanit];
+    iz = { ...iz, callFwd: callFwd.halka, maskeliNumara: iz.maskeliNumara ?? callFwd.maskeliNumara, retNedeni: callFwd.retNedeni ?? iz.retNedeni };
+    if (kat("callFwd", callFwd, callFwd.halka === "gercek", "çağrı yönlendirme") === "dur") {
+      return { engel: callFwd.engel, kanit: [], iz };
+    }
   }
 
-  return { kanit, iz };
+  if (!bekleyen) return { kanit, iz };
+
+  /**
+   * YÜKSELTME KARARI. Buraya yalnız yükseltilebilir bir bozuk sinyalle gelinir ve
+   * kalan halkaların hiçbiri reddetmemiştir (reddeden olsaydı yukarıda dönülürdü).
+   *
+   * GEÇMEK İÇİN EN AZ BİR GERÇEK DOĞRULAYAN ŞART. Doğrulayansız bir yükseltme,
+   * "sinyal bozuktu ama sorabileceğimiz başka kimse yoktu, o hâlde geçsin" demektir —
+   * yani kapının kapandığı tek durumda kapıyı açmak. Simülasyon kanalları bilerek
+   * sayılmaz: demo kipinde tek bir env değeri gerçek bir SIM değişimini örtemesin.
+   */
+  if (!temizGercek.length) {
+    return {
+      engel:
+        bekleyen.engel +
+        " (kademeli doğrulama açık, ama sinyali doğrulayacak GERÇEK bir ağ halkası koşmadı)",
+      kanit: [],
+      iz: { ...iz, retNedeni: bekleyen.neden },
+    };
+  }
+
+  return {
+    kanit: [
+      ...kanit,
+      `KADEMELİ DOĞRULAMA: ${bekleyen.aciklama} — işlem reddedilmedi, daha güçlü ` +
+        `doğrulamaya bağlandı (${temizGercek.length} bağımsız ağ sinyali temiz).`,
+    ],
+    iz: { ...iz, kademe: "yukseltildi", retNedeni: bekleyen.neden, kademeDogrulayan: temizGercek },
+    kademe: { neden: bekleyen.neden, aciklama: bekleyen.aciklama, dogrulayan: temizGercek },
+  };
 }
 
 /**
