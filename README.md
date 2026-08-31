@@ -439,6 +439,7 @@ npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
 npm test           # 661 offline tests
 npm run smoke      # live checks against your real Google Ads account
+npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
 npm run prova -- --musteri <id>   # stage-day preflight for the demo (writes nothing)
 npm run demo  -- --musteri <id>   # the three-act network-trust demo, dry by default
 ```
@@ -484,6 +485,28 @@ hops. Each of those could be deleted with the suite still passing. They cannot n
 The same discipline surfaced two defects that no test was asking about: report summaries
 counted unfiltered rows while printing the filtered table, and a negative amount was
 rejected by two layers that masked each other, so neither could be shown to work.
+
+### Live trust-chain verification
+
+`npm run smoke` proves the Google side against a real account. `npm run agtest` does the same
+for the network side: twenty-two checks against Nokia's live platform in one command, covering
+every link, the step-up path and the risk mapping.
+
+Every check runs through the production path — `nacIstemciSecenekleri()` and `agDogrula()` —
+never a hand-built URL. That distinction is not pedantry. The 404s that had us believing Device
+Status was disabled on our account came from exactly such hand-built URLs; the SDK's own paths
+were right the whole time. A gate can only be verified by going through the gate.
+
+What it asserts, live: links 3 and 4 answer on real channels; an expected-country mismatch
+produces a genuine refusal while the observed country never leaks into the refusal text; the
+lookback windows really are 24h for a budget rise and 72h for a go-live; a number the platform
+answers `404` for is treated as inconclusive and refused, with the upstream body and the phone
+number kept out of what the agent sees; step-up escalates where it should and refuses where it
+must, including the case where the broken signal has nothing left to corroborate it; and the
+risk mapping runs one link for a budget rise and the whole chain for a go-live.
+
+Green output is evidence that the decision logic and the wire work together — which the unit
+suite cannot give on its own, since it injects fake channels by design.
 
 ### Live smoke test
 

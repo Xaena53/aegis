@@ -25,6 +25,7 @@
     "agent": "node scripts/demo-agent.mjs",
     "demo": "node scripts/demo-senaryo.mjs",
     "prova": "node scripts/prova.mjs",
+    "agtest": "node --import tsx scripts/agDogrula.mts",
     "brain": "node scripts/growth-brain.mjs"
   },
   "engines": {

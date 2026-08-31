@@ -407,6 +407,7 @@ npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
 npm test           # 661 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
+npm run agtest     # güven zincirinin Nokia NaC platformuna karşı canlı kontrolü
 ```
 
 Testler, enjekte edilmiş sahte bir Google Ads context'iyle `InMemoryTransport` üzerinde
@@ -447,6 +448,28 @@ kontrolleri. Her biri paket yeşil kalarak silinebilirdi. Artık silinemez.
 Aynı disiplin, hiçbir testin sormadığı iki hatayı da ortaya çıkardı: rapor özetleri
 süzülmemiş satırları sayarken süzülmüş tabloyu basıyordu ve negatif tutarı eleyen iki
 katman birbirini maskeliyordu — yani ikisinin de çalıştığı gösterilemiyordu.
+
+### Güven zincirinin canlı doğrulaması
+
+`npm run smoke` Google tarafını gerçek hesaba karşı kanıtlar. `npm run agtest` aynı şeyi ağ
+tarafı için yapar: Nokia'nın canlı platformuna karşı tek komutta yirmi iki kontrol — bütün
+halkalar, kademeli doğrulama ve risk eşlemesi.
+
+Her kontrol üretim yolundan geçer — `nacIstemciSecenekleri()` ve `agDogrula()` — elle kurulmuş
+bir URL'den değil. Bu ayrım titizlik değil: Device Status'ün hesabımızda kapalı olduğuna
+inandıran 404'ler tam olarak öyle elle kurulmuş URL'lerden geliyordu, SDK'nın kendi yolları ise
+baştan beri doğruydu. Bir kapı ancak kapıdan geçerek doğrulanabilir.
+
+Canlı olarak neyi sabitliyor: halka 3 ve 4 gerçek kanaldan cevap veriyor; beklenen ülke
+tutmadığında gerçek bir ret üretiliyor ve gözlenen ülke ret metnine sızmıyor; geriye bakış
+pencereleri bütçe artışında gerçekten 24, yayına almada 72 saat; platformun `404` döndürdüğü bir
+numara sonuçsuz sayılıp reddediliyor, upstream gövdesi ve telefon numarası ajanın gördüğü metne
+girmiyor; kademe yükseltmesi gereken yerde yükseltiyor, gereken yerde reddediyor — bozuk sinyali
+doğrulayacak hiçbir şeyin kalmadığı durum dahil; ve risk eşlemesi bütçe artışında tek halka,
+yayına almada zincirin tamamını koşturuyor.
+
+Yeşil çıktı, karar mantığının ve telin BİRLİKTE çalıştığının kanıtıdır — birim paketi sahte
+kanal enjekte ettiği için bu kanıtı tek başına veremez.
 
 ### Canlı duman testi
 
