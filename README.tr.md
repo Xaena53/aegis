@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-655-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-660-brightgreen.svg)](test/)
 [![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-94.27%25-brightgreen.svg)](#test-metrikleri)
 
 🇬🇧 [English README](README.md)
@@ -29,7 +29,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Altı CAMARA halkasının beşi Nokia'nın canlı platformuna karşı doğrulandı; %94.27 satır kapsamıyla 655 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Altı CAMARA halkasının beşi Nokia'nın canlı platformuna karşı doğrulandı; %94.27 satır kapsamıyla 660 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Device Status halkaları (hesap katmanımızda uç nokta yok) · Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz) · Meta yazmaları (canlı jeton yok) |
 
 ## İçindekiler
@@ -144,6 +144,20 @@ unit ister, Google micros. Aynı sayıyı iki API'ye göndermek birinde 100 kat 
 `1.005 * 100` ikili kayan noktada `100.49999999999999` olduğu için düz bir `Math.round`
 müşteriyi sessizce eksiltir. Dönüşüm sabit basamak üzerinden yuvarlanıyor ve bir test bunu
 sabitliyor.
+
+### Bir karar kaç halka eder
+
+Her canlı halka onaya bir gidiş-dönüş, aslında sorunsuz olan bir harcamayı reddetmenin de bir
+yolunu daha ekler. Bu yüzden halka sayısı sabit değil — işlemin ne yaptığına bağlı. Bütçe artışı
+tek güçlü sinyali koşturur: SIM değişimi, asıl önemli soruyu yanıtlar; onay istemini birazdan
+alacak kişi hâlâ hesap sahibi mi? Kampanyayı yayına almak gerçek paranın hareket etmeye başladığı
+andır ve zincirin tamamını koşturur.
+
+Bu eşleme davranış olarak zaten böyleydi, ama beş ayrı katmanın içine dağılmış `risk !== "high"`
+kontrolleri hâlinde yaşıyordu: "burada hangi halkalar koşuyor?" sorusu ancak beş fonksiyon
+okunarak cevaplanıyor, birini değiştirmek de kimsenin göremediği bir politika değişikliği oluyordu.
+Artık tek ve dondurulmuş bir tablo, ve bir test tablonun gerçek davranışla aynı şeyi söylediğini
+sınıyor — kimsenin denetlemediği bir tablo kural değil, niyet beyanıdır.
 
 ### Sinyal bozuk ama ortada bir kötülük yok
 
@@ -391,7 +405,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 655 çevrimdışı test
+npm test           # 660 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 ```
 
@@ -403,7 +417,7 @@ kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var
 ### Test metrikleri
 
 ```
-655 test · 0 hata          satır %94.27  ·  dal %88.86  ·  fonksiyon %92.80
+660 test · 0 hata          satır %94.27  ·  dal %88.86  ·  fonksiyon %92.80
 ```
 
 | Alan | Satır | Dal | Fonksiyon |

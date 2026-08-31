@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-655-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-660-brightgreen.svg)](test/)
 [![Coverage](https://img.shields.io/badge/line%20coverage-94.27%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
@@ -29,7 +29,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. Five of six CAMARA links verified against Nokia's live platform; 655 automated tests at 94.27% line coverage; Docker deployment |
+| **Status** | Working software. Five of six CAMARA links verified against Nokia's live platform; 660 automated tests at 94.27% line coverage; Docker deployment |
 | **Not yet** | Device Status links (absent on our account tier) · Number Verification (device-side OIDC, uncallable from a server) · Meta writes (no live token) |
 
 ## Contents
@@ -152,6 +152,20 @@ minor units, Google wants micros. The same number sent to both APIs is a 100× e
 of them, and `1.005 * 100` is `100.49999999999999` in binary floating point, so a plain
 `Math.round` silently shortchanges the customer. The conversion rounds through a fixed
 decimal, and a test pins it.
+
+### How many links a decision is worth
+
+Every live link adds a round trip to the approval and one more way to refuse a spend that was
+fine. So the number of links is not fixed — it follows what the action does. A budget increase
+runs the single strongest signal: SIM swap answers the question that matters, which is whether
+the person about to receive the approval prompt is still the account holder. Taking a campaign
+live is where real money starts moving, and it runs the whole chain.
+
+That mapping was always the behaviour, but it used to live as scattered `risk !== "high"` checks
+inside five separate layers, which meant "which links run here?" could only be answered by
+reading five functions, and changing one was a policy change nobody could see. It is now a single
+frozen table, and a test asserts the table and the actual behaviour agree — a table nobody checks
+is a statement of intent, not a rule.
 
 ### When the signal breaks but nothing is wrong
 
@@ -423,7 +437,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 655 offline tests
+npm test           # 660 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run prova -- --musteri <id>   # stage-day preflight for the demo (writes nothing)
 npm run demo  -- --musteri <id>   # the three-act network-trust demo, dry by default
@@ -439,7 +453,7 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-655 tests · 0 failures        line 94.27%  ·  branch 88.86%  ·  function 92.80%
+660 tests · 0 failures        line 94.27%  ·  branch 88.86%  ·  function 92.80%
 ```
 
 | Area | Line | Branch | Function |

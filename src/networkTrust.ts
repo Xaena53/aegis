@@ -343,6 +343,34 @@ export interface AgIz {
  * artık kimlik kanıtı olarak kullanılamaz" demektir. Doğru cevap kapıyı kapatmak
  * değil, daha güçlü bir kanıt istemektir.
  */
+/**
+ * RİSK → HANGİ HALKALAR KOŞAR. Tek tablo, tek yer.
+ *
+ * Mentör önerisi (Aleksi Puranen, Nokia, 31.08.2026): "İlk yayına alma üç turu da
+ * alsın, kapının zaten temizlediği bir örüntüdeki bütçe artışı bir tur alsın.
+ * Eşlemeyi basit ve açık tut."
+ *
+ * Eşleme daha önce de böyleydi ama GÖRÜNMÜYORDU: beş ayrı katmanın içine serpiştirilmiş
+ * `if (risk !== "high") return undefined` satırlarından ibaretti. O hâlde "bu işlemde
+ * hangi halkalar koşuyor?" sorusunun cevabı ancak beş fonksiyon okunarak veriliyordu ve
+ * bir katmanın koşulunu değiştirmek, kimsenin göremediği bir politika değişikliğiydi.
+ *
+ * Her açık halka, HIGH katmandaki onaya bir CAMARA gidiş-dönüşü ve meşru bir harcamayı
+ * reddetmenin bir yolunu daha ekler. Bu yüzden bütçe artışı (medium) tek güçlü sinyalle
+ * yetinir: SIM değişimi, hesabı ele geçirenin onay istemini cevaplamasını engelleyen
+ * asıl sorudur. Yayına alma (high) — ilk gerçek harcamanın başladığı an — zincirin
+ * tamamını ister.
+ */
+export const RISK_HALKA_ESLEMESI: Readonly<Record<AgRisk, readonly string[]>> = Object.freeze({
+  medium: Object.freeze(["simSwap"]),
+  high: Object.freeze(["simSwap", "nv", "reach", "loc", "devSwap", "callFwd"]),
+});
+
+/** Bu risk katmanında bu halka koşar mı? Katmanların TEK karar kaynağı. */
+export function halkaKosarMi(risk: AgRisk, halkaId: string): boolean {
+  return RISK_HALKA_ESLEMESI[risk].includes(halkaId);
+}
+
 const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
   "sim-degisti",
   "cihaz-degisti",
@@ -1062,7 +1090,7 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
  */
 function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
   const nv = ayar.nvSimulate?.trim();
-  if (!nv || risk !== "high") return undefined;
+  if (!nv || !halkaKosarMi(risk, "nv")) return undefined;
 
   if (nv !== "dogrulandi" && nv !== "uyusmadi") {
     return {
@@ -1125,7 +1153,7 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
  * CAMARA cevabı RET, "erişilemez" RET.
  */
 async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
-  if (risk !== "high") return undefined;
+  if (!halkaKosarMi(risk, "reach")) return undefined;
   const sim = ayar.reachSimulate?.trim();
   const gercekAcik = Boolean(ayar.nacToken && ayar.reachCheck);
   if (!sim && !ayar.nacToken) return undefined;
@@ -1284,7 +1312,7 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
  * üretirdi (aynı gerekçeyle NV de medium katmanda değerini doğrulamaz).
  */
 async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
-  if (risk !== "high") return undefined;
+  if (!halkaKosarMi(risk, "loc")) return undefined;
   const sim = ayar.locSimulate?.trim();
   if (!sim && !ayar.nacToken) return undefined;
 
@@ -1525,7 +1553,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
  * sorguyu AÇMAZ — istenmemiş bir CAMARA gidiş-dönüşü her onaya gecikme eklerdi.
  */
 async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
-  if (risk !== "high") return undefined;
+  if (!halkaKosarMi(risk, "devSwap")) return undefined;
   const sim = ayar.devSwapSimulate?.trim();
   const gercekAcik = Boolean(ayar.nacToken && ayar.devSwapCheck);
   if (!sim && !ayar.nacToken) return undefined;
@@ -1684,7 +1712,7 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
  * üretir; uç noktanın 501 dahil her fırlatması da RET'tir.
  */
 async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
-  if (risk !== "high") return undefined;
+  if (!halkaKosarMi(risk, "callFwd")) return undefined;
   const sim = ayar.callFwdSimulate?.trim();
   const gercekAcik = Boolean(ayar.nacToken && ayar.callFwdCheck);
   if (!sim && !ayar.nacToken) return undefined;
