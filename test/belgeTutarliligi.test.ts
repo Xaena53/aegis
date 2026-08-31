@@ -96,3 +96,33 @@ test("iki README aynı bölümleri taşır — biri güncellenip diğeri unutulm
     `README bölüm sayıları ayrışmış (EN ${en}, TR ${tr}) — biri güncellenip diğeri unutulmuş olabilir`
   );
 });
+
+test("sunucu yönergesi, sunduğu prompt'ların HEPSİNİ sayar", () => {
+  /**
+   * Bu test gerçek bir sürüklenmeden doğdu: sunucu beş prompt kaydediyordu ama
+   * `instructions` metni yalnız dördünü sayıyordu — `guvenlik-durumu` eklenmiş,
+   * yönergeye yazılmamıştı.
+   *
+   * Sonucu sessizdir ve tam olarak ters yöndedir: ajan yönergeyi okur, o prompt'un
+   * var olduğunu hiç öğrenmez ve kullanıcı "güvenlik durumunu göster" dediğinde onu
+   * elle yapmaya çalışır. Yani en çok işe yarayacak hazır akış, tam da ihtiyaç
+   * anında görünmez kalır.
+   */
+  /**
+   * Adlar KAYITLARIN KENDİSİNDEN okunuyor, ayrı bir listeden değil. Ayrı bir liste
+   * tutmak, sürüklenmeyi çözmek yerine ikinci bir sürüklenme yeri açardı: prompt
+   * kaydedilir, listeye eklenmez, test yine hiçbir şey görmez.
+   */
+  const kaynak = readFileSync(path.join(KOK, "src", "prompts.ts"), "utf8");
+  const adlar = [...kaynak.matchAll(/registerPrompt\(\s*\n\s*"([a-z0-9-]+)"/g)].map((m) => m[1]);
+  assert.ok(adlar.length >= 5, `prompt kaydı bulunamadı (${adlar.length}) — desen bayatlamış olabilir`);
+
+  const yonerge = readFileSync(path.join(KOK, "src", "server.ts"), "utf8");
+  const eksik = adlar.filter((ad) => !yonerge.includes(`/${ad}`));
+  assert.deepEqual(
+    eksik,
+    [],
+    `sunucu yönergesinde anılmayan prompt'lar: ${eksik.join(", ")} — ajan bunların ` +
+      `varlığını hiç öğrenemez`
+  );
+});
