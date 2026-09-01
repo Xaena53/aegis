@@ -9,7 +9,7 @@
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
 [![Test](https://img.shields.io/badge/test-662-brightgreen.svg)](test/)
-[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-94.27%25-brightgreen.svg)](#test-metrikleri)
+[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-94.28%25-brightgreen.svg)](#test-metrikleri)
 
 🇬🇧 [English README](README.md)
 
@@ -29,7 +29,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Altı CAMARA halkasının beşi Nokia'nın canlı platformuna karşı doğrulandı; %94.27 satır kapsamıyla 662 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Altı CAMARA halkasının beşi Nokia'nın canlı platformuna karşı doğrulandı; %94.28 satır kapsamıyla 662 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Device Status halkaları (hesap katmanımızda uç nokta yok) · Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz) · Meta yazmaları (canlı jeton yok) |
 
 ## İçindekiler
@@ -418,7 +418,7 @@ kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var
 ### Test metrikleri
 
 ```
-662 test · 0 hata          satır %94.27  ·  dal %88.86  ·  fonksiyon %92.80
+662 test · 0 hata          satır %94.28  ·  dal %89.03  ·  fonksiyon %92.84
 ```
 
 | Alan | Satır | Dal | Fonksiyon |
