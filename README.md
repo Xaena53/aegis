@@ -440,6 +440,7 @@ npm run typecheck  # src + tests, with noUnusedLocals
 npm test           # 662 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
+npm run metatest   # live checks of the Meta path (add --write to create a paused campaign)
 npm run prova -- --musteri <id>   # stage-day preflight for the demo (writes nothing)
 npm run demo  -- --musteri <id>   # the three-act network-trust demo, dry by default
 ```

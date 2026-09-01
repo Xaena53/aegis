@@ -408,6 +408,7 @@ npm run typecheck  # src + testler, noUnusedLocals ile
 npm test           # 662 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 npm run agtest     # güven zincirinin Nokia NaC platformuna karşı canlı kontrolü
+npm run metatest   # Meta yolunun canlı kontrolü (--write ile duraklatılmış kampanya kurar)
 ```
 
 Testler, enjekte edilmiş sahte bir Google Ads context'iyle `InMemoryTransport` üzerinde
