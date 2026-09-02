@@ -29,7 +29,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Altı CAMARA halkasının beşi Nokia'nın canlı platformuna karşı doğrulandı; %94.28 satır kapsamıyla 662 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %94.28 satır kapsamıyla 662 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Device Status halkaları (hesap katmanımızda uç nokta yok) · Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz) · Meta yazmaları (canlı jeton yok) |
 
 ## İçindekiler
@@ -134,10 +134,19 @@ platform.** `create_meta_campaign`, `update_meta_campaign_budget` ve
 CAMARA zinciri Meta'da da insan istemi gösterilmeden önce koşuyor. Kampanyalar orada da
 duraklatılmış doğuyor ve aracın tartışılacak bir `status` parametresi yok.
 
-**Hiçbir Meta çağrısı bugüne dek Meta sunucularına ulaşmadı**: erişim jetonu, uygulama
-incelemesi ve reklam hesabı yok. İstek biçimleri Marketing API referansından alındı,
-testler sahte istemci enjekte ediyor — CAMARA halkalarının üzerinde token gelene kadar
-duran çekincenin aynısı, ve aynı şekilde kanıtla değiştirilecek.
+**2 Eylül 2026'dan beri canlı.** Burada duran çekince — jeton yok, reklam hesabı yok, hiçbir
+çağrı Meta sunucularına ulaşmadı — kanıtla değiştirildi; CAMARA'da olduğu gibi.
+`npm run metatest -- --write` gerçek istemci üzerinden gerçek bir kampanya kuruyor ve en
+önemli sözü sınıyor: kampanya DURAKLATILMIŞ doğuyor, Meta onu duraklatılmış geri okuyor ve
+bütçe minor-unit gidiş-dönüşünde bozulmuyor. Canlı platforma karşı yedi kontrol, hepsi geçti.
+
+Oraya varmak kayda değer bir sapma gerektirdi, çünkü hata tekrar eden cinsten. İlk canlı
+yazma, Meta'nın en az bilgi veren hatasıyla düştü: `500 An unknown error has occurred`.
+Jeton sağlamdı, hesap aktifti; yanlış olan reklam hesabı kimliğiydi. Kimlik, Business
+Manager URL'sindeki `selected_asset_id` parametresinden okunmuştu — o ise iç varlık
+kimliği, reklam hesabı kimliği değil. `me/adaccounts` sorulunca gerçek kimlik anında geldi.
+Bu, Device Status 404'lerinin aynısı: yetkili görünen bir şeyden elle türetilmiş bir değer,
+oysa API sorulsa söyleyecekti.
 
 Adını anmaya değer bir tuzak, çünkü sessizce sahaya çıkan türden: Meta bütçeleri minor
 unit ister, Google micros. Aynı sayıyı iki API'ye göndermek birinde 100 kat hata demek; ve

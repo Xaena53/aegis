@@ -29,7 +29,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. Five of six CAMARA links verified against Nokia's live platform; 662 automated tests at 94.28% line coverage; Docker deployment |
+| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 662 automated tests at 94.28% line coverage; Docker deployment |
 | **Not yet** | Device Status links (absent on our account tier) · Number Verification (device-side OIDC, uncallable from a server) · Meta writes (no live token) |
 
 ## Contents
@@ -142,10 +142,20 @@ platform.** `create_meta_campaign`, `update_meta_campaign_budget` and
 CAMARA chain runs before the human prompt on Meta exactly as it does on Google. Campaigns
 are born paused there too, and the tool has no `status` parameter to argue with.
 
-**No Meta call has ever reached Meta's servers**: there is no access token, no app review,
-no ad account. Request shapes come from the Marketing API reference and the tests inject a
-fake client — the same disclaimer that stood over the CAMARA links until a token arrived,
-and it will be replaced by evidence the same way.
+**Live since 2 September 2026.** The disclaimer that stood here — no token, no ad account,
+nothing had ever reached Meta's servers — has been replaced by evidence, the same way the
+CAMARA one was. `npm run metatest -- --write` creates a real campaign through the real
+client and checks the promise that matters most: it is born PAUSED, Meta reads it back as
+PAUSED, and the budget survives the minor-unit round trip unchanged. Seven checks, all
+passing against the live platform.
+
+Reaching that took a detour worth recording, because the mistake is a recurring one. The
+first live write failed with Meta's least informative error, `500 An unknown error has
+occurred`. The token was fine and the account was active; the ad account ID was wrong. It
+had been read off a `selected_asset_id` parameter in a Business Manager URL, which is an
+internal asset identifier rather than the ad account ID. Asking `me/adaccounts` returned
+the real one immediately. That is the same error as the Device Status 404s: a value derived
+by hand from something that looked authoritative, when the API would have simply said.
 
 One trap worth naming, because it is the kind that ships quietly: Meta wants budgets in
 minor units, Google wants micros. The same number sent to both APIs is a 100× error in one

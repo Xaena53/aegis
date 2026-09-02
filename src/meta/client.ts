@@ -13,13 +13,18 @@
  * exactly where it lives for Google Ads. Duplicating a guard here would mean two places to
  * get it right and one place to forget.
  *
- * HONESTY: no call in this file has ever reached Meta's servers. There is no access token,
- * no app review, no ad account. The request shapes come from the Marketing API reference.
- * Tests reach this code two ways — the tool tests inject a fake channel, and the budget
- * tests stub `fetch` to drive the real client — but both feed it responses we wrote
- * ourselves. That covers our parsing and our refusals; it says nothing about whether Meta
- * actually answers in these shapes. Green tests are evidence about our decision logic, not
- * about the wire — the same sentence that stood over the CAMARA links until a token arrived.
+ * HONESTY: this file reached Meta's servers for the first time on 2 September 2026, and the
+ * distinction it used to disclaim is now settled by evidence rather than by promise.
+ *
+ * The offline tests still only prove our side: the tool tests inject a fake channel and the
+ * budget tests stub `fetch`, so both feed this code responses we wrote ourselves. They cover
+ * our parsing and our refusals and say nothing about whether Meta answers in these shapes.
+ * What closes that gap is `npm run metatest`, which drives the real client against the live
+ * Marketing API — including a real campaign creation that confirms the campaign is born
+ * PAUSED, is read back from Meta as PAUSED, and survives the minor-unit round trip intact.
+ *
+ * Keep both. Green unit tests are evidence about decision logic; only the live run is
+ * evidence about the wire, and conflating the two is how a suite starts lying.
  */
 
 /** The Graph API version this module is written against. Pinned deliberately: Meta ships
