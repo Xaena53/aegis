@@ -18,7 +18,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextProvider } from "../adsClient.js";
-import { onayAl } from "../approval.js";
+import { onayAl, onaySonrasiKelepce } from "../approval.js";
 import { budgetGuard as budgetGuardPure } from "../util.js";
 import { metaKanali, hataTemizle, type MetaHedef } from "../meta/client.js";
 
@@ -189,6 +189,9 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
             confirm
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
+          // Onay penceresi boyunca kelepçe değişmiş olabilir (bkz. onaySonrasiKelepce).
+          const bayat = onaySonrasiKelepce(getCtx().config, dailyBudget);
+          if (bayat) return text(bayat);
         }
 
         await kanal.butceGuncelle(campaignId, dailyBudget);
@@ -313,6 +316,9 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
             confirm
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
+          // Onay penceresi boyunca kelepçe değişmiş olabilir (bkz. onaySonrasiKelepce).
+          const bayat = onaySonrasiKelepce(getCtx().config, gunluk);
+          if (bayat) return text(bayat);
         }
 
         await kanal.durumDegistir(campaignId, status);

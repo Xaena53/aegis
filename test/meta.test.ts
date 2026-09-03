@@ -62,6 +62,8 @@ interface SahteSecenek {
    * zayıf (confirm) dalı tam olarak burada koşar.
    */
   elicitationsiz?: boolean;
+  /** İstem AÇIKKEN koşar: hesap sahibinin kelepçeyi o pencerede değiştirmesini canlandırır. */
+  istemAcikken?: (config: any) => void;
 }
 
 /** Çağrılan Meta işlemleri — "hangi araç çağrıldı" ölçülebilsin diye. */
@@ -164,6 +166,7 @@ async function kur(opts: SahteSecenek = {}) {
     istemci.setRequestHandler(ElicitRequestSchema, async (istek: any) => {
       istemSayisi++;
       istemMetinleri.push(String(istek?.params?.message ?? ""));
+      opts.istemAcikken?.(config);
       return opts.onay === false
         ? { action: "decline" as const }
         : { action: "accept" as const, content: { onay: true } };
@@ -660,4 +663,49 @@ test("KRİTİK: ret sebebi SINIRDA da temizlenir — jeton ve uzunluk tavanı", 
   assert.ok(!out.includes(TOKEN), "jeton ajana geçmemeli");
   assert.ok(!out.includes(uzun), "upstream gövdesi olduğu gibi taşınmamalı");
   assert.ok(!cagrilar.includes("durumDegistir:ACTIVE"), "ret sonrası Meta'ya çağrı gitmez");
+});
+
+
+test("KRİTİK TOCTOU (Meta): istem açıkken yazma kapatılırsa yayına alma uygulanmaz", async () => {
+  /**
+   * Google ikizinin Meta tarafı. Kelepçe onaydan ÖNCE okunuyordu; istem açıkken hesap
+   * sahibi yazmayı kapattığında bekleyen istek yine de Meta'ya POST atıyordu.
+   * Ölçülen tek şey ret metni değil, `durumDegistir` çağrısının HİÇ yapılmadığıdır.
+   */
+  const c = await kur({
+    mevcutButce: 100,
+    istemAcikken: (config) => {
+      config.writeEnabled = false;
+    },
+  });
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  assert.equal(istemSayisi, 1, "insana sorulmuş olmalı");
+  assert.ok(
+    !cagrilar.some((x) => x.startsWith("durumDegistir")),
+    "KRİTİK: onaydan sonra kapatılan yazma yine de uygulanmamalı"
+  );
+  assert.match(metin(r), /YAZMA KAPATILDI/, "ret kelepçenin değiştiğini söylemeli");
+});
+
+test("KRİTİK TOCTOU (Meta): istem açıkken tavan inerse bütçe artışı uygulanmaz", async () => {
+  const c = await kur({
+    mevcutButce: 10,
+    istemAcikken: (config) => {
+      config.maxDailyBudget = 20;
+    },
+  });
+  const r: any = await c.callTool({
+    name: "update_meta_campaign_budget",
+    arguments: { campaignId: "120200000000001", dailyBudget: 100 },
+  });
+
+  assert.ok(
+    !cagrilar.some((x) => x.startsWith("butceGuncelle")),
+    "KRİTİK: indirilen tavan bekleyen bütçe artışını durdurmalı"
+  );
+  assert.match(metin(r), /tavanı 20 değerine/, "ret yeni tavanı adıyla söylemeli");
 });

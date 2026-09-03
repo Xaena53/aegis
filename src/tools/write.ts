@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums, ResourceNames } from "google-ads-api";
 import { formatAdsError, normalizeCustomerId, type ContextProvider } from "../adsClient.js";
-import { onayAl } from "../approval.js";
+import { onayAl, onaySonrasiKelepce } from "../approval.js";
 import {
   dedupe,
   geoTargetId,
@@ -476,6 +476,9 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             confirm
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
+          // Onay penceresi boyunca kelepçe değişmiş olabilir (bkz. onaySonrasiKelepce).
+          const bayat = onaySonrasiKelepce(getCtx().config, newDailyBudget);
+          if (bayat) return text(bayat);
         }
         await ctx.mutateWithRetry(() => customer.campaignBudgets.update([
           {
@@ -727,6 +730,13 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             confirm
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
+          /**
+           * Kelepçe onaydan ÖNCE okunmuştu; istem 10 dakika açık kalabilir. Mutasyondan
+           * hemen önce tazesine bakılır, yoksa "yazmayı kapattım" eylemi bekleyen isteği
+           * durdurmuyordu (bkz. onaySonrasiKelepce).
+           */
+          const bayat = onaySonrasiKelepce(getCtx().config, daily);
+          if (bayat) return text(bayat);
         }
         await ctx.mutateWithRetry(() => customer.campaigns.update([
           {

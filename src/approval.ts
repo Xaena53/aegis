@@ -304,3 +304,43 @@ export async function onayAl(
     };
   }
 }
+
+/**
+ * ONAY PENCERESİ BOYUNCA KELEPÇE DEĞİŞTİ Mİ? — mutasyondan hemen önceki son bakış.
+ *
+ * NEDEN GEREKLİ: yazma kelepçesi ve günlük tavan, onay isteminden ÖNCE okunuyordu ve
+ * o istem elicitation ile insana gösterildiğinde 10 dakikaya kadar açık kalabiliyor.
+ * O pencerede hesap sahibi ayarlar sayfasından yazmayı kapatsa ya da tavanı indirse
+ * bile, bekleyen istek eski değerlerle yazmaya devam ediyordu — yani kelepçenin
+ * "anında geçerli" sözü, tam da acilen kullanılacağı anda tutmuyordu. Panik hâlinde
+ * yazmayı kapatan bir operatörün beklediği şey bu değildir.
+ *
+ * Kapı YALNIZ HARCAMAYI ARTIRAN yollarda çağrılır: yayına alma ve bütçe artışı.
+ * Duraklatma ve bütçe indirme harcamayı düşürür; onları geç gelen bir kelepçeye
+ * takmak, kapatmaya çalışan operatörün önünü kesmek olurdu.
+ *
+ * SINIR — dürüstçe: bu, kelepçenin çağrı içinde YENİDEN OKUNMASIDIR, canlı bir abonelik
+ * değil. Barındırılan kipte bağlam sağlayıcı her çağrıda oturumun paylaşılan kutusundan
+ * okur, dolayısıyla ayar değişikliği bir sonraki okumada görünür; tek süreçli yerel
+ * kipte ayarlar zaten süreç ömrü boyunca sabittir ve kapı orada hiçbir şeyi değiştirmez.
+ */
+export function onaySonrasiKelepce(
+  taze: { writeEnabled: boolean; maxDailyBudget: number },
+  gunlukTutar: number | undefined
+): string | null {
+  if (!taze.writeEnabled) {
+    return (
+      "Reddedildi: onay beklenirken bu hesapta YAZMA KAPATILDI. Onay alınmış olsa bile " +
+      "işlem uygulanmadı — kelepçe, onaydan sonra da geçerlidir. Hesap sahibi yazmayı " +
+      "tekrar açarsa işlem yeniden denenebilir."
+    );
+  }
+  if (gunlukTutar !== undefined && Number.isFinite(gunlukTutar) && gunlukTutar > taze.maxDailyBudget) {
+    return (
+      `Reddedildi: onay beklenirken günlük güvenlik tavanı ${taze.maxDailyBudget} değerine ` +
+      `indirildi ve bu işlemin günlük tutarı (${gunlukTutar}) artık tavanın üstünde. Onay ` +
+      `alınmış olsa bile işlem uygulanmadı; onay, indirilmeden ÖNCEKİ tavana verilmişti.`
+    );
+  }
+  return null;
+}

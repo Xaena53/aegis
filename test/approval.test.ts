@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "../src/server.js";
-import { onayAl } from "../src/approval.js";
+import { onayAl, onaySonrasiKelepce } from "../src/approval.js";
 import {
   __setSimSwapKanalForTests,
   __setErisimKanalForTests,
@@ -33,7 +33,17 @@ const YAYINA_HAZIR: Array<[RegExp, any[]]> = [
 type InsanKarari = "accept" | "decline" | "cancel" | "hata";
 
 /** A client that advertises the elicitation capability and plays back a human decision. */
-async function elicitationliIstemci(ctx: any, karar: InsanKarari, onayDegeri = true) {
+async function elicitationliIstemci(
+  ctx: any,
+  karar: InsanKarari,
+  onayDegeri = true,
+  /**
+   * İSTEM AÇIKKEN koşan kanca. Onay istemi elicitation ile insana gösterildiğinde
+   * 10 dakikaya kadar açık kalabilir; bu kanca o pencerede olan bir şeyi — tipik
+   * olarak hesap sahibinin ayarlar sayfasından kelepçeyi değiştirmesini — canlandırır.
+   */
+  istemAcikken?: () => void
+) {
   const sorulanlar: string[] = [];
   const client = new Client(
     { name: "elicitation-testi", version: "0" },
@@ -42,6 +52,7 @@ async function elicitationliIstemci(ctx: any, karar: InsanKarari, onayDegeri = t
 
   client.setRequestHandler(ElicitRequestSchema, async (req: any) => {
     sorulanlar.push(String(req.params.message));
+    istemAcikken?.();
     if (karar === "hata") throw new Error("istemci onay penceresini açamadı");
     if (karar === "accept") return { action: "accept", content: { onay: onayDegeri } };
     return { action: karar };
@@ -433,4 +444,126 @@ test("form bildiren istemci GÜÇLÜ kanalda kalır (düşüş yalnız url-moda 
   assert.equal(sonuc.onaylandi, true);
   assert.equal(sonuc.kanal, "insan", "ajanın confirm=false'u insan onayını EZEMEZ");
   assert.equal(sorulanlar.length, 1);
+});
+
+
+/* ── Onay penceresi boyunca kelepçe değişirse ────────────────────────────────
+ *
+ * Kelepçe (yazma anahtarı ve günlük tavan) onay isteminden ÖNCE okunuyordu ve istem
+ * insana gösterildiğinde 10 dakikaya kadar açık kalabiliyor. O pencerede hesap sahibi
+ * yazmayı kapatsa bile bekleyen istek eski değerlerle yazmaya devam ediyordu — yani
+ * "anında geçerli" sözü tam da acilen kullanılacağı anda tutmuyordu.
+ *
+ * Aşağıdaki bekçiler ölçünün TAMAMINI alır: yalnız ret metnini değil, MUTASYON SAYISINI.
+ * Doğru metni basıp yine de yazan bir kapı, hiç olmayan kapıdan daha kötüdür.
+ */
+
+test("KRİTİK TOCTOU: istem açıkken YAZMA KAPATILIRSA yayına alma uygulanmaz", async () => {
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR });
+  const { client } = await elicitationliIstemci(ctx, "accept", true, () => {
+    // Hesap sahibi ayarlar sayfasından yazmayı kapattı — istem hâlâ ekranda.
+    ctx.config.writeEnabled = false;
+  });
+
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+  });
+
+  assert.equal(rec.mutations.length, 0, "KRİTİK: onaydan sonra kapatılan yazma yine de uygulanmamalı");
+  assert.match(out, /YAZMA KAPATILDI/, "ret, kelepçenin onay sırasında değiştiğini söylemeli");
+});
+
+test("KRİTİK TOCTOU: istem açıkken TAVAN İNDİRİLİRSE yayına alma uygulanmaz", async () => {
+  // Kampanyanın günlük bütçesi 50; tavan istem açıkken 10'a iniyor.
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR });
+  const { client } = await elicitationliIstemci(ctx, "accept", true, () => {
+    ctx.config.maxDailyBudget = 10;
+  });
+
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+  });
+
+  assert.equal(rec.mutations.length, 0, "KRİTİK: indirilen tavan bekleyen isteği durdurmalı");
+  assert.match(out, /tavanı 10 değerine/, "ret yeni tavanı adıyla söylemeli");
+  assert.match(out, /onay, indirilmeden ÖNCEKİ tavana verilmişti/, "onayın neye verildiği açık olmalı");
+});
+
+test("TOCTOU kapısı meşru akışı ENGELLEMEZ: kelepçe değişmediyse yayına alma geçer", async () => {
+  /**
+   * Kapıyı "her şeyi reddet"e çevirerek testi yeşile boyamak mümkün olmasın diye,
+   * değişmeyen kelepçede mutasyonun GERÇEKTEN olduğu da çivileniyor.
+   */
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR });
+  const { client } = await elicitationliIstemci(ctx, "accept");
+
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+  });
+
+  assert.equal(rec.mutations.length, 1, "kelepçe değişmediyse onaylanan işlem uygulanmalı");
+  assert.match(out, /YAYINDA/);
+});
+
+test("KRİTİK TOCTOU: istem açıkken tavan inerse BÜTÇE ARTIŞI da uygulanmaz", async () => {
+  /**
+   * Yayına almanın ikizi. İki yol ayrı ayrı bağlanıyor, dolayısıyla ayrı ayrı çivilenmeli:
+   * mutasyonla ölçüldü, yalnız yayına alma yolu bekçiliyken bütçe artışındaki tazeleme
+   * silinebiliyor ve takım yeşil kalıyordu.
+   */
+  const butce: Array<[RegExp, any[]]> = [
+    [
+      /campaign_budget\.explicitly_shared/,
+      [
+        {
+          campaign: { name: "K" },
+          campaign_budget: { resource_name: "r", amount_micros: 50_000_000, explicitly_shared: false },
+        },
+      ],
+    ],
+  ];
+  const { ctx, rec } = sahteContext({ queries: butce });
+  const { client } = await elicitationliIstemci(ctx, "accept", true, () => {
+    ctx.config.maxDailyBudget = 60;
+  });
+
+  const out = await cagir(client, "update_campaign_budget", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    newDailyBudget: 90,
+  });
+
+  assert.equal(rec.mutations.length, 0, "KRİTİK: indirilen tavan bekleyen bütçe artışını durdurmalı");
+  assert.match(out, /tavanı 60 değerine/, "ret yeni tavanı adıyla söylemeli");
+});
+
+test("onaySonrasiKelepce: yalnız GEVŞEMEYİ değil, DARALMAYI yakalar", () => {
+  // Kelepçe değişmedi → geçer.
+  assert.equal(onaySonrasiKelepce({ writeEnabled: true, maxDailyBudget: 500 }, 50), null);
+  // Tam tavanda → geçer (sınır dahil).
+  assert.equal(onaySonrasiKelepce({ writeEnabled: true, maxDailyBudget: 50 }, 50), null);
+  // Yazma kapandı → ret.
+  assert.match(
+    onaySonrasiKelepce({ writeEnabled: false, maxDailyBudget: 500 }, 50) ?? "",
+    /YAZMA KAPATILDI/
+  );
+  // Tavan tutarın altına indi → ret.
+  assert.match(
+    onaySonrasiKelepce({ writeEnabled: true, maxDailyBudget: 49 }, 50) ?? "",
+    /güvenlik tavanı 49/
+  );
+  /**
+   * Tutar OKUNAMADIYSA bu kapı karar vermez ve bu bilinçli: tutarın okunabilirliği
+   * onaydan ÖNCEKİ kapıların işidir ve onlar okunamayan bütçeyi zaten reddeder.
+   * Burada undefined'ı "tavanı aştı" saymak, tavanla ilgisi olmayan bir reddi
+   * tavan reddi gibi raporlardı.
+   */
+  assert.equal(onaySonrasiKelepce({ writeEnabled: true, maxDailyBudget: 1 }, undefined), null);
+  assert.equal(onaySonrasiKelepce({ writeEnabled: true, maxDailyBudget: 1 }, NaN), null);
 });
