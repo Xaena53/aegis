@@ -389,7 +389,20 @@ export function halkaKosarMi(risk: AgRisk, halkaId: string): boolean {
   return RISK_HALKA_ESLEMESI[risk].includes(halkaId);
 }
 
-const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
+/**
+ * KADEMEYE UYGUN RET NEDENLERİ — ve aynı zamanda BELGENİN tek kaynağı.
+ *
+ * `export` bir kullanım kolaylığı değil, ölçülmüş bir boşluğun kapatılmasıdır: bu küme
+ * kapının "koşulsuz reddeder" davranışını KOŞULLU hâle getirir (ADSPILOT_STEPUP açıkken
+ * buradaki her neden düz ret yerine insan istemine bağlanır), ama README ve runbook bunu
+ * bilmediği için "SIM değişimi anında reddeder, sonraki hiçbir halka yumuşatamaz"
+ * cümlesini KURAL diye yazıyordu — belge, tersine çalışan bir değişmezi ilan ediyordu.
+ *
+ * Kümeyi dışa açmak, belge gözcülerinin (test/zincirBelgeKademe.test.ts) listeyi serbest
+ * metinden değil KODDAN türetmesini sağlar: buraya yeni bir neden eklendiğinde runbook
+ * onu anmıyorsa test KIRMIZI olur.
+ */
+export const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
   "sim-degisti",
   "cihaz-degisti",
   "cihaz-erisilemez",
@@ -601,6 +614,20 @@ export interface ZincirHalkasi {
   readonly envler: readonly string[];
   /** Halkanın AgAyar alanları — http.ts'teki contextFor önbellek anahtarına girmek ZORUNDA. */
   readonly ayarAlanlari: readonly (keyof AgAyar)[];
+  /**
+   * Halka CANLI uç noktaya karşı doğrulandıysa doğrulama TARİHİ (ISO, YYYY-MM-DD);
+   * doğrulanmadıysa alan HİÇ YOKTUR.
+   *
+   * NEDEN KAYITTA: "hangi halka gerçekten canlı koştu" jüriye, mentöre ve okuyucuya
+   * verilen en pahalı iddiadır ve bugüne kadar YALNIZ serbest metinde yaşıyordu. Sonuç
+   * ölçüldü: aynı depoda docs/CAMARA.md §1 "Live since 31 Aug" derken §2 "links 2, 3
+   * and 4 have not run live" diyordu, README diyagramı ise CAMARA'yı "never yet called
+   * live" diye etiketliyordu. Üçü aynı anda doğru olamaz.
+   *
+   * Alan bir DAVRANIŞ anahtarı DEĞİLDİR — kapı onu okumaz. Yalnız belgeyi koda bağlar:
+   * test/zincirBelgeKademe.test.ts canlılık iddialarını buradan türetir, belgeden değil.
+   */
+  readonly canliDogrulandi?: string;
 }
 
 /**
@@ -633,6 +660,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     retIsaretleri: ["AĞ DOĞRULAMASI BAŞARISIZ", "GSMA Open Gateway SIM Swap"],
     envler: ["ADSPILOT_NAC_TOKEN", "ADSPILOT_NAC_SIMULATE"],
     ayarAlanlari: ["nacToken", "nacSimulate"],
+    canliDogrulandi: "2026-08-28",
   },
   {
     id: "numberVerification",
@@ -643,6 +671,9 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     // bu yüzden halkanın bir token/opt-in env'i YOKTUR.
     envler: ["ADSPILOT_NV_SIMULATE"],
     ayarAlanlari: ["nvSimulate"],
+    // canliDogrulandi YOK ve olamaz: gerçek NV cihaz-taraflı OIDC'dir, sunucudan
+    // çağrılamaz (bkz. docs/CAMARA.md §4). Bu halka için "henüz koşmadı" bayat bir
+    // beyan değil, mimari bir hükümdür.
   },
   {
     id: "deviceStatusReachability",
@@ -655,6 +686,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     ],
     envler: ["ADSPILOT_REACH_SIMULATE", "ADSPILOT_REACH_CHECK"],
     ayarAlanlari: ["reachSimulate", "reachCheck"],
+    canliDogrulandi: "2026-08-31",
   },
   {
     id: "deviceStatusRoaming",
@@ -667,6 +699,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     ],
     envler: ["ADSPILOT_LOC_SIMULATE", "ADSPILOT_EXPECTED_COUNTRY"],
     ayarAlanlari: ["locSimulate", "expectedCountry"],
+    canliDogrulandi: "2026-08-31",
   },
   {
     id: "deviceSwap",
@@ -682,6 +715,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     ],
     envler: ["ADSPILOT_DEVICESWAP_SIMULATE", "ADSPILOT_DEVICESWAP_CHECK"],
     ayarAlanlari: ["devSwapSimulate", "devSwapCheck"],
+    canliDogrulandi: "2026-08-28",
   },
   {
     id: "callForwardingSignal",
@@ -694,6 +728,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     ],
     envler: ["ADSPILOT_CALLFWD_SIMULATE", "ADSPILOT_CALLFWD_CHECK"],
     ayarAlanlari: ["callFwdSimulate", "callFwdCheck"],
+    canliDogrulandi: "2026-08-28",
   },
 ] as const;
 
@@ -709,12 +744,21 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
 export const ZINCIR_ORTAK_AYARLARI: readonly (keyof AgAyar)[] = [
   "approverPhone",
   "simSwapWindowHours",
+  /**
+   * `stepUp` de zincir GENELİNE aittir: tek bir halkanın değil, zincirin BÜTÜN çıktısının
+   * anlamını değiştirir — açıkken KADEME_UYGUN'daki her ret, düz ret olmak yerine insan
+   * istemine bağlanır. Kayıtta olmaması ölçülebilir bir boşluktu: gözcüler onu aramadığı
+   * için `ADSPILOT_STEPUP` docs/ altında hiç geçmiyordu ve runbook'un kapalı-arıza
+   * matrisi, açıkken artık geçerli olmayan bir sonuç vaat ediyordu.
+   */
+  "stepUp",
 ] as const;
 
 /** ZINCIR_ORTAK_AYARLARI'nın env karşılıkları (config.ts'te okunan adlar). */
 export const ZINCIR_ORTAK_ENVLERI: readonly string[] = [
   "ADSPILOT_APPROVER_PHONE",
   "ADSPILOT_SIMSWAP_WINDOW_HOURS",
+  "ADSPILOT_STEPUP",
 ] as const;
 
 const MEDIUM_WINDOW_HOURS = 24;

@@ -66,9 +66,9 @@ default) and the second chain link may run.
 | # | Act | Gate behavior |
 |---|-----|---------------|
 | 1 | Budget raise with a **clean** network signal (`temiz`) | SIM-swap check passes → the human approval prompt appears **with the network evidence line inside it**. In the default **dry run** the script stops right before the write call and prints an explicitly labeled prediction of the prompt instead; with `--canli` the prompt is real and a human must type exactly `Evet` at the keyboard — any other answer is an honored decline, not an error. On approval the +1 is applied, then immediately reverted (decreases need no approval) |
-| 2 | The same budget raise with a **swapped** SIM (`degisti`) | **HARD REFUSAL before any prompt** — the human is never asked, the agent's `confirm=true` is ignored, nothing is written. The script *verifies* this: it counts elicitations and aborts with an error if a prompt is ever shown. Safe even in dry mode, because the gate refuses before any write |
+| 2 | The same budget raise with a **swapped** SIM (`degisti`) | **HARD REFUSAL before any prompt** (with `ADSPILOT_STEPUP=0`, the default — see 3.3) — the human is never asked, the agent's `confirm=true` is ignored, nothing is written. The script *verifies* this: it counts elicitations and aborts with an error if a prompt is ever shown. Safe even in dry mode, because the gate refuses before any write |
 | 3/A | **Go-live** with a clean signal (`temiz`) — the **high** tier | Same gate, wider window: the evidence line now says **72 h** (or your configured window), not 24. With `ADSPILOT_NV_SIMULATE` set, the prompt carries a **second** evidence line from the Number Verification link, and the script highlights it as `zincir 2 ▶` ("chain 2"). In `--canli` the campaign really goes `ENABLED` and is put back to `PAUSED` the moment the scene ends — **verified by reading the status back from the account**, not by trusting the tool's reply |
-| 3/B | The same go-live with a **swapped** SIM (`degisti`) | The identical hard refusal, this time on the high tier: zero elicitations, and the refusal text carries the 72 h window instead of 24. After the refusal the script **reads the campaign status back** and aborts with a security error if it is `ENABLED` |
+| 3/B | The same go-live with a **swapped** SIM (`degisti`) | The identical hard refusal, this time on the high tier: zero elicitations while `ADSPILOT_STEPUP=0` (the default — see 3.3), and the refusal text carries the 72 h window instead of 24. After the refusal the script **reads the campaign status back** and aborts with a security error if it is `ENABLED` |
 
 Three things about act 3 that are worth saying out loud on stage:
 
@@ -170,8 +170,12 @@ did not ask" is written down, never left to look like "asked and passed".
 The scripted demo sets only the link-1 channel itself; links 2–6 appear on stage only if you
 export their variables (§3.6).
 
-The order is one-directional: a swapped SIM refuses immediately, so no later link gets a
-chance to soften that verdict — a later link can only add another reason to refuse.
+The order is one-directional *within a run*: a swapped SIM refuses immediately (step-up
+off, `ADSPILOT_STEPUP=0`, the default), so no later link gets a chance to soften that
+verdict — a later link can only add another reason to refuse. **That is a default, not an
+invariant.** With step-up on, the same swapped SIM does not end the request: it is carried
+to a human prompt if — and only if — every remaining link vouches for it over a real
+channel. Read the next block before quoting the sentence above as a guarantee.
 
 > **Number Verification is SIMULATION ONLY today, and there is no honest way around it.**
 > Real CAMARA Number Verification is a **device-side OIDC flow**: the check is bound to
@@ -196,6 +200,49 @@ unrecognized value refused at decision time without echoing it):
   evidence line is appended to the prompt.
 - `uyusmadi` — **hard refusal**, even when the SIM-swap check was clean: the approval
   prompt is never shown.
+
+#### Step-up (`ADSPILOT_STEPUP`) — the switch that changes what a refusal means
+
+This is the one setting in the whole runbook that turns a **refusal** into a **prompt**,
+and it is easy to miss: it defaults to `0` and lives outside the per-link variables.
+Everything the acts below show — hard refusal, zero prompts — is the step-up-off behaviour.
+
+With `ADSPILOT_STEPUP=1`, a refusal reason that describes an ordinary human situation is
+*escalated* instead: the remaining links are asked anyway, and if every one of them
+answers clean **over a real channel**, the action reaches a human prompt that leads with
+the broken signal by name. The reasons that qualify are exactly these five:
+
+| `retNedeniKisa` | The ordinary situation behind it |
+|---|---|
+| `sim-degisti` | The approver genuinely replaced a SIM (lost phone, new carrier) |
+| `cihaz-degisti` | The line moved to a new handset |
+| `cihaz-erisilemez` | Flat battery, aeroplane mode, no coverage |
+| `konum-beklenmedik` | The approver is travelling |
+| `ag-yanitsiz` | The operator endpoint did not answer in time |
+
+Every other reason still refuses flatly, and two of the exclusions are deliberate rather
+than accidental:
+
+- **`cagri-yonlendirme-acik` never escalates.** A step-up reaches a person over a channel
+  — a call, a message — and unconditional forwarding means that channel is exactly what an
+  attacker has taken. Escalating there would hand the stronger check to them.
+- **Configuration faults never escalate** (`yapilandirma-celiskili`,
+  `beklenen-ulke-gecersiz`, `onaylayici-numarasi-yok`, `simulasyon-degeri-tanimsiz`). They
+  are the operator's state, not the user's, and no amount of identity proof fixes a
+  contradictory `.env`.
+
+A step-up also needs a *corroborating* real link: with nothing left to vouch for the
+broken signal, it refuses. A simulated link never vouches for a broken real one — otherwise
+one demo variable would be the cheapest way through the gate. And a **second** broken
+signal ends it: one is an ordinary Tuesday, two independent ones are a pattern.
+
+In the audit trail this outcome is `"karar":"kademeli"` with `kademeNedeni` and
+`kademeDogrulayan` beside it — never folded into `gecti`, because "nothing was wrong" and
+"something was wrong and we escalated past it" are different levels of trust (3.5).
+
+The five-reason list above is not maintained by hand: `test/zincirBelgeKademe.test.ts` reads
+it out of `KADEME_UYGUN` in `src/networkTrust.ts` and fails if this table drifts from the
+code.
 
 ### 3.4 Risk tiers
 
@@ -560,17 +607,23 @@ broken, and it says so loudly rather than passing quietly.
 
 ### Fail-closed matrix (worth showing if asked "what if it breaks?")
 
-| Condition | Behavior |
-|---|---|
-| Feature unconfigured (no token, no simulation) | Pass-through, but the evidence line honestly says the gate is off — and the audit log records `"karar":"kapali"`, never "passed" |
-| Token set, approver phone missing | **Refuse** (config error) |
-| `ADSPILOT_NV_SIMULATE` set without an approver phone | **Refuse** — the link cannot verify a number it does not have |
-| CAMARA API unreachable / errors | **Refuse** — if the trust anchor cannot answer, the spend does not happen. Upstream error bodies are never echoed into the refusal (they can contain the phone number); details go to stderr, number redacted even there |
-| Invalid `ADSPILOT_NAC_SIMULATE` or `ADSPILOT_NV_SIMULATE` value | **Refuse** at decision time (server does not crash at startup); the value itself is never printed |
-| `ADSPILOT_NAC_TOKEN` and `ADSPILOT_NAC_SIMULATE` both set | **Refuse** — contradictory configuration; ambiguity never selects the weaker channel |
-| SIM swap clean but Number Verification says `uyusmadi` | **Refuse** — the second link can only add reasons to refuse, never overturn a pass |
-| Risk-tagged action reaches the gate without its config (programming error) | **Refuse** — never fail-open by omission (logged as `ag-ayari-kapiya-ulasmadi`) |
-| Decision log path broken / disk full | **Approval flow continues untouched** — one stderr line. The log is an observation, not a gate; the opposite would turn an audit tool into a new failure point |
+The **Behavior** column is the `ADSPILOT_STEPUP=0` behaviour — the default, and what the
+scripted demo shows. The **With step-up on** column says what changes at
+`ADSPILOT_STEPUP=1`; "unchanged" there means the reason is not escalatable at all (3.3).
+
+| Condition | Behavior | With step-up on |
+|---|---|---|
+| Feature unconfigured (no token, no simulation) | Pass-through, but the evidence line honestly says the gate is off — and the audit log records `"karar":"kapali"`, never "passed" | unchanged — nothing ran, so there is nothing to escalate |
+| Token set, approver phone missing | **Refuse** (config error) | unchanged — `onaylayici-numarasi-yok` is the operator's state |
+| `ADSPILOT_NV_SIMULATE` set without an approver phone | **Refuse** — the link cannot verify a number it does not have | unchanged — same config-fault rule |
+| CAMARA API unreachable / errors | **Refuse** — if the trust anchor cannot answer, the spend does not happen. Upstream error bodies are never echoed into the refusal (they can contain the phone number); details go to stderr, number redacted even there | **escalatable** (`ag-yanitsiz`): if every *other* link answers clean over a real channel, this becomes a prompt naming the silent network. With no corroborating real link — the usual case when the endpoint is down — it still refuses |
+| Invalid `ADSPILOT_NAC_SIMULATE` or `ADSPILOT_NV_SIMULATE` value | **Refuse** at decision time (server does not crash at startup); the value itself is never printed | unchanged — `simulasyon-degeri-tanimsiz` is a config fault |
+| `ADSPILOT_NAC_TOKEN` and `ADSPILOT_NAC_SIMULATE` both set | **Refuse** — contradictory configuration; ambiguity never selects the weaker channel | unchanged — `yapilandirma-celiskili` is a config fault |
+| SIM swap says `degisti` | **Refuse before any prompt** while step-up is off | **escalatable** (`sim-degisti`) — the case step-up exists for; a genuine SIM replacement reaches a prompt that names it, provided the remaining real links are clean |
+| Unconditional call forwarding active | **Refuse** | unchanged **on purpose** — escalating would send the stronger check down the channel the attacker holds |
+| SIM swap clean but Number Verification says `uyusmadi` | **Refuse** — the second link can only add reasons to refuse, never overturn a pass | unchanged — `nv-uyusmadi` is a stated *mismatch*, not an unreadable signal |
+| Risk-tagged action reaches the gate without its config (programming error) | **Refuse** — never fail-open by omission (logged as `ag-ayari-kapiya-ulasmadi`) | unchanged — a programming error is never escalated |
+| Decision log path broken / disk full | **Approval flow continues untouched** — one stderr line. The log is an observation, not a gate; the opposite would turn an audit tool into a new failure point | unchanged |
 
 ### Full pipeline: brain → gate
 
@@ -606,7 +659,8 @@ accepted as a CLI argument, because that leaks it into shell history.
    **PAUSED**, exactly as in the dry-run flow.
 3. **Approval #2 — separate, explicit, and about money.** A second box states that the call
    is `set_campaign_status → ENABLED`, that it is **high**-risk, and that the network gate
-   fires before any prompt. This is a distinct question, not a continuation of #1.
+   fires before any prompt (step-up off, the default). This is a distinct question, not a
+   continuation of #1.
 4. **The gate fires.** With `ADSPILOT_NAC_SIMULATE=degisti` the refusal from act 2 is
    printed **verbatim** under `── Sunucunun cevabı (aynen) ──` ("the server's answer,
    as-is") and copied into the report. The report labels it

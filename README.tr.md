@@ -8,8 +8,8 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-810-brightgreen.svg)](test/)
-[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-94.28%25-brightgreen.svg)](#test-metrikleri)
+[![Test](https://img.shields.io/badge/test-912-brightgreen.svg)](test/)
+[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-89.95%25-brightgreen.svg)](#test-metrikleri)
 
 🇬🇧 [English README](README.md)
 
@@ -29,8 +29,8 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %94.28 satır kapsamıyla 810 otomatik test; Docker dağıtımı |
-| **Henüz yok** | Device Status halkaları (hesap katmanımızda uç nokta yok) · Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz) · Meta yazmaları (canlı jeton yok) |
+| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %89.95 satır kapsamıyla 912 otomatik test; Docker dağıtımı |
+| **Henüz yok** | Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz — bekleyen bir iş değil, mimari bir hüküm) · CAMARA çağrılarının arkasında gerçek bir abone şebekesi (hesap Simulator kipinde) |
 
 ## İçindekiler
 
@@ -107,12 +107,13 @@ tasarımın kendisinden daha önemlidir.
 
 > **SIM Swap artık Nokia'nın canlı Network-as-Code uç noktasına karşı koşuyor**
 > (2026-08-28'de doğrulandı): temiz hat `{"swapped":false}` döndürüp geçiyor, SIM'i değişmiş
-> hat `{"swapped":true}` döndürüp istem gösterilmeden reddediliyor, platformun `500`
+> hat `{"swapped":true}` döndürüp, varsayılan `ADSPILOT_STEPUP=0` ile istem gösterilmeden reddediliyor
+> (kademe açıkken reddetmek yerine insan istemine yükseltiliyor — aşağıya bak), platformun `500`
 > döndürdüğü hat ise upstream gövdesi maskelenerek kapalı arızaya gidiyor. Üçü de karar
 > günlüğüne `"simSwapKanali":"gercek"` olarak düştü. **Önemli çekince:** hesap platformun
 > *Simulator* kipinde, yani istek, kimlik doğrulama, yönlendirme ve yanıt biçimi gerçek ama
 > numaranın arkasındaki abone Nokia'nın simülasyonu — tel kanıtlandı, operatör entegrasyonu
-> kanıtlanmadı. 5. ve 6. halkalar da sonradan canlı doğrulandı — cihaz değişimi ve çağrı yönlendirme, kapıdan `gercek` iziyle geçiyor. 3. ve 4. halkayı engelleyen kod değil hesap: ücretsiz Simulator katmanında her Device Status yolu `404 Endpoint does not exist` dönerken, çalışan üç halka aynı anahtarla `200` veriyor. Yeşil test süiti hâlâ **karar mantığı**
+> kanıtlanmadı. 5. ve 6. halkalar da sonradan canlı doğrulandı — cihaz değişimi ve çağrı yönlendirme, kapıdan `gercek` iziyle geçiyor. 3. ve 4. halka 31 Ağustos 2026'da canlıya çıktı: haftalarca kovaladığımız `404 Endpoint does not exist`, SDK'nın Device Status için kullanmadığı `/passthrough/camara/v1/` önekini taşıyan ELLE KURULMUŞ URL'lerden geliyordu — hesap katmanından değil. Nokia mentörümüz Aleksi Puranen doğru yolları verdi ve ikisi de kapıdan `200` dönüyor. Böylece altı halkanın beşi canlı doğrulandı; yalnız Number Verification simülasyonda kalıyor, çünkü cihaz-taraflı bir OIDC akışı hiçbir arka uçtan çağrılamaz. Yeşil test süiti hâlâ **karar mantığı**
 > hakkında kanıttır, telin çalıştığının değil.
 >
 > Tekrarlamaya değer bir bulgu: SDK `X-RapidAPI-Host` başlığını göndermiyor ve o başlık
@@ -233,8 +234,8 @@ değerlerini asla basmaz. Anlatım metni, perde perde beklenen çıktı ve kapal
 
 ## Yetenekler
 
-**Araçlar** — 12 adet. "Onay" sütunu, harcamayı artırabilen ve bu yüzden yukarıdaki
-kapıdan geçen eylemleri işaretler.
+**Araçlar** — 15 adet: on ikisi Google Ads, üçü Meta. "Onay" sütunu, harcamayı
+artırabilen ve bu yüzden yukarıdaki kapıdan geçen eylemleri işaretler.
 
 | Araç | Ne yapar | Onay |
 |---|---|---|
@@ -250,6 +251,12 @@ kapıdan geçen eylemleri işaretler.
 | `add_campaign_negative_keywords` | Kampanya genelinde negatif kelime | hayır — harcamayı azaltır |
 | `update_campaign_budget` | Günlük bütçeyi değiştirir | yalnız artışta |
 | `set_campaign_status` | Yayına alır ya da duraklatır | yalnız yayına almada |
+| `create_meta_campaign` | Meta (Facebook/Instagram) kampanyası, bütçesiyle birlikte | duraklatılmış doğar ⇒ hayır |
+| `update_meta_campaign_budget` | Meta kampanyasının günlük bütçesini değiştirir | yalnız artışta |
+| `set_meta_campaign_status` | Meta kampanyasını yayına alır ya da duraklatır | yalnız yayına almada |
+
+Üç Meta aracı ikinci ve daha gevşek bir yol değil: aynı `onayAl` kapısını aynı risk
+kademeleriyle çağırıyorlar, yani CAMARA zinciri Meta'da da insan isteminden önce koşuyor.
 
 **Kaynaklar** — araç çağırmadan okunabilen veri: `adspilot://accounts` ·
 `adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (etkin
@@ -304,8 +311,10 @@ flowchart TD
     B -- hayır --> R["🚫 Reddedildi"]
     B -- evet --> C{"Bu eylem harcamayı<br/>ARTIRIYOR mu?"}
     C -- "hayır — duraklatma, bütçe<br/>düşürme, negatif kelime" --> E["✅ Uygulandı"]
-    C -- evet --> D{"İstemci elicitation<br/>destekliyor mu?"}
-    D -- "EVET" --> H["Sunucu doğrudan insana sorar<br/>ajanın confirm'ü yok sayılır"]
+    C -- evet --> N{"Ağ güven kapısı<br/>CAMARA · önce SIM değişimi"}
+    N -- "değişmiş · cevapsız<br/>· yanlış yapılandırma" --> R
+    N -- "temiz ya da kapı kapalı" --> D{"İstemci elicitation<br/>destekliyor mu?"}
+    D -- "EVET" --> H["Sunucu doğrudan insana sorar<br/>ağ kanıtı istemin içinde<br/>ajanın confirm'ü yok sayılır"]
     D -- hayır --> F{"confirm = true?"}
     H -- onaylandı --> G
     H -- "reddetti · iptal etti<br/>· zaman aşımı · hata" --> R
@@ -315,7 +324,12 @@ flowchart TD
     G -- evet --> E
 ```
 
-Üç özellik özellikle önemli:
+Dört özellik özellikle önemli:
+
+**Önce ağa sorulur.** Güven kapısı reddettiğinde onay istemi hiç gösterilmez — çünkü o
+istemi cevaplayacak kişi, hattı ele geçirmiş saldırganın kendisi olabilir. Yapılandırılmamış
+bir kapı geçirgendir ama bunu kanıt satırında dürüstçe söyler ve günlüğe "geçti" diye
+değil `kapali` diye düşer.
 
 **Kampanyalar duraklatılmış doğar.** Sistemdeki hiçbir araç yayında bir kampanya
 oluşturamaz. Yayına alma her zaman ayrı ve onaylı bir adımdır.
@@ -340,7 +354,8 @@ flowchart LR
     subgraph server["AdsPilot sunucusu"]
         direction TB
         T["stdio · Streamable HTTP + Bearer"]
-        M["MCP yüzeyi<br/>12 araç · 4 kaynak · 5 prompt"]
+        M["MCP yüzeyi<br/>15 araç · 4 kaynak · 5 prompt"]
+        NT["Ağ güven kapısı<br/>src/networkTrust.ts"]
         SG["Güvenlik kapıları<br/>onay · tavan · kapalı-arıza"]
         AC["AdsContext<br/>kullanıcı başına, her istekte tazelenir"]
     end
@@ -348,11 +363,16 @@ flowchart LR
     DB[("SQLite<br/>refresh token<br/>AES-256-GCM")]
     GA["Google Ads API"]
     WEB["Herhangi bir site<br/>SSRF korumalı istek"]
+    NAC["GSMA Open Gateway / CAMARA<br/>Nokia Network-as-Code üzerinden<br/>(6 halkanın 5'i canlı doğrulandı,<br/>Simulator kipi)"]
+    LOG[("Karar günlüğü<br/>JSONL, opt-in")]
 
     CC --> T
     CD --> T
     T --> M
-    M --> SG
+    M --> NT
+    NT -.yalnız harcama artıran eylemler.-> NAC
+    NT --> SG
+    NT -.risk etiketli her karar.-> LOG
     SG --> AC
     AC --> GA
     AC -.kimlik.-> DB
@@ -376,7 +396,7 @@ Aynı çekirdeği paylaşan iki dağıtım biçimi var:
 | **Kapalı-arıza kapılar** | yok | Bütçe tavanı, duraklatılmış doğma, zorunlu ülke hedefi, paylaşımlı bütçe koruması |
 | **Çok kiracılı barındırma** | ❌ tek kimlik, kendi sunucunda | ✅ kullanıcı başına OAuth, şifreli token, oturum izolasyonu |
 | **Siteden kampanyaya** | ❌ | ✅ `analyze_site` herhangi bir URL'yi kampanya hammaddesine çevirir |
-| **Ağ güven çapası** | ❌ | İnsana sorulmadan *önce* CAMARA SIM-Swap kontrolü — canlı uç noktaya karşı doğrulandı, Simulator kipi ([belge](docs/CAMARA.md)) |
+| **Ağ güven çapası** | ❌ | İnsana sorulmadan *önce* altı halkalı CAMARA zinciri (SIM değişimi · numara doğrulama · erişilebilirlik · dolaşım · cihaz değişimi · çağrı yönlendirme) — altısından beşi canlı uç noktalara karşı doğrulandı, Simulator kipi; altıncısı Number Verification cihaz-taraflı OIDC olduğu için sunucudan hiç çağrılamaz ([belge](docs/CAMARA.md)) |
 | **Lisans** | Apache-2.0 | AGPL-3.0 |
 
 > Tablo, Google'ın bilinçli olarak salt-okunur tasarlanmış resmi sunucusunu
@@ -414,7 +434,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 810 çevrimdışı test
+npm test           # 912 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 npm run agtest     # güven zincirinin Nokia NaC platformuna karşı canlı kontrolü
 npm run metatest   # Meta yolunun canlı kontrolü (--write ile duraklatılmış kampanya kurar)
@@ -428,16 +448,33 @@ kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var
 ### Test metrikleri
 
 ```
-810 test · 0 hata          satır %94.28  ·  dal %89.03  ·  fonksiyon %92.84
+912 test · 0 hata          satır %89.95  ·  dal %90.74  ·  fonksiyon %89.23
 ```
+
+Bu üç rakam, test koşucusunun kendi **all files** satırıdır
+(`node --test --experimental-test-coverage`): tek komutla yeniden üretilebilir, elle
+seçilmemiştir. `scripts/` ve `src/http.ts` de sayıma dahildir. `src/http.ts` %12.50
+görünüyor ve bunun sebebi gizlenmek yerine söylenmeye değer: barındırılan katman uçtan
+uca test EDİLİYOR, ama `test/http.test.ts` onu **ayrı bir sunucu süreci başlatarak**
+sürüyor; dolayısıyla ana sürecin ölçümü o satırların çalıştığını hiç görmüyor. Çok
+kiracılı izolasyon, oturum bağlama, hız sınırı ve OAuth durum kapısı testli — kapsam
+rakamı onları göremiyor, o kadar. Satır ve fonksiyon rakamları koşudan koşuya sabittir;
+**dal** rakamı değildir ve dürüst okuması yaklaşıktır: `networkTrust.ts` içindeki bir
+zaman-aşımı yarışı dalı her koşuda alınmıyor; bu, all-files dal rakamını koşular arasında
+onda bir puan kadar oynatıyor, o dosyanın kendi dal okumasını da doksan yedi ile doksan
+altı arasında gezdiriyor.
+
+Tablo tam ölçüm değil TABAN verir: paketin altına düşmediği değerleri söyler, böylece
+bir rakamı onda bir puan oynatan yeniden düzenleme README'yi yalancı çıkarmaz.
 
 | Alan | Satır | Dal | Fonksiyon |
 |---|---|---|---|
-| `kararGunlugu.ts` · `rateLimit.ts` · `approval.ts` · `config.ts` | %100 | %94–100 | %100 |
-| `networkTrust.ts` — altı halkalı güven zinciri | %98.60 | %95.82 | %97.06 |
-| `meta/client.ts` · `adsClient.ts` · `store.ts` | %97–99 | %86–92 | %80–100 |
-| `tools/` — write, read, site, meta | %94–98 | %65–83 | %80–96 |
-| `scripts/brain/` — Growth Brain modülleri | %93–100 | %86–99 | %95–100 |
+| `rateLimit.ts` · `approval.ts` | ≥ %99 | ≥ %95 | %100 |
+| `kararGunlugu.ts` · `config.ts` | ≥ %99 | ≥ %77 | %100 |
+| `networkTrust.ts` — altı halkalı güven zinciri | ≥ %98 | ≥ %96 | ≥ %97 |
+| `meta/client.ts` · `adsClient.ts` · `store.ts` | ≥ %96 | ≥ %91 | ≥ %88 |
+| `tools/` — write, read, site, meta | ≥ %96 | ≥ %72 | ≥ %84 |
+| `scripts/brain/` — Growth Brain modülleri | ≥ %93 | ≥ %86 | ≥ %95 |
 
 `scripts/growth-brain.mjs` %39.86'da duruyor; orası mantık değil CLI giriş noktası:
 argüman işleme ve terminal çıktısı kapsanmıyor. Asıl önemli parça — her yazmanın önünde

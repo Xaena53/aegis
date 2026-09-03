@@ -164,13 +164,45 @@ test("kod: NvIzi'de 'gercek' YOK — belgenin NV hükmü kodla hâlâ tutarlı",
   );
 });
 
-test("kod: SDK yalnız TEK yerde ve tembel import ediliyor — belgedeki kanıt hâlâ geçerli", () => {
+test("kod: SDK import SAYISI belgenin söylediği sayıyla birebir aynı", () => {
+  /**
+   * Eski hâli yalnız EN AZ BİR eşleşme arıyordu, dolayısıyla kanıt maddesinin SAYIYI
+   * yanlış söylemesini hiç görmüyordu — ve tam olarak öyle olmuştu: madde "SDK beş kez
+   * import ediliyor" derken kaynakta tek bir import vardı (üstelik aynı cümle "artık tek
+   * bir nacIstemci yardımcısından geçiyor" diyordu). Belge okuyucuyu grep'lemeye davet
+   * ediyor; okuyucu beşe karşılık bir buluyor ve maddenin güvenlik gerekçesi var olmayan
+   * bir mimariyi tarif ediyor.
+   *
+   * Sayı artık iki taraftan da okunur ve karşılaştırılır: kaynaktaki geçiş sayısı ile
+   * belgenin yazıyla söylediği sayı.
+   */
+  const SAYI_SOZU = ["zero", "once", "twice", "three times", "four times", "five times", "six times"];
+
   const kaynak = readFileSync(yol("../src/networkTrust.ts"), "utf8");
-  assert.match(
-    kaynak,
-    /await import\("network-as-code"\)/,
-    "belge, SDK'nın tek bir tembel import'la yüklendiğini söylüyor; kaynak artık öyle değil"
+  const gecisler = [...kaynak.matchAll(/await import\("network-as-code"\)/g)].length;
+  assert.ok(
+    gecisler >= 1,
+    "belge, SDK'nın tembel bir dinamik import'la yüklendiğini söylüyor; kaynak artık öyle değil"
   );
+  assert.ok(gecisler < SAYI_SOZU.length, `import sayısı (${gecisler}) sözlüğü aşıyor — sözlüğü genişlet`);
+
+  const madde = belge.slice(belge.indexOf("The SDK is imported only inside"));
+  assert.ok(madde.length > 0, "docs/CAMARA.md'de SDK import kanıt maddesi bulunamadı — yol bayatlamış");
+  const paragraf = madde.slice(0, madde.indexOf("\n\n"));
+
+  assert.ok(
+    paragraf.includes(SAYI_SOZU[gecisler]),
+    `docs/CAMARA.md, SDK'nın kaç kez import edildiğini "${SAYI_SOZU[gecisler]}" demiyor; ` +
+      `kaynakta ${gecisler} geçiş var. Belge grep'lenebilir bir iddia kuruyor — sayı tutmalı.`
+  );
+  for (const [i, soz] of SAYI_SOZU.entries()) {
+    if (i === gecisler) continue;
+    assert.ok(
+      !paragraf.includes(soz),
+      `docs/CAMARA.md aynı maddede "${soz}" de diyor; kaynakta ${gecisler} import var. ` +
+        `İki farklı sayı söyleyen bir kanıt maddesi kanıt değildir.`
+    );
+  }
 });
 
 /* ── 5) Hükmün dayanağı: SDK tip tanımları ────────────────────────────────────── */

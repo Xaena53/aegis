@@ -8,9 +8,10 @@ of every money-spending approval. This page states, without softening, which of 
 signals we actually query, which we only simulate, which we have merely designed, and — most
 importantly — **which of them have ever run against a live endpoint**.
 
-The short answer, as of 2026-08-28: **SIM Swap has, against a live endpoint backed by the
-platform's simulated network; the other five links have not.** Section 2 gives the exact
-requests, responses and gate decisions, plus the undocumented header the SDK omits.
+The short answer, as of 2026-08-31: **five of the six links have, against live endpoints
+backed by the platform's simulated network; the sixth — Number Verification — never will
+from a server.** Section 2 gives the exact requests, responses and gate decisions, plus the
+undocumented header the SDK omits.
 
 **Headline verdict on Number Verification: it is NOT callable from our server.** It is a
 device-side OIDC flow, and section 4 proves that from the SDK's own type definitions rather
@@ -33,8 +34,8 @@ server call it at all, and what is its status in this codebase today.
 | **Call Forwarding Signal** (`callForwardingSignal.retrieveUnconditionalCallForwarding`) | "Is *unconditional* call forwarding active on the approver's line?" (the standard way to intercept OTP/voice verification, and invisible to all five earlier links: same SIM, same device, line reachable, expected country) | **Link 6 — real path written, opt-in.** Off unless `ADSPILOT_CALLFWD_CHECK` is set, `high` tier only, trail records `kapali` while off; `ADSPILOT_CALLFWD_SIMULATE` is the demo channel. Only the unconditional variant is called — one boolean, no PII: *which* number the line forwards to is never asked for, never received, never written anywhere. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — phone number only. |
 | **KYC Tenure** (`kyc.checkTenure`) | "Has this number been with the same subscriber since date X, and is it prepaid (PAYG) or contract/business?" | **Roadmap, blocked on data we do not have.** Requires a `tenureDate` we would have to invent — see the trap note below. | **Yes**, but needs a date input we cannot honestly supply yet. |
 | **Number Recycling** (`numberRecycling.check`) | "Has the configured approver number changed hands since date X?" | **Roadmap.** Needs a new config field (e.g. `ADSPILOT_APPROVER_SINCE`). Window semantics differ from every other link: absolute date, not an hour window. | **Yes**, but needs that new config field. |
-| **Device Status — roaming** (`deviceStatus.checkRoaming`) | "Is the approver's line abroad right now, and in which country?" | **Link 4 — real path written.** Serves the expected-country check: `ADSPILOT_EXPECTED_COUNTRY` (ISO 3166-1 alpha-2) with `ADSPILOT_LOC_SIMULATE` as the demo channel. `high` tier only, and **only when an expected country is configured** — no default is invented, since a default would answer "clean" forever. Raw `countryName[]` is never echoed; only the derived expected/unexpected verdict. **Live since 31 Aug 2026** — the 404s came from hand-built passthrough-prefixed URLs; the SDK calls `device-status/device-roaming-status/v1/retrieve` directly and answers `200` (roaming true, country HU), confirmed by Nokia mentor Aleksi Puranen and reproduced through the gate with a `gercek` trace. | **Yes** — `device.phoneNumber`. Direct endpoint, not passthrough. |
-| **Device Status — connectivity / reachability** (`deviceStatus.retrieveReachabilityStatus`) | "Can the line receive data/SMS right now?" | **Link 3 — real path written, opt-in.** The false-positive objection is real: reachability legitimately fluctuates (airplane mode, coverage, dead battery) and under fail-closed an "unreachable" answer refuses the spend. So the live query stays **off unless `ADSPILOT_REACH_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_REACH_SIMULATE` is the demo channel. **Live since 31 Aug 2026** — same correction as link 4: the endpoint was never gated, our hand-built URLs carried a passthrough prefix the SDK does not use. Answers `200` (reachable, SMS). | **Yes** — phone number only. |
+| **Device Status — roaming** (`deviceStatus.checkRoaming`) | "Is the approver's line abroad right now, and in which country?" | **Link 4 — real path written.** Serves the expected-country check: `ADSPILOT_EXPECTED_COUNTRY` (ISO 3166-1 alpha-2) with `ADSPILOT_LOC_SIMULATE` as the demo channel. `high` tier only, and **only when an expected country is configured** — no default is invented, since a default would answer "clean" forever. Raw `countryName[]` is never echoed; only the derived expected/unexpected verdict. **Verified against the live endpoint on 2026-08-31** (§2) — the 404s came from hand-built passthrough-prefixed URLs; the SDK calls `device-status/device-roaming-status/v1/retrieve` directly and answers `200` (roaming true, country HU), confirmed by Nokia mentor Aleksi Puranen and reproduced through the gate with a `gercek` trace. | **Yes** — `device.phoneNumber`. Direct endpoint, not passthrough. |
+| **Device Status — connectivity / reachability** (`deviceStatus.retrieveReachabilityStatus`) | "Can the line receive data/SMS right now?" | **Link 3 — real path written, opt-in.** The false-positive objection is real: reachability legitimately fluctuates (airplane mode, coverage, dead battery) and under fail-closed an "unreachable" answer refuses the spend. So the live query stays **off unless `ADSPILOT_REACH_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_REACH_SIMULATE` is the demo channel. **Verified against the live endpoint on 2026-08-31** (§2) — same correction as link 4: the endpoint was never gated, our hand-built URLs carried a passthrough prefix the SDK does not use. Answers `200` (reachable, SMS). | **Yes** — phone number only. |
 | **Location Verification / Retrieval** (`location.*`) | "Is the approver inside the expected geography?" | **Deferred — the country question is served by roaming instead (above).** The SDK's `Area` type is `{ areaType: 'CIRCLE' }` only: center coordinates and radius are absent from the `.d.ts`, so a query area cannot be expressed type-safely, and forcing it with `as any` would be inventing a schema. It is also the highest-privacy data in the set (needs `consentInfo`), and `retrieve` returns raw coordinates. Country-level roaming answers most of the fraud question at a fraction of the privacy cost. | Structurally yes; **not type-safe today.** |
 | **Geofencing** (`geofencing.*`) | "Tell me when the approver enters/leaves an area." | **Out of scope.** Not a synchronous question-and-answer: the answer arrives later on a webhook, which a fail-closed approval gate cannot wait for. Also needs a public sink URL and subscription lifecycle state. | Technically yes; architecturally unusable here. |
 | **KYC Match / Fill-In** (`kyc.match`, `kyc.fillIn`) | "Do the user's identity details match the operator's records?" / "Give me the subscriber's identity record." | **Rejected on principle.** `match` demands identity PII as *input* (we hold none). `fillIn` returns ID document number, address, birthdate as *output* — a direct collision with our invariant that raw values are never echoed to the agent. | Yes — and that is precisely why the refusal is deliberate, not incidental. |
@@ -68,12 +69,29 @@ silence as "no forwarding".
 
 ## 2. What has run live, and what has not
 
-**Status changed on 2026-08-28: the SIM Swap link now runs against Nokia's live
-Network-as-Code endpoint.** Before that date this section said no CAMARA call had ever
-left the repository, and that was true. It is no longer, and the honest thing is to say
-exactly what changed rather than leave the stronger disclaimer standing.
+This section used to be maintained in prose, and prose let it contradict itself: while §1
+said links 3 and 4 were live, the text below still listed them as blocked by a 404. One
+dated table now carries the whole answer, and the live/not-live column is mirrored in the
+code (`ZINCIR_HALKALARI[].canliDogrulandi`) so a test refuses to let the two drift again.
 
-What ran, and what came back:
+| Link | Live-verified | What proved it |
+|---|---|---|
+| 1 · `simSwap.check` | **2026-08-28** | Three MSISDNs, three outcomes — table below |
+| 2 · `numberVerification.*` | **never, and never will be** | Device-side OIDC; not callable from any back end (§4). This is an architectural verdict, not a pending task |
+| 3 · `deviceStatus.retrieveReachabilityStatus` | **2026-08-31** | `200` (reachable, SMS) through the gate, trace `"reach":"gercek"` |
+| 4 · `deviceStatus.checkRoaming` | **2026-08-31** | `200` (roaming, country HU) through the gate, trace `"loc":"gercek"`; a wrong `ADSPILOT_EXPECTED_COUNTRY` produces a real refusal with the observed country kept out of the text |
+| 5 · `deviceSwap.check` | **2026-08-28** | `200 {"swapped":…}` through the gate, trace `"devSwap":"gercek"` |
+| 6 · `callForwardingSignal` | **2026-08-28** | `200 {"active":…}` through the gate, trace `"callFwd":"gercek"` |
+
+All of it is reproducible in one command — `npm run agtest` drives the production path
+(`nacIstemciSecenekleri()` + `agDogrula()`), never a hand-built URL. That distinction is
+not pedantry: the 404s that convinced us Device Status was switched off on our account
+came from exactly such hand-built URLs, which carried a `/passthrough/camara/v1/` prefix
+the SDK does not use for Device Status. Nokia mentor Aleksi Puranen supplied the correct
+paths on 31 Aug 2026 and both links answered `200` on the first run through the gate. The
+wrong diagnosis survived for weeks because nothing but prose was holding it.
+
+What ran on link 1, and what came back:
 
 | Simulator MSISDN | Request | Real response | Gate decision |
 |---|---|---|---|
@@ -101,20 +119,13 @@ response shape are all real, but the subscriber behind the number is Nokia's sim
 not a person on an operator's network. Reaching real subscribers requires completing
 onboarding with a billing account. So the wire is proven; the operator integration is not.
 
-**What still has not run live:** links 2, 3 and 4 — and for three different reasons, which
-is worth separating because only one of them is ours to fix.
+**What still has not run live: link 2, Number Verification — and it never will.** It cannot
+run from a server at all (§4), so no account tier and no mentor session changes it. It is
+the one entry in the table above that is a verdict rather than a to-do.
 
-- **Link 2, Number Verification** cannot run from a server at all (§4). No account tier
-  changes that.
-- **Links 3 and 4** are blocked by the account, not the code: every Device Status path we
-  tried — `/device-status/v0/connectivity`, `/device-status/v0/roaming`,
-  `/device-status/device-reachability-status/v1/retrieve`,
-  `/device-status/device-roaming-status/v1/retrieve` — answers
-  `404 {"message":"Endpoint … does not exist"}` while SIM Swap, Device Swap and Call
-  Forwarding answer `200` with the same key and header. The endpoints appear in the
-  platform's own API catalogue, so the likeliest explanation is that Device Status is not
-  exposed on the free Simulator tier. That is a question for the platform, and it is on the
-  mentor-session list rather than in the code.
+A green test suite remains evidence about **decision logic**, not about the wire: the unit
+suite injects a fake channel on purpose, so it can say nothing at all about whether the
+endpoint answers.
 
 ### The header that made it work
 
@@ -154,21 +165,23 @@ The evidence for everything above, all of it checkable in the tree:
    script, and the decision log records a masked number and a fixed reason code, never the
    raw upstream body.
 
-2. **The SDK is imported only inside `src/networkTrust.ts`** — **five** times, once per
-   live link (SIM Swap, reachability, roaming, device swap, call forwarding), each in that
-   link's own channel factory, all now routed through one `nacIstemci()` helper so the
-   header cannot be added to some and forgotten on others:
+2. **The SDK is imported only inside `src/networkTrust.ts`, and there exactly `once`** —
+   in the single `nacIstemci()` helper that every live link's channel factory goes
+   through:
 
    ```ts
    const { NetworkAsCodeApiClient } = await import("network-as-code");
    ```
 
-   Five, not six: Number Verification has no channel factory at all, because it has no
-   server-callable endpoint (§4).
+   One import point, not one per link, and that is the security property: the
+   `X-RapidAPI-Host` header cannot be added to some clients and forgotten on others,
+   because there is only one place that builds a client. Grep for the line above and you
+   should find a single hit; `test/camaraBelge.test.ts` counts it and fails if this
+   sentence and the source ever disagree.
 
-   Every one is a lazy dynamic import, reached only when a token is present *and* that
-   link's simulation channel is absent — and, for reachability, device swap and call
-   forwarding, only when that link's own opt-in switch (`ADSPILOT_REACH_CHECK`,
+   It is a lazy dynamic import, reached only when a token is present *and* that link's
+   simulation channel is absent — and, for reachability, device swap and call forwarding,
+   only when that link's own opt-in switch (`ADSPILOT_REACH_CHECK`,
    `ADSPILOT_DEVICESWAP_CHECK`, `ADSPILOT_CALLFWD_CHECK`) is on.
 
 3. **Tests never touch the network — they inject a fake channel.** The seam is
@@ -266,6 +279,25 @@ ADSPILOT_CALLFWD_CHECK=1        # link 6 — unconditional call forwarding
 Turn them on one at a time for a first live run: each one is a new way for the endpoint to
 refuse a spend, and you want to know which link produced the first refusal you see.
 
+One more variable belongs to the chain as a whole rather than to any single link, and it
+changes what a refusal *means*:
+
+```bash
+ADSPILOT_STEPUP=0               # default. 1 = escalate instead of refusing (see below)
+```
+
+Leave it at `0` for a first live run. With it on, a broken signal that describes an
+ordinary human situation — SIM changed, device changed, line abroad, phone unreachable,
+network silent — no longer ends the request: the remaining links are asked anyway, and if
+every one answers clean **over a real channel**, the action reaches a human prompt that
+names the broken signal instead of a flat refusal. That is a loosening, so it ships off,
+and the audit trail records it as its own outcome (`"karar":"kademeli"`) rather than
+folding it into `gecti`. Two limits are worth knowing before you turn it on: an active
+call-forwarding signal **never** escalates (the escalation would travel over the very
+channel the attacker holds), and neither do configuration faults. The full list, and the
+refusal reasons it covers, is in [docs/DEMO.md](DEMO.md) — kept in step with the code by a
+test that reads the reason set out of `KADEME_UYGUN`.
+
 ### Step 3 — Remove the simulation channels
 
 This is the step that is easy to forget and expensive to get wrong.
@@ -338,7 +370,7 @@ evidence line attached to the approval prompt:
 
 | What you see | What it means |
 |---|---|
-| `Ağ doğrulaması: SIM değişimi yok (son 24 saat, +90XX****XX) — GSMA Open Gateway` | **Live query succeeded.** No `SİMÜLASYON`, no `kapalı`. This is the line that has never yet been produced. |
+| `Ağ doğrulaması: SIM değişimi yok (son 24 saat, +90XX****XX) — GSMA Open Gateway` | **Live query succeeded.** No `SİMÜLASYON`, no `kapalı`. First produced on 2026-08-28 (§2); on a real subscriber line it will be produced for the first time. |
 | `Ağ doğrulaması: kapalı (ADSPILOT_NAC_TOKEN tanımlı değil)` | The token did not reach the process. Check `.env` location — config is loaded from the project root, never from the CWD. |
 | Any line containing `SİMÜLASYON` | A simulation variable is still set. Go back to step 3. |
 | `Reddedildi: ağ doğrulaması tamamlanamadı` | The endpoint was reached but did not answer within 10s / 1 retry. Details are on stderr with the number redacted. Fail-closed worked. |

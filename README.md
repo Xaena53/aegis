@@ -8,8 +8,8 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-810-brightgreen.svg)](test/)
-[![Coverage](https://img.shields.io/badge/line%20coverage-94.28%25-brightgreen.svg)](#test-metrics)
+[![Tests](https://img.shields.io/badge/tests-912-brightgreen.svg)](test/)
+[![Coverage](https://img.shields.io/badge/line%20coverage-89.95%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -29,8 +29,8 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 810 automated tests at 94.28% line coverage; Docker deployment |
-| **Not yet** | Device Status links (absent on our account tier) · Number Verification (device-side OIDC, uncallable from a server) · Meta writes (no live token) |
+| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 912 automated tests at 89.95% line coverage; Docker deployment |
+| **Not yet** | Number Verification (device-side OIDC, uncallable from a server — an architectural verdict, not a pending task) · a real subscriber network behind the CAMARA calls (the account is in Simulator mode) |
 
 ## Contents
 
@@ -115,12 +115,13 @@ never mistaken for "asked and passed".
 
 > **SIM Swap now runs against Nokia's live Network-as-Code endpoint** (verified 2026-08-28):
 > a clean line returns `{"swapped":false}` and passes, a swapped line returns
-> `{"swapped":true}` and is refused before any prompt, and a line that makes the platform
+> `{"swapped":true}` and is refused before any prompt while `ADSPILOT_STEPUP` is off (the
+> default — with step-up on it escalates to a prompt instead, see below), and a line that makes the platform
 > return `500` is refused fail-closed with the upstream body redacted. All three landed in
 > the decision log as `"simSwapKanali":"gercek"`. **The caveat that matters:** the account is
 > in the platform's *Simulator mode*, so the request, auth, routing and response shape are
 > real while the subscriber behind the number is Nokia's simulation — the wire is proven, the
-> operator integration is not. Links 5 and 6 have since been verified live too — device swap and call forwarding both answer through the gate with a `gercek` trace. Links 3 and 4 went live on 31 Aug 2026: the `404 Endpoint does not exist` we had been chasing came from hand-built URLs carrying a `/passthrough/camara/v1/` prefix that the SDK does not use for Device Status. Nokia mentor Aleksi Puranen supplied the correct paths and both now answer `200` through the gate. Only Number Verification stays simulation-only, because a device-side OIDC flow cannot be called from a back end at all. A green test
+> operator integration is not. Links 5 and 6 have since been verified live too — device swap and call forwarding both answer through the gate with a `gercek` trace. Links 3 and 4 went live on 31 Aug 2026: the `404 Endpoint does not exist` we had been chasing came from hand-built URLs carrying a `/passthrough/camara/v1/` prefix that the SDK does not use for Device Status. Nokia mentor Aleksi Puranen supplied the correct paths and both now answer `200` through the gate. That leaves five of the six links live-verified; only Number Verification stays simulation-only, because a device-side OIDC flow cannot be called from a back end at all. A green test
 > suite remains evidence about **decision logic**, not about the wire.
 >
 > One finding worth repeating: the SDK does not send the `X-RapidAPI-Host` header, and
@@ -227,7 +228,7 @@ npm run demo  -- --musteri <customer-id> --canli    # real +1 budget raise, reve
 `npm run demo` drives the **real** server binary over real MCP stdio — a fresh server process
 per scene, each handed its own simulation value, so nothing in `.env` is flipped mid-demo:
 a budget raise on a clean signal (the prompt appears with the network evidence line inside
-it), the same raise with a swapped SIM (**hard refusal, zero prompts** — the script counts
+it), the same raise with a swapped SIM (**hard refusal, zero prompts** at the default `ADSPILOT_STEPUP=0` — the script counts
 elicitations and aborts if one is ever shown), and a high-tier go-live where the lookback
 widens to 72 h and, if `ADSPILOT_NV_SIMULATE` is set, a second evidence line appears. Act 3
 skips itself rather than stage a scene whose evidence it cannot honestly produce, and any
@@ -244,8 +245,8 @@ glossary of the Turkish runtime strings: **[docs/DEMO.md](docs/DEMO.md)**.
 
 ## Capabilities
 
-**Tools** — 12 total. "Approval" marks actions that can increase spend and therefore
-pass through the gate above.
+**Tools** — 15 total: twelve on Google Ads, three on Meta. "Approval" marks actions that
+can increase spend and therefore pass through the gate above.
 
 | Tool | Purpose | Approval |
 |---|---|---|
@@ -261,6 +262,13 @@ pass through the gate above.
 | `add_campaign_negative_keywords` | Negatives across a whole campaign | no — reduces spend |
 | `update_campaign_budget` | Changes the daily budget | increases only |
 | `set_campaign_status` | Enable or pause | enabling only |
+| `create_meta_campaign` | Meta (Facebook/Instagram) campaign, budget included | born paused ⇒ no |
+| `update_meta_campaign_budget` | Changes the Meta campaign's daily budget | increases only |
+| `set_meta_campaign_status` | Takes a Meta campaign live or pauses it | enabling only |
+
+The three Meta tools are not a second, looser path: they call the same `onayAl` gate with
+the same risk tiers, so the CAMARA chain runs before the human prompt on Meta exactly as
+it does on Google.
 
 **Resources** — browsable data that costs no tool call: `adspilot://accounts` ·
 `adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (your active
@@ -363,7 +371,7 @@ flowchart LR
     subgraph server["AdsPilot server"]
         direction TB
         T["stdio · Streamable HTTP + Bearer"]
-        M["MCP surface<br/>12 tools · 4 resources · 5 prompts"]
+        M["MCP surface<br/>15 tools · 4 resources · 5 prompts"]
         NT["Network trust gate<br/>src/networkTrust.ts"]
         SG["Safety gates<br/>approval · ceiling · fail-closed"]
         AC["AdsContext<br/>one per user, refreshed per request"]
@@ -372,7 +380,7 @@ flowchart LR
     DB[("SQLite<br/>refresh tokens<br/>AES-256-GCM")]
     GA["Google Ads API"]
     WEB["Any website<br/>SSRF-guarded fetch"]
-    NAC["GSMA Open Gateway / CAMARA<br/>via Nokia Network-as-Code<br/>(never yet called live)"]
+    NAC["GSMA Open Gateway / CAMARA<br/>via Nokia Network-as-Code<br/>(5 of 6 links live-verified,<br/>Simulator mode)"]
     LOG[("Decision log<br/>JSONL, opt-in")]
 
     CC --> T
@@ -405,7 +413,7 @@ Two deployment shapes share the same core:
 | **Fail-closed guards** | n/a | Budget ceiling, paused-by-default, mandatory geo targeting, shared-budget protection |
 | **Multi-tenant hosting** | ❌ self-host, single identity | ✅ per-user OAuth, encrypted tokens, session isolation |
 | **Site → campaign** | ❌ | ✅ `analyze_site` turns any URL into campaign raw material |
-| **Network trust anchor** | ❌ | A six-link CAMARA chain (SIM swap · number verification · reachability · roaming · device swap · call forwarding) *before* the human is prompted — SIM Swap verified live in Simulator mode, links 2-6 written but not yet exercised ([docs](docs/CAMARA.md)) |
+| **Network trust anchor** | ❌ | A six-link CAMARA chain (SIM swap · number verification · reachability · roaming · device swap · call forwarding) *before* the human is prompted — five of the six verified against live endpoints in Simulator mode; the sixth, Number Verification, is device-side OIDC and cannot be called from a server at all ([docs](docs/CAMARA.md)) |
 | **License** | Apache-2.0 | AGPL-3.0 |
 
 > This table compares Google's official server, which is deliberately read-only and
@@ -447,7 +455,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 810 offline tests
+npm test           # 912 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
 npm run metatest   # live checks of the Meta path (add --write to create a paused campaign)
@@ -465,16 +473,33 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-810 tests · 0 failures        line 94.28%  ·  branch 89.03%  ·  function 92.84%
+912 tests · 0 failures        line 89.95%  ·  branch 90.74%  ·  function 89.23%
 ```
+
+Those three figures are the test runner's own **all files** row
+(`node --test --experimental-test-coverage`), reproducible in one command and not
+hand-picked. It counts `scripts/` and `src/http.ts` too. `src/http.ts` reads at 12.50%
+for a reason worth stating rather than hiding: the hosted layer *is* tested end to end,
+but `test/http.test.ts` drives it as a **spawned server process**, so the parent's
+instrumentation never sees those lines execute. Multi-tenant isolation, session binding,
+rate limiting and the OAuth-state gate all have tests; the coverage number simply cannot
+see them. The line and function figures are stable run to run; the **branch** figure
+is not, and the honest reading of it is approximate: one timeout-race branch in
+`networkTrust.ts` is not always taken, which moves the all-files branch number by about
+a tenth of a point between runs, and that file's own branch reading between roughly
+ninety-seven and ninety-six percent.
+
+Per-area floors, not exact readings: the table says what the suite is *held above*, so a
+refactor that moves a figure by a tenth of a point does not turn the README into a lie.
 
 | Area | Line | Branch | Function |
 |---|---|---|---|
-| `kararGunlugu.ts` · `rateLimit.ts` · `approval.ts` · `config.ts` | 100% | 94–100% | 100% |
-| `networkTrust.ts` — the six-link trust chain | 98.60% | 95.82% | 97.06% |
-| `meta/client.ts` · `adsClient.ts` · `store.ts` | 97–99% | 86–92% | 80–100% |
-| `tools/` — write, read, site, meta | 94–98% | 65–83% | 80–96% |
-| `scripts/brain/` — Growth Brain modules | 93–100% | 86–99% | 95–100% |
+| `rateLimit.ts` · `approval.ts` | ≥ 99% | ≥ 95% | 100% |
+| `kararGunlugu.ts` · `config.ts` | ≥ 99% | ≥ 77% | 100% |
+| `networkTrust.ts` — the six-link trust chain | ≥ 98% | ≥ 96% | ≥ 97% |
+| `meta/client.ts` · `adsClient.ts` · `store.ts` | ≥ 96% | ≥ 91% | ≥ 88% |
+| `tools/` — write, read, site, meta | ≥ 96% | ≥ 72% | ≥ 84% |
+| `scripts/brain/` — Growth Brain modules | ≥ 93% | ≥ 86% | ≥ 95% |
 
 `scripts/growth-brain.mjs` sits at 39.86%, and that is the CLI entry point rather than
 the logic: its argument parsing and terminal output are uncovered, while the part that
