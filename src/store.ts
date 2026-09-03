@@ -370,6 +370,32 @@ export class UserStore {
     return row ? this.rowToUser(row) : undefined;
   }
 
+  /**
+   * DEPODAKİ ANAHTARIN GERÇEKTEN ÇALIŞTIĞINI KANITLAR — açılışta bir kez.
+   *
+   * Dönüş: 'bos' (denenecek kayıt yok), 'calisiyor', ya da çözülemeyen kaydın hatası.
+   *
+   * NEDEN: açılış denetimi yalnız ŞİFRELEYEBİLMEYİ ölçüyordu ve şifrelemek her zaman
+   * çalışır — anahtar YANLIŞ olsa bile. Anahtar döndürüldüğünde ya da veritabanı başka
+   * bir kurulumdan geri yüklendiğinde süreç sağlıkla ayağa kalkıyor, /health yeşil
+   * yanıyor, ve her kiracı ilk isteğinde ipucusuz bir 500 alıyordu. Arıza, onu
+   * düzeltebilecek tek anın (açılış) çok sonrasında ve yanlış katmanda görünüyordu.
+   *
+   * Tek kayıt yeter: anahtar ya hepsini çözer ya hiçbirini.
+   */
+  anahtarCalisiyorMu(): "bos" | "calisiyor" | { hata: string } {
+    const row = this.db
+      .prepare(`SELECT refresh_token_enc FROM users ORDER BY id LIMIT 1`)
+      .get() as any;
+    if (!row) return "bos";
+    try {
+      decryptSecret(String(row.refresh_token_enc));
+      return "calisiyor";
+    } catch (e: any) {
+      return { hata: String(e?.message ?? e) };
+    }
+  }
+
   private rowToUser(row: any): StoredUser {
     return {
       id: Number(row.id),

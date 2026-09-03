@@ -14,7 +14,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "./server.js";
 import { AdsContext } from "./adsClient.js";
-import { UserStore, encryptSecret, masterKeyText, type StoredUser } from "./store.js";
+import { UserStore, decryptSecret, encryptSecret, masterKeyText, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
 import { lruYerAc, setRuntimeMode } from "./util.js";
 import {
@@ -82,12 +82,47 @@ function validateHostedEnv(): void {
 validateHostedEnv();
 
 const store = new UserStore();
-// Exercise the encryption key immediately: a broken key must fail here, not on the first user.
+/**
+ * ŞİFRELEME ANAHTARI AÇILIŞTA SINANIR — ve sınama iki ayrı soru sorar.
+ *
+ * 1) GİDİŞ-DÖNÜŞ: şifrele, çöz, karşılaştır. Eski hâli yalnız `encryptSecret` çağırıyordu
+ *    ve şifrelemek YANLIŞ anahtarla da başarılı olur; yani kapı, geçmesi imkânsız bir
+ *    sınavdı.
+ *
+ * 2) DEPODAKİ VERİYE KARŞI: asıl arıza budur. Anahtar döndürüldüğünde ya da veritabanı
+ *    başka bir kurulumdan geri yüklendiğinde süreç sağlıkla ayağa kalkar, /health yeşil
+ *    yanar ve her kiracı ilk isteğinde sebebi yazmayan bir 500 alır. Arıza, onu
+ *    düzeltebilecek tek anın çok sonrasında ve yanlış katmanda görünürdü.
+ *
+ * Boş veritabanı geçerli bir durumdur (ilk kurulum) ve sınamayı düşürmez.
+ */
 try {
-  encryptSecret("baslangic-dogrulamasi");
+  const ornek = "baslangic-dogrulamasi";
+  if (decryptSecret(encryptSecret(ornek)) !== ornek) {
+    throw new Error("şifrelenen değer geri çözülemedi (gidiş-dönüş uyuşmadı)");
+  }
 } catch (e: any) {
   console.error(`[adspilot-http] BAŞLATILAMADI — şifreleme anahtarı kullanılamıyor: ${e?.message ?? e}`);
   process.exit(1);
+}
+{
+  const durum = store.anahtarCalisiyorMu();
+  if (typeof durum === "object") {
+    console.error(
+      `[adspilot-http] BAŞLATILAMADI — ADSPILOT_MASTER_KEY veritabanındaki kayıtları ÇÖZEMİYOR.
+` +
+        `  Sebep: ${durum.hata}
+` +
+        `  Bu genellikle şu ikisinden biridir: (a) ana anahtar değiştirildi/döndürüldü, ya da
+` +
+        `  (b) veritabanı başka bir kurulumdan geri yüklendi. Sürecin bu hâlde açılması,
+` +
+        `  her kiracıya sebepsiz 500 döndürmek demek olurdu; onun yerine burada duruluyor.
+` +
+        `  Çözüm: doğru ADSPILOT_MASTER_KEY'i geri koy ya da kullanıcıları yeniden bağla.`
+    );
+    process.exit(1);
+  }
 }
 
 // ── Limits (guards against memory exhaustion) ────────────────────────────

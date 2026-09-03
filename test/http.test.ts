@@ -516,6 +516,61 @@ async function zayifAnahtarlaBaslat(anahtar: string): Promise<{ kod: number | nu
   return { kod, stderr };
 }
 
+test("KRİTİK: ana anahtar veritabanını ÇÖZEMİYORSA süreç açılmaz", async () => {
+  /**
+   * Anahtar döndürüldüğünde ya da veritabanı başka bir kurulumdan geri yüklendiğinde,
+   * eski açılış denetimi bunu göremiyordu: yalnız `encryptSecret` çağrılıyordu ve
+   * ŞİFRELEMEK yanlış anahtarla da başarılıdır. Süreç sağlıkla ayağa kalkıyor, /health
+   * yeşil yanıyor ve her kiracı ilk isteğinde sebebi yazmayan bir 500 alıyordu.
+   *
+   * Burada bir kullanıcı BİR anahtarla yazılıyor, süreç BAŞKA bir anahtarla açılıyor.
+   * Beklenen: sıfırdan farklı çıkış kodu ve operatöre sebebi söyleyen bir mesaj.
+   */
+  const db = join(tmpdir(), `adspilot-anahtar-${process.pid}.db`);
+  rmSync(db, { force: true });
+  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  const { UserStore } = await import("../src/store.js");
+  const s2 = new UserStore(db);
+  s2.upsertUser({ subject: "sub-anahtar", email: "anahtar@ornek.com", refreshToken: "gizli-jeton" });
+  s2.close();
+
+  const baskaAnahtar = "b".repeat(64);
+  const cocuk = spawn(process.execPath, ["--import", "tsx", "src/http.ts"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ADSPILOT_MASTER_KEY: baskaAnahtar,
+      ADSPILOT_DB: db,
+      ADSPILOT_PORT: String(PORT + 77),
+      ADSPILOT_PUBLIC_URL: `http://localhost:${PORT + 77}`,
+    },
+  });
+  let cikti = "";
+  cocuk.stderr.on("data", (d) => (cikti += String(d)));
+  cocuk.stdout.on("data", (d) => (cikti += String(d)));
+  /**
+   * SÜRE SINIRI ŞART: kapı kaldırıldığında süreç AÇILIR ve hiç çıkmaz, yani çıkışı
+   * süresiz beklemek testi kızarmak yerine ASMAYA çevirir. Asılan test, kaldırılmış
+   * bir kapıyı bildiremez — sonsuza kadar "henüz bitmedi" der. Zaman aşımı, "açıldı"
+   * durumunu ölçülebilir bir başarısızlığa dönüştürür.
+   */
+  const kod: number = await new Promise((r) => {
+    const sure = setTimeout(() => {
+      cocuk.kill();
+      r(0); // 0 = "çıkmadı, yani açıldı" → aşağıdaki notEqual iddiası kızarır
+    }, 15_000);
+    cocuk.on("exit", (c) => {
+      clearTimeout(sure);
+      r(c ?? -1);
+    });
+  });
+
+  rmSync(db, { force: true });
+  assert.notEqual(kod, 0, `KRİTİK: çözemediği veritabanıyla süreç açılmamalı (çıkış: ${kod})`);
+  assert.match(cikti, /ÇÖZEMİYOR/, "operatör sebebi görmeli");
+  assert.match(cikti, /döndürüldü|geri yüklendi/, "olası sebepler adıyla söylenmeli");
+});
+
 test("ZAYIF ANA ANAHTAR: 8 karakterlik anahtarla süreç sıfırdan farklı kodla çıkar", async () => {
   const { kod, stderr } = await zayifAnahtarlaBaslat("kisa1234");
   assert.notEqual(kod, 0, "zayıf anahtarla ayağa kalkmamalı");
