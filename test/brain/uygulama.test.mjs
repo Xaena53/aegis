@@ -19,6 +19,7 @@ import {
   yayinaAl,
   guvenliCagirici,
   sonucBasarisizMi,
+  sonucDurumu,
   kimlikAyikla,
   YAZMA_IZINLI,
   KARA_LISTE,
@@ -273,6 +274,88 @@ test("'Yazma araçları devre dışı' yanıtı da başarısız sayılır", asyn
   assert.equal(sonuc.basari, false);
   assert.equal(sonuc.adimlar.find((a) => a.arac === "create_search_campaign").durum, "basarisiz");
   assert.equal(cagir.cagrilar.filter((c) => YAZMA_IZINLI.includes(c.arac)).length, 1);
+});
+
+/* ── KAPALI ARIZA: tanınmayan yanıt başarı DEĞİLDİR ──────────────────────────── */
+
+test("KRİTİK: tanınmayan araç yanıtı 'tamam' damgalanmaz — belirsizdir", () => {
+  /**
+   * Eskiden sınıflandırıcı yalnız BİLİNEN ret desenlerine bakıyor, eşleşme yoksa
+   * adımı 'tamam' damgalıyordu. Yani sunucunun tanımadığımız her cevabı — yani
+   * yapılmamış bir yazma — denetim izine TAMAM diye giriyordu: süreç 0 ile çıkıyor,
+   * rapor "tüm adımlar tamamlandı" diyor ve yarım kalmış bir kampanya için
+   * --yayinla kapısı açılıyordu.
+   */
+  for (const yanit of [
+    "429 RESOURCE_EXHAUSTED",
+    "PERMISSION_DENIED",
+    "Geçersiz kampanya ID",
+    "İşlem yapılmadı: kullanıcı onayı alınamadı (declined). Güvenlik gereği onaysız işlem uygulanmaz.",
+    "{}",
+  ]) {
+    assert.notEqual(
+      sonucDurumu(yanit),
+      "tamam",
+      `'${yanit}' başarı ilan edilemez: yazmanın gerçekleştiğini yalnız sunucunun POZİTİF imzası söyler`
+    );
+  }
+  // Gerçek başarı metinleri 'tamam' kalmalı — kural sertleşirken meşru yol kapanmamalı.
+  assert.equal(sonucDurumu(CREATE_OK), "tamam");
+  assert.equal(sonucDurumu("5 anahtar kelime eklendi [PHRASE]."), "tamam");
+  assert.equal(sonucDurumu("RSA oluşturuldu: customers/1/adGroupAds/2~3"), "tamam");
+  assert.equal(sonucDurumu("2 negatif anahtar kelime KAMPANYA seviyesinde eklendi [PHRASE]."), "tamam");
+  assert.equal(sonucDurumu("Kampanya 42 YAYINDA (ENABLED). Harcama başladı."), "tamam");
+  assert.equal(sonucDurumu("0 satır (0 gösteriliyor):\n[]"), "tamam");
+  // Bilinen ret 'basarisiz'dir — 'belirsiz'e karışmaz.
+  assert.equal(sonucDurumu("Reddedildi: bütçe tavan üstü."), "basarisiz");
+});
+
+test("KRİTİK: tanınmayan yanıt kalan adımları İPTAL eder, kurulum başarılı sayılmaz", async () => {
+  const cagir = sahteCagir({
+    // İnsan onayı kapısının kullanıcı reddi metni: hiçbir ret desenine uymuyordu.
+    add_campaign_negative_keywords: "İşlem yapılmadı: kullanıcı onayı vermedi.",
+  });
+  const sonuc = await uygula(ornekGirdi(), { cagir });
+
+  assert.equal(sonuc.basari, false, "yapılmamış bir yazma TAMAM raporlanamaz");
+  const adim = sonuc.adimlar.find((a) => a.arac === "add_campaign_negative_keywords");
+  assert.notEqual(adim.durum, "tamam");
+  const rsa = sonuc.adimlar.find((a) => a.arac === "create_responsive_search_ad");
+  assert.equal(rsa.durum, "atlandi", "doğrulanamayan adımdan sonrası koşmaz (kapalı arıza)");
+  assert.ok(sonuc.eksikAdimlar.includes("create_responsive_search_ad"));
+});
+
+test("KRİTİK: ne ret ne başarı olan yanıt 'belirsiz' damgalanır ve uyarı yazılır", async () => {
+  const cagir = sahteCagir({ add_campaign_negative_keywords: "429 RESOURCE_EXHAUSTED" });
+  const sonuc = await uygula(ornekGirdi(), { cagir });
+
+  const adim = sonuc.adimlar.find((a) => a.arac === "add_campaign_negative_keywords");
+  assert.equal(
+    adim.durum,
+    "belirsiz",
+    "'olmadığını biliyorum' ile 'olup olmadığını bilmiyorum' aynı damgayı taşıyamaz"
+  );
+  assert.ok(
+    sonuc.uyarilar.some((u) => u.includes("DOĞRULANAMADI")),
+    "operatör, adımın neden durduğunu uyarılardan okuyabilmeli"
+  );
+});
+
+test("kırpılmış adım dönüşte kirpik:true taşır (rapor damgasının okuduğu alan)", async () => {
+  /**
+   * rapor.mjs `uygulamaSonucu?.kirpik` okuyup "⚠ YARIM OLABİLİR" damgasını basıyordu;
+   * üreten taraf o alanı HİÇ yazmıyordu. Yani belgelenen değişmez üretim yolunda hiç
+   * ateşlenemiyor, damgayı yalnız elle kurulmuş bir test şekli görebiliyordu.
+   */
+  const cagir = sahteCagir({ create_search_campaign: CREATE_OK + "\n" + KIRPMA });
+  const sonuc = await uygula(ornekGirdi(), { cagir });
+
+  assert.equal(sonuc.kirpik, true, "kırpma bilgisi özet metnine değil dönüş nesnesine bağlı olmalı");
+  assert.equal(sonuc.adimlar.find((a) => a.arac === "create_search_campaign").durum, "belirsiz");
+
+  // Kırpma yokken bayrak açılmaz: her koşuda basılan bir damga hiçbir şey söylemez.
+  const temiz = await uygula(ornekGirdi(), { cagir: sahteCagir() });
+  assert.equal(temiz.kirpik, false);
 });
 
 test("sonucBasarisizMi: sınıflandırıcı desenleri", () => {

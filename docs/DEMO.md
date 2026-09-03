@@ -249,7 +249,7 @@ looks like "empty"):
 | `eylem` | one-line summary of the action (truncated to 160 chars) |
 | `hesapId` | the Google Ads customer ID whose money was at stake |
 | `risk` | `medium` / `high` |
-| `karar` | `gecti` (passed) / `ret` (refused) / `kapali` — `kapali` means **no link actually queried anything**; a gate that was off is never logged as "passed" |
+| `karar` | `gecti` (passed) / `kademeli` (step-up: a signal was broken, the remaining links came back clean over a **real** channel, so the action was escalated instead of refused) / `ret` (refused) / `kapali` — `kapali` means **no link actually queried anything**; a gate that was off is never logged as "passed", and `kademeli` is never folded into `gecti`: the moments the gate softened must stay distinguishable from the moments it was never tested |
 | `simSwapKanali` | link 1 — `gercek` / `simulasyon` / `kapali` (deliberately disabled) / `calismadi` (config error, never queried) |
 | `nvKanali` | link 2 (Number Verification) — `simulasyon` / `calismadi` only. There is no `gercek`: the type itself has no such value (§3.3). **Absent** when the link did not run |
 | `reachKanali` | link 3 (device reachability) — same four values as `simSwapKanali`; `kapali` means `ADSPILOT_REACH_CHECK` is off. **Absent** when the link was never configured |
@@ -259,6 +259,8 @@ looks like "empty"):
 | `pencereSaat` | the SIM-swap lookback window actually queried |
 | `devSwapPencereSaat` | link 5's **own** lookback window — never merged into `pencereSaat`, because link 5 can run while the SIM-swap layer is off, and writing its window into link 1's field would show an auditor a query that never happened |
 | `tutar` | the **daily amount at risk**, in the account's own currency and in currency units — never micros (`50`, not `50000000`). For a budget change it is the **new** budget (the ceiling the money would run to); for a go-live, and for writing into a campaign that is already serving (a new ad, new keywords), it is that campaign's current daily budget. **An absent `tutar` does not mean "no money was at stake" — it means the budget could not be read.** `0` is a real measurement ("read as zero") and *is* written; an unreadable budget writes no field at all, because logging `0` would record "I don't know" as "zero spend". There is deliberately **no currency field**: the unit is already the account's context (`hesapId` and that account's own currency), and inventing a `paraBirimi` would record something the gate never measured |
+| `kademeDogrulayan` | only on a `kademeli` decision: the ids of the links that **vouched** for the escalation (`simSwap`, `reach`, …). Absent when there was no escalation — "no step-up happened" and "a step-up happened but we did not record who vouched for it" are different facts |
+| `retNedenleri` | **every** refusal code the chain produced, in the order they appeared. `retNedeniKisa` is only the one that *decided*, and it is overwritten as the chain runs: without this field a refusal with a detected SIM swap **and** open call forwarding produced a line byte-identical to one with only the forwarding — the SIM swap vanished from the trail. Absent when nothing was broken |
 | `maskeliNumara` | masked approver number, e.g. `+905*******22` |
 | `retNedeniKisa` | fixed refusal code, from the gate's own closed vocabulary — never free or upstream text. The full set: `sim-degisti`, `nv-uyusmadi`, `cihaz-erisilemez`, `konum-beklenmedik`, `cihaz-degisti`, `cagri-yonlendirme-acik`, `beklenen-ulke-gecersiz`, `ag-yanitsiz`, `yapilandirma-celiskili`, `simulasyon-degeri-tanimsiz`, `onaylayici-numarasi-yok`, `ag-ayari-kapiya-ulasmadi` |
 
@@ -724,5 +726,5 @@ the process exits 1.
 | `tamamlanamadı` | could not be completed |
 | `PERDE 3 ATLANDI — uydurma kanıt üretilmez` | Act 3 skipped — no fabricated evidence |
 | `ACİL — ELLE MÜDAHALE GEREKİYOR` | URGENT — MANUAL INTERVENTION REQUIRED |
-| `gecti` / `ret` / `kapali` | passed / refused / gate never queried (decision-log `karar` values) |
+| `gecti` / `kademeli` / `ret` / `kapali` | passed / escalated past a broken signal (step-up) / refused / gate never queried (decision-log `karar` values) |
 | `gercek` / `simulasyon` / `kapali` / `calismadi` | real query / simulated / link deliberately switched off ("did not ask") / config error, never asked — the decision-log channel values |

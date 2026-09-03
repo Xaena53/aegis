@@ -173,6 +173,8 @@ test("iz: gerçek kanalın her sonucu 'gercek' izi + doğru sabit ret kodu üret
       pencereSaat: 72,
       maskeliNumara: "+905*******33",
       retNedeni: "sim-degisti",
+      // Kararı VEREN neden (retNedeni) yanında, üzerine yazılamayan tam liste.
+      retNedenleri: ["sim-degisti"],
     });
 
     kanal(false, undefined);

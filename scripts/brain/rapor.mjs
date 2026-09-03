@@ -82,10 +82,37 @@ function maddeListesi(dizi, bos = "(yok)") {
  */
 function adimBasarisizMi(adim) {
   if (adim && (adim.basarili === false || adim.basari === false)) return true;
+  /**
+   * DAMGA OTORİTEDİR, ÖZET DEĞİL.
+   *
+   * uygula() her adıma bir `durum` yazar ('tamam' | 'belirsiz' | 'basarisiz' |
+   * 'atlandi') ve bunu HAM yanıta bakarak yapar. Rapor ise durumu `sonucOzeti`
+   * metninden yeniden türetiyordu — ama o özet gorunurOzet() ile 400 karaktere
+   * KIRPILIR, oysa kırpma işareti ham yanıtın 30.001. karakterindedir. Sonucu
+   * doğrulanamayan gerçek bir yazma çağrısı bu yüzden denetim tablosuna "TAMAM"
+   * diye geçiyor, rapor kendi içinde çelişiyordu (üstteki uyarı "yarım olabilir"
+   * derken tablo "tamam" diyordu).
+   *
+   * Bilinmeyen bir damga da başarı sayılmaz: tanımadığımız durum 'tamam' değildir.
+   */
+  if (adim && typeof adim.durum === "string") return adim.durum !== "tamam";
+  // Damgasız (eski ya da dış kaynaklı) adım: metinden türetme YEDEK yoldur.
   const s = String(adim?.sonucOzeti ?? "").trim();
   if (/^(reddedildi|araç hatası|hata\b|atlandı|başarısız)/iu.test(s)) return true;
   if (/(devre dışı|bulunamadı|onay gerekiyor|insan onayı gerek|sonuç kırpıldı)/iu.test(s)) return true;
   return false;
+}
+
+/**
+ * Tablo etiketi: BAŞARISIZ ile BELİRSİZ ayrı gösterilir.
+ *
+ * "Olmadığını biliyoruz" ile "olup olmadığını bilmiyoruz" tek etikete katlanırsa
+ * operatör doğrulanamamış bir yazmayı kesin başarısızlık sanıp elle geri almaya
+ * kalkar (ya da tersi). Denetim tablosunun işi tam olarak bu ayrımı taşımaktır.
+ */
+function adimEtiketi(adim) {
+  if (!adimBasarisizMi(adim)) return "TAMAM";
+  return adim?.durum === "belirsiz" ? "BELİRSİZ — DOĞRULANAMADI" : "BASARISIZ/ATLANDI";
 }
 
 /**
@@ -289,7 +316,7 @@ export function raporOlustur({
     if (adimlar.length) {
       ekle("| No | Araç | Özet | Sonuç | Durum |", "|---|---|---|---|---|");
       adimlar.forEach((a, i) => {
-        const durum = adimBasarisizMi(a) ? "BASARISIZ/ATLANDI" : "TAMAM";
+        const durum = adimEtiketi(a);
         ekle(
           `| ${i + 1} | ${guvenli(a?.arac)} | ${guvenli(a?.ozet)} | ${guvenli(a?.sonucOzeti)} | ${durum} |`
         );

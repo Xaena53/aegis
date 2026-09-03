@@ -49,6 +49,8 @@ const ALANLAR = [
   "tutar",
   "maskeliNumara",
   "retNedeniKisa",
+  "retNedenleri",
+  "kademeDogrulayan",
 ];
 
 /**
@@ -654,6 +656,204 @@ test("TUTAR: geçersiz sayı (NaN) kayda giremez — sessizce de yutulmaz", () =
   assert.equal("tutar" in satirlar()[0], false, "uydurma büyüklük kayda giremez");
   assert.doesNotMatch(hamGunluk(), /null|NaN/, "NaN JSON'da null'a dönüşüp 'ölçüldü' gibi görünemez");
   assert.equal(uyarilar.length, 1, "çağrı yerindeki hata operatörden gizlenmez");
+});
+
+/* ── KADEMELİ SONUÇ: kapının yumuşadığı an ─────────────────────────────────────
+ *
+ * Kademeli kararın TÜM günlük mantığı (karar etiketi, ret nedeninin yükseltmede de
+ * yazılması, kefil halkaların kaydı) tek bir koşula — iz.kademe === "yukseltildi" —
+ * bağlıdır ve hiçbir test 'kademeli' taşıyan bir kayıt ÜRETMİYORDU. Yani ortadaki
+ * üçlü koşul bir düzenlemede düşse, yükseltilerek geçen her harcama ize "gecti" diye
+ * yazılacak ve bu dosyanın var oluş nedeni olan ayrım sessizce yok olacaktı.
+ * ─────────────────────────────────────────────────────────────────────────────── */
+
+test("KRİTİK kademeli: yükseltilerek geçen harcama 'gecti' DEĞİL 'kademeli' kaydedilir", async () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  /**
+   * Düzenek: 1. halka GERÇEK kanaldan temiz döner (kefil olabilecek tek halka),
+   * 3. halka simülasyonda "anormal" verir (yükseltilebilir bozuk sinyal) ve kademe
+   * açıktır. Kalan halkalar yapılandırılmamıştır — yani yükseltmeyi taşıyan kefil
+   * gerçekten simSwap halkasıdır, başka aday yoktur.
+   */
+  const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "temiz" });
+  ctx.config.stepUp = true;
+  ctx.config.reachSimulate = "anormal";
+  const { client, sorulanlar } = await elicitationliIstemci(ctx, "accept");
+
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+  });
+
+  assert.match(out, /YAYINDA/, "yükseltme reddetmez: insan onayına bağlar");
+  assert.equal(rec.mutations.length, 1);
+  assert.equal(sorulanlar.length, 1, "yükseltme insana SORULARAK geçer");
+  assert.match(sorulanlar[0], /AĞ SİNYALİ BOZUK/, "istem bozuk sinyali adıyla söylemeli");
+
+  const k = satirlar()[0];
+  assert.equal(
+    k.karar,
+    "kademeli",
+    "'gecti' demek yalan olurdu: bir sinyal bozuktu ve kapı yumuşadı — bu ayrım günlüğün işidir"
+  );
+  assert.equal(k.simSwapKanali, "gercek");
+  assert.equal(k.reachKanali, "simulasyon");
+  assert.equal(
+    k.retNedeniKisa,
+    "cihaz-erisilemez",
+    "yükseltme kaydında ret nedeni 'neden reddedildi'nin değil 'hangi sinyal bozuktu'nun adıdır"
+  );
+  assert.deepEqual(
+    k.kademeDogrulayan,
+    ["simSwap"],
+    "yükseltmenin tek meşruiyet şartı kefil halkalardır; diske düşmezse denetçi " +
+      "'bu yumuşatma neye dayanıyordu' sorusunu cevaplayamaz"
+  );
+  assert.deepEqual(k.retNedenleri, ["cihaz-erisilemez"]);
+  assert.match(hamGunluk(), /"kademeDogrulayan":\["simSwap"\]/, "alan JSONL satırında da bulunmalı");
+});
+
+test("kademeli DEĞİLKEN kefil alanı HİÇ yazılmaz (yükseltme olmadı ≠ kefili kaydedilmedi)", () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  kararYaz(
+    agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", {
+      kanit: [],
+      iz: { simSwap: "gercek", pencereSaat: 72 },
+    })
+  );
+  const ham = hamGunluk();
+  assert.doesNotMatch(ham, /kademeDogrulayan/, "yükseltme yoksa alan hiç açılmaz");
+  assert.doesNotMatch(ham, /retNedenleri/, "bozuk sinyal yoksa alan hiç açılmaz");
+  assert.equal(satirlar()[0].karar, "gecti");
+});
+
+/* ── İKİ BOZUK SİNYAL: tek nedene ezilemez ───────────────────────────────────── */
+
+test("KRİTİK: iki bozuk sinyalli ret, tek sinyalli retten AYIRT EDİLEBİLİR kayıt üretir", async () => {
+  /**
+   * `retNedeniKisa` tek yuvadır ve zincir boyunca üzerine yazılır: SIM değişimi
+   * saptanıp kademeye alınmışken çağrı yönlendirme de açık çıkarsa kayda yalnız
+   * ikincisi düşüyordu. İki koşunun satırları zaman damgası dışında BİREBİR aynıydı,
+   * üstelik ikisi de "simSwapKanali":"simulasyon" + "pencereSaat":72 taşıyordu — yani
+   * saptanmış bir SIM değişimi, hiç sorun çıkmamış temiz bir sorgu gibi okunuyordu ve
+   * "sim-degisti" diye sayan denetçi olayı hiç göremiyordu.
+   */
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const ayar = {
+    approverPhone: "+905551112233",
+    simSwapWindowHours: 72,
+    callFwdSimulate: "acik",
+    stepUp: true,
+  };
+
+  const ikiBozuk = await agDogrula({ ...ayar, nacSimulate: "degisti" }, "high");
+  const tekBozuk = await agDogrula({ ...ayar, nacSimulate: "temiz" }, "high");
+  assert.ok(ikiBozuk.engel && tekBozuk.engel, "iki koşu da RET olmalı (yönlendirme yükseltilemez)");
+
+  kararYaz(agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", ikiBozuk, MUSTERI));
+  kararYaz(agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", tekBozuk, MUSTERI));
+  const [iki, tek] = satirlar();
+
+  assert.deepEqual(
+    iki.retNedenleri,
+    ["sim-degisti", "cagri-yonlendirme-acik"],
+    "SAPTANAN SIM değişimi izden silinemez: kararı vermeyen bozuk sinyal de kayda geçer"
+  );
+  assert.deepEqual(tek.retNedenleri, ["cagri-yonlendirme-acik"]);
+  assert.match(hamGunluk(), /sim-degisti/, "grep 'sim-degisti' ile sayan denetçi olayı GÖRMELİ");
+
+  // Zaman damgası dışında iki satır ASLA aynı olamaz.
+  const zamansiz = (k: any) => JSON.stringify({ ...k, zaman: undefined });
+  assert.notEqual(
+    zamansiz(iki),
+    zamansiz(tek),
+    "iki bozuk sinyalli ret ile tek sinyalli ret aynı satırı üretemez"
+  );
+  assert.equal(iki.retNedeniKisa, "cagri-yonlendirme-acik", "kararı VEREN neden ayrı alanda kalır");
+});
+
+/* ── PENCERELER: her halka KENDİ penceresini yazar ────────────────────────────── */
+
+test("KRİTİK pencere: 5. halkanın penceresi KENDİ alanıyla JSONL'e düşer", () => {
+  /**
+   * Alan-alan mutasyon `devSwapPencereSaat`in bekçisiz olduğunu gösterdi: hem üretim
+   * hem JSONL yazımı silindiğinde takım yeşil kalıyordu. SIM-Swap katmanı kapalıyken
+   * (aşağıdaki düzenek) bu, satırdaki TEK penceredir; düşerse "hangi soru hangi
+   * pencereyle soruldu" bilgisi tamamen kaybolur.
+   */
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  kararYaz(
+    agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", {
+      kanit: [],
+      iz: { simSwap: "kapali", devSwap: "simulasyon", devSwapPencereSaat: 72 },
+    })
+  );
+  const k = satirlar()[0];
+  assert.equal(k.devSwapPencereSaat, 72, "5. halkanın penceresi kayda geçmeli");
+  assert.equal(k.pencereSaat, undefined, "SIM-Swap hiç sormadı: onun penceresi yazılamaz");
+  assert.match(hamGunluk(), /"devSwapPencereSaat":72/, "alan JSONL satırında da bulunmalı");
+});
+
+/* ── ALAN LİSTESİ ÇİFT YÖNLÜ ─────────────────────────────────────────────────── */
+
+test("KRİTİK: kayıttaki DOLU her alan JSONL satırında da bulunur (elle liste iki yönlü)", () => {
+  /**
+   * kararYaz'daki JSON.stringify listesi ELLE yazılır ve eksikliği SESSİZDİR: satır
+   * yine geçerli JSON'dur, tip hatası çıkmaz, alan yalnızca diske hiç düşmez.
+   * `kademeDogrulayan` tam olarak böyle kaçmıştı — kayıt nesnesinde vardı, satırda
+   * yoktu. ALANLAR listesi yalnız FAZLA alanı yakalıyordu; bu test EKSİK yönünü kapar:
+   * bütün alanları dolduran TEK bir kayıt kurulur ve her biri satırda aranır.
+   */
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  const kayit = agKararKaydiOlustur(
+    "Kampanya YAYINA ALINACAK.",
+    "high",
+    {
+      kanit: [],
+      iz: {
+        simSwap: "gercek",
+        nv: "simulasyon",
+        reach: "gercek",
+        loc: "gercek",
+        devSwap: "gercek",
+        callFwd: "gercek",
+        pencereSaat: 72,
+        devSwapPencereSaat: 96,
+        maskeliNumara: "+905*******33",
+        retNedeni: "sim-degisti",
+        retNedenleri: ["sim-degisti"],
+        kademe: "yukseltildi",
+        kademeDogrulayan: ["reach", "loc"],
+      },
+      kademe: {
+        neden: "sim-degisti",
+        aciklama: "onaylayıcının SIM kartı yakın zamanda değişmiş",
+        dogrulayan: ["reach", "loc"],
+      },
+    },
+    MUSTERI,
+    50
+  );
+
+  const dolu = Object.entries(kayit).filter(([, deger]) => deger !== undefined);
+  kararYaz(kayit);
+  const satir = satirlar()[0] as Record<string, unknown>;
+
+  for (const [alan, deger] of dolu) {
+    assert.deepEqual(
+      satir[alan],
+      deger,
+      `'${alan}' kayıt nesnesinde DOLU ama JSONL satırına aynı değerle geçmiyor — ` +
+        `kararGunlugu.ts · kararYaz() içindeki JSON.stringify alan listesine eklenmeli. ` +
+        `Yazılmayan alan sessizdir: satır geçerli JSON kalır, hiçbir tip hatası çıkmaz.`
+    );
+  }
+  assert.deepEqual(
+    ALANLAR.filter((alan) => !(alan in satir)),
+    [],
+    "bu düzenek ALANLAR'daki HER alanı üretmeli — üretmeyen alan sınanmamış demektir"
+  );
 });
 
 /* ── sır sızıntısı ────────────────────────────────────────────────────────────── */

@@ -313,6 +313,24 @@ export interface AgIz {
   maskeliNumara?: string;
   retNedeni?: RetNedeni;
   /**
+   * ZİNCİR BOYUNCA ÜRETİLEN HER RET NEDENİ — yalnız kararı VEREN değil
+   * (sıra: ilk bozulan önce).
+   *
+   * `retNedeni` TEK yuvadır ve zincir boyunca üzerine yazılır. Kademe açıkken SIM
+   * değişimi saptanıp beklemeye alınır, sonra başka bir halka da bozuk çıkarsa ize
+   * yalnız İKİNCİSİ düşer: saptanmış SIM DEĞİŞİMİ izden tamamen silinir ve satır,
+   * "simSwapKanali":"gercek" + "pencereSaat":72 ile birlikte, hiç sorun çıkmamış temiz
+   * bir sorgu gibi okunur. "sim-degisti" diye sayan denetçi olayı hiç göremez.
+   *
+   * Bu dizi o ayrımı taşır: iki bozuk sinyalli bir ret, tek bozuk sinyalli bir retten
+   * ayırt edilebilir olmak ZORUNDADIR. Hiç bozuk sinyal yoksa alan HİÇ yazılmaz —
+   * boş dizi, "bakıldı bozuk yoktu" ile "hiç bakılmadı"yı birbirine karıştırırdı.
+   *
+   * Yükseltilen (kademeli) kararda da dolar: orada neden "niçin reddedildi"nin değil,
+   * "hangi sinyal bozuktu"nun adıdır — retNedeni alanının kendi kuralıyla aynı.
+   */
+  retNedenleri?: RetNedeni[];
+  /**
    * KADEMELİ DOĞRULAMA İZİ — karar düz bir "geçti" değilse burada görünür.
    *
    * "yukseltildi": bir halka bozuk sinyal verdi ama zincir onu reddetmek yerine
@@ -559,6 +577,20 @@ export interface ZincirHalkasi {
   /** Halkanın KararKaydi (kararGunlugu.ts) üzerindeki KENDİ alanı. */
   readonly gunlukAlani: string;
   /**
+   * Halkanın KENDİ geriye bakış penceresini taşıyan AgIz alanı — penceresi olmayan
+   * halkada (2., 3., 4., 6.) YOKTUR.
+   *
+   * Pencereler de halka alanları gibi ASLA tek alana ezilmez: 1. ve 5. halka aynı
+   * yapılandırma değerinden (ADSPILOT_SIMSWAP_WINDOW_HOURS) beslense bile "hangi soru
+   * hangi pencereyle soruldu" ayrımı kaybolmamalı. Kayda alınmasının sebebi ölçülmüş
+   * bir boşluk: alan-alan mutasyonda `pencereSaat` bekçiliyken (2-7 test kızarıyor)
+   * `devSwapPencereSaat` HEM üretim HEM yazım katmanında silindiğinde takım yeşil
+   * kalıyordu — yani SIM-Swap kapalıyken satırdaki TEK pencere bekçisizdi.
+   */
+  readonly pencereIzAlani?: keyof AgIz;
+  /** Pencerenin KararKaydi üzerindeki alanı; penceresiz halkada YOKTUR. */
+  readonly pencereGunlukAlani?: string;
+  /**
    * Bu halkanın ret metninde GERÇEKTEN geçen ayırt edici ifadeler. Aşağı akıştaki
    * sınıflandırıcı (scripts/brain/uygulama.mjs · AG_KAPISI_IZLERI) bunlardan en az
    * birini tanımak ZORUNDADIR; tanımazsa ağ kapısının reti sıradan bir sunucu reddi
@@ -596,6 +628,8 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     id: "simSwap",
     izAlani: "simSwap",
     gunlukAlani: "simSwapKanali",
+    pencereIzAlani: "pencereSaat",
+    pencereGunlukAlani: "pencereSaat",
     retIsaretleri: ["AĞ DOĞRULAMASI BAŞARISIZ", "GSMA Open Gateway SIM Swap"],
     envler: ["ADSPILOT_NAC_TOKEN", "ADSPILOT_NAC_SIMULATE"],
     ayarAlanlari: ["nacToken", "nacSimulate"],
@@ -638,6 +672,9 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     id: "deviceSwap",
     izAlani: "devSwap",
     gunlukAlani: "devSwapKanali",
+    // 5. halkanın penceresi 1. halkanınkiyle AYNI değerden türer ama AYRI alandır.
+    pencereIzAlani: "devSwapPencereSaat",
+    pencereGunlukAlani: "devSwapPencereSaat",
     retIsaretleri: [
       "CİHAZ DEĞİŞİMİ SAPTANDI",
       "GSMA Open Gateway Device Swap",
@@ -1923,6 +1960,20 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    */
   const temizGercek: string[] = [];
 
+  /**
+   * BOZUK ÇIKAN HER SİNYAL — kararı hangisi verirse versin.
+   *
+   * `iz.retNedeni` tek yuvadır ve sonraki halka onu üzerine yazar; bu dizi ise hiçbir
+   * bozuk sinyali düşürmez (bkz. AgIz.retNedenleri). Aynı neden iki kez eklenmez:
+   * denetçi "kaç ayrı sinyal bozuktu" sorusunu sayarak cevaplayabilmeli.
+   */
+  const bozuklar: RetNedeni[] = [];
+  const bozukKaydet = (neden: RetNedeni | undefined): void => {
+    if (neden !== undefined && !bozuklar.includes(neden)) bozuklar.push(neden);
+  };
+  /** Dönüş izine bozuk sinyal listesini iliştirir; hiç yoksa alanı HİÇ açmaz. */
+  const izle = (ham: AgIz): AgIz => (bozuklar.length ? { ...ham, retNedenleri: [...bozuklar] } : ham);
+
   let kanit: string[] = [];
   let iz: AgIz = { simSwap: "kapali" };
 
@@ -1941,6 +1992,8 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   ): "devam" | "dur" => {
     if (sonuc.engel) {
       const neden = sonuc.retNedeni;
+      // Sinyal bozuldu: kararı bu halka verse de vermese de ize GİRER.
+      bozukKaydet(neden);
       const yukseltilebilir = kademeAcik && !bekleyen && neden !== undefined && KADEME_UYGUN.has(neden);
       if (!yukseltilebilir) return "dur";
       bekleyen = { engel: sonuc.engel, neden: neden!, aciklama };
@@ -1956,7 +2009,10 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   iz = simSwap.iz;
   if (simSwap.engel) {
     const neden = simSwap.iz.retNedeni;
-    if (!kademeAcik || neden === undefined || !KADEME_UYGUN.has(neden)) return simSwap;
+    bozukKaydet(neden);
+    if (!kademeAcik || neden === undefined || !KADEME_UYGUN.has(neden)) {
+      return { ...simSwap, iz: izle(simSwap.iz) };
+    }
     bekleyen = {
       engel: simSwap.engel,
       neden,
@@ -1972,14 +2028,14 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   if (nv) {
     iz = { ...iz, nv: nv.nv, maskeliNumara: iz.maskeliNumara ?? nv.maskeliNumara, retNedeni: nv.retNedeni ?? iz.retNedeni };
     // NV yalnız simülasyondur: doğrulayan sayılmaz (gercekMi = false).
-    if (kat("nv", nv, false, "numara doğrulaması") === "dur") return { engel: nv.engel, kanit: [], iz };
+    if (kat("nv", nv, false, "numara doğrulaması") === "dur") return { engel: nv.engel, kanit: [], iz: izle(iz) };
   }
 
   const reach = await erisilebilirlikKatmani(ayar, risk);
   if (reach) {
     iz = { ...iz, reach: reach.halka, maskeliNumara: iz.maskeliNumara ?? reach.maskeliNumara, retNedeni: reach.retNedeni ?? iz.retNedeni };
     if (kat("reach", reach, reach.halka === "gercek", "onaylayıcının cihazı şebekeden erişilemez durumda") === "dur") {
-      return { engel: reach.engel, kanit: [], iz };
+      return { engel: reach.engel, kanit: [], iz: izle(iz) };
     }
   }
 
@@ -1987,7 +2043,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   if (loc) {
     iz = { ...iz, loc: loc.halka, maskeliNumara: iz.maskeliNumara ?? loc.maskeliNumara, retNedeni: loc.retNedeni ?? iz.retNedeni };
     if (kat("loc", loc, loc.halka === "gercek", "onaylayıcının hattı beklenen ülke dışında görülüyor") === "dur") {
-      return { engel: loc.engel, kanit: [], iz };
+      return { engel: loc.engel, kanit: [], iz: izle(iz) };
     }
   }
 
@@ -2006,7 +2062,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
       devSwapPencereSaat: devSwap.pencereSaat,
     };
     if (kat("devSwap", devSwap, devSwap.halka === "gercek", "onaylayıcının cihazı yakın zamanda değişmiş") === "dur") {
-      return { engel: devSwap.engel, kanit: [], iz };
+      return { engel: devSwap.engel, kanit: [], iz: izle(iz) };
     }
   }
 
@@ -2014,11 +2070,11 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   if (callFwd) {
     iz = { ...iz, callFwd: callFwd.halka, maskeliNumara: iz.maskeliNumara ?? callFwd.maskeliNumara, retNedeni: callFwd.retNedeni ?? iz.retNedeni };
     if (kat("callFwd", callFwd, callFwd.halka === "gercek", "çağrı yönlendirme") === "dur") {
-      return { engel: callFwd.engel, kanit: [], iz };
+      return { engel: callFwd.engel, kanit: [], iz: izle(iz) };
     }
   }
 
-  if (!bekleyen) return { kanit, iz };
+  if (!bekleyen) return { kanit, iz: izle(iz) };
 
   /**
    * YÜKSELTME KARARI. Buraya yalnız yükseltilebilir bir bozuk sinyalle gelinir ve
@@ -2035,7 +2091,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
         bekleyen.engel +
         " (kademeli doğrulama açık, ama sinyali doğrulayacak GERÇEK bir ağ halkası koşmadı)",
       kanit: [],
-      iz: { ...iz, retNedeni: bekleyen.neden },
+      iz: izle({ ...iz, retNedeni: bekleyen.neden }),
     };
   }
 
@@ -2045,7 +2101,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
       `KADEMELİ DOĞRULAMA: ${bekleyen.aciklama} — işlem reddedilmedi, daha güçlü ` +
         `doğrulamaya bağlandı (${temizGercek.length} bağımsız ağ sinyali temiz).`,
     ],
-    iz: { ...iz, kademe: "yukseltildi", retNedeni: bekleyen.neden, kademeDogrulayan: temizGercek },
+    iz: izle({ ...iz, kademe: "yukseltildi", retNedeni: bekleyen.neden, kademeDogrulayan: temizGercek }),
     kademe: { neden: bekleyen.neden, aciklama: bekleyen.aciklama, dogrulayan: temizGercek },
   };
 }

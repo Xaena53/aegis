@@ -82,15 +82,62 @@ function gorunurOzet(metin, tavan = 400) {
 }
 
 /**
- * Araç yanıtı sınıflandırıcısı: yazma araçları reddi isError OLMADAN düz metin
- * döndürür — bu desenler başarısız adım sayılır, rapor yalan söylemesin.
+ * Sunucunun BAŞARI imzaları — araç araç, src/tools/write.ts'in BUGÜNKÜ metinlerinden.
+ *
+ * Bunlar "başarı" iddiasının TEK dayanağıdır: bir yazmanın gerçekten olduğunu ancak
+ * sunucunun kendi olumlu cümlesi söyleyebilir. Metinler değişirse buradaki desenler de
+ * değişmeli — o güne kadar adımlar 'tamam' yerine 'belirsiz' damgalanır, yani hata
+ * KAPALI tarafa düşer (yarım kalmış bir kurulum yayına alınmaz).
+ */
+const BASARI_IZLERI = [
+  /Kampanya PAUSED olarak oluşturuldu/u, // create_search_campaign
+  /anahtar kelime eklendi \[/u, // add_keywords (negatif varyantı dahil)
+  /anahtar kelime KAMPANYA seviyesinde eklendi \[/u, // add_campaign_negative_keywords
+  /RSA oluşturuldu:/u, // create_responsive_search_ad
+  /YAYINDA \(ENABLED\)/u, // set_campaign_status (yalnız yayinaAl yolundan)
+  /^\d+\s+satır/mu, // run_gaql (idempotenlik ön-kontrolü)
+];
+
+/** Sunucunun isError OLMADAN düz metinle döndürdüğü BİLİNEN ret imzaları. */
+const RET_IZLERI = [
+  /^(Reddedildi|Araç hatası|Yazma araçları|İşlem yapılmadı)/iu,
+  /devre dışı|bulunamadı/iu,
+];
+
+/**
+ * Araç yanıtını ÜÇ değerle sınıflar — ikiye değil, çünkü "başarısız olduğunu
+ * biliyorum" ile "ne olduğunu bilmiyorum" aynı şey değildir:
+ *
+ *   'basarisiz' — sunucunun BİLİNEN bir ret metni,
+ *   'tamam'     — sunucunun POZİTİF başarı imzası,
+ *   'belirsiz'  — ikisi de değil: yazmanın olup olmadığı DOĞRULANAMADI.
+ *
+ * KAPALI ARIZA. Eskiden yalnız "ret desenlerinden biri var mı" diye bakılıyor,
+ * eşleşme yoksa adım 'tamam' damgalanıyordu. Yani sunucunun tanımadığımız her
+ * cevabı — ham "429", "PERMISSION_DENIED", "Geçersiz kampanya ID", kullanıcının
+ * onayı reddettiğinde dönen "İşlem yapılmadı: ..." metni — YAPILMAMIŞ bir yazmayı
+ * denetim izine TAMAM diye yazıyordu; süreç 0 ile çıkıyor ve yarım kalmış bir
+ * kampanya için --yayinla kapısı açılıyordu. Başarı artık yalnız pozitif imzayla
+ * ilan edilir; tanınmayan yanıt bir zafer değil bir bilinmezdir ve kalanı durdurur.
+ */
+export function sonucDurumu(metin) {
+  const m = String(metin ?? "").trim();
+  if (!m || m === "(boş yanıt)") return "basarisiz";
+  // Ret her zaman başarıyı yener: bir metin ikisini birden taşıyorsa o metin bir rettir.
+  if (RET_IZLERI.some((d) => d.test(m))) return "basarisiz";
+  return BASARI_IZLERI.some((d) => d.test(m)) ? "tamam" : "belirsiz";
+}
+
+/**
+ * "Bu yanıt BİLİNEN bir ret mi?" — 'belirsiz' burada false döner.
+ *
+ * yayinSonucuSinifla tam olarak bu ayrımı ister: yayın yolunda tanınmayan bir yanıt
+ * "reddedildi" değil 'hata' olarak sınıflanmalıdır. O yol da kapalı arızadır, çünkü
+ * başarıyı kendi pozitif imzasıyla (YAYIN_BASARI_IZI) ilan eder. Adım damgası için
+ * sonucDurumu kullanılır; bu yardımcı ondan türetilir.
  */
 export function sonucBasarisizMi(metin) {
-  const m = String(metin ?? "").trim();
-  if (!m || m === "(boş yanıt)") return true;
-  if (/^(Reddedildi|Araç hatası|Yazma araçları)/i.test(m)) return true;
-  if (/devre dışı|bulunamadı/i.test(m)) return true;
-  return false;
+  return sonucDurumu(metin) === "basarisiz";
 }
 
 /** Kimlikler yalnız create_search_campaign sonuç metninden, tam yol regex'iyle ayrıştırılır. */
@@ -296,6 +343,16 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
   let adGrubuId;
   let basari = true;
   let devam = true;
+  /**
+   * Bir araç yanıtı sonuç tavanına takıldı mı? Rapor katmanı bu bayrağı okuyup
+   * "⚠ YARIM OLABİLİR" damgasını basar (rapor.mjs · uygulamaSonucu.kirpik).
+   *
+   * Alan buraya SONRADAN eklendi ve eksikliği sessizdi: rapor tarafı yıllardır
+   * `uygulamaSonucu?.kirpik` okuyordu, üreten taraf onu HİÇ yazmıyordu. Yani
+   * belgelenen değişmez üretimde hiç ateşlenemiyordu — 94 bin karakterlik bir
+   * yanıtta bile damga basılmıyor, adım TAMAM görünüyordu.
+   */
+  let kirpikVar = false;
 
   try {
     const sorgu =
@@ -413,24 +470,35 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
       continue;
     }
     const kirpik = metin.includes(KIRPMA_ISARETI);
-    const basarisiz = sonucBasarisizMi(metin);
+    /**
+     * Kırpılmış yanıt her hâlükârda 'belirsiz'dir: kırpma işareti metnin SONUNDADIR,
+     * yani başarı imzası görünse bile geri kalanı okunmamıştır.
+     */
+    const ham = sonucDurumu(metin);
+    const durum = ham === "basarisiz" ? "basarisiz" : kirpik ? "belirsiz" : ham;
+    if (kirpik) kirpikVar = true;
     adimlar.push({
       arac: adim.arac,
       ozet: adim.ozet,
       sonucOzeti: gorunurOzet(metin),
-      durum: basarisiz ? "basarisiz" : kirpik ? "belirsiz" : "tamam",
+      durum,
     });
-    if (basarisiz) {
+    if (durum !== "tamam") {
+      /**
+       * 'basarisiz' de 'belirsiz' de kalan adımları iptal eder — fail-closed. Ayrımı
+       * yalnız damga ve uyarı metni taşır: biri "olmadığını biliyoruz", diğeri
+       * "olup olmadığını bilmiyoruz" der ve ikisi de "oldu" DEĞİLDİR.
+       */
       eksikAdimlar.push(adim.arac);
       devam = false;
       basari = false;
-      continue;
-    }
-    if (kirpik) {
-      // Kırpılmış sonuç doğrulanamaz: ID listesi kesilmiş olabilir — fail-closed.
-      uyarilar.push(`'${adim.arac}' sonucu kırpılmış — doğrulanamadığı için kalan adımlar iptal edildi.`);
-      devam = false;
-      basari = false;
+      if (durum === "belirsiz") {
+        uyarilar.push(
+          kirpik
+            ? `'${adim.arac}' sonucu kırpılmış — doğrulanamadığı için kalan adımlar iptal edildi.`
+            : `'${adim.arac}' yanıtı tanınmadı — yazmanın gerçekleşip gerçekleşmediği DOĞRULANAMADI; kalan adımlar iptal edildi.`
+        );
+      }
       continue;
     }
     if (adim.sonra && !adim.sonra(metin)) {
@@ -439,7 +507,7 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     }
   }
 
-  return { kampanyaId, adGrubuId, basari, adimlar, uyarilar, eksikAdimlar };
+  return { kampanyaId, adGrubuId, basari, kirpik: kirpikVar, adimlar, uyarilar, eksikAdimlar };
 }
 
 /* ── Yayına alma (YALNIZ growth-brain.mjs --yayinla yolundan) ────────────────── */

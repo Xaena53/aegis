@@ -36,7 +36,7 @@ import {
   ZINCIR_ORTAK_ENVLERI,
 } from "../src/networkTrust.js";
 import type { AgIz, AgKarar } from "../src/networkTrust.js";
-import { agKararKaydiOlustur, kararYaz } from "../src/kararGunlugu.js";
+import { KARAR_SONUCLARI, agKararKaydiOlustur, kararYaz } from "../src/kararGunlugu.js";
 import { nacAnahtarDilimi, type NacDilimi } from "../src/config.js";
 
 /** Yol çözümlemesi cwd'ye DEĞİL dosyanın kendi konumuna bağlı (import.meta.url). */
@@ -52,6 +52,8 @@ const BELGE_README = oku("../README.md");
 const BELGE_README_TR = oku("../README.tr.md");
 const BELGE_CAMARA = oku("../docs/CAMARA.md");
 const BELGE_DEMO = oku("../docs/DEMO.md");
+const BIRIM_SYSTEMD = oku("../deploy/adspilot.service");
+const BELGE_DEPLOY = oku("../deploy/README.md");
 
 /** Kayıttaki tüm env adları (halkaların kendi env'leri + zincir geneli ortak ayarlar). */
 const TUM_ENVLER = [...ZINCIR_HALKALARI.flatMap((h) => [...h.envler]), ...ZINCIR_ORTAK_ENVLERI];
@@ -131,6 +133,64 @@ test("günlük: her halkanın kanalı hem KararKaydi'nde hem JSONL çıktısınd
           `kararGunlugu.ts · kararYaz() içindeki JSON.stringify alan listesine ` +
           `'${halka.gunlukAlani}' eklenmeli. (Alan listesi bilinçli olarak ELLE yazılır; ` +
           `bu yüzden yeni halka orada sessizce düşer.)`
+      );
+    }
+  } finally {
+    if (onceki === undefined) delete process.env.ADSPILOT_DECISION_LOG;
+    else process.env.ADSPILOT_DECISION_LOG = onceki;
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("günlük: PENCERELİ halkanın penceresi de hem kayda hem JSONL satırına düşer", () => {
+  /**
+   * Halka kanalları bekçiliydi, PENCERELER değildi. Alan-alan mutasyonla ölçüldü:
+   * `pencereSaat` silindiğinde 2-7 test kızarıyor, `devSwapPencereSaat` ise HEM
+   * üretim (agKararKaydiOlustur) HEM yazım (kararYaz) katmanında silindiğinde takım
+   * yeşil kalıyordu. Oysa SIM-Swap katmanı kapalıyken 5. halkanın penceresi satırdaki
+   * TEK penceredir; düşerse "hangi soru hangi pencereyle soruldu" bilgisi kaybolur ve
+   * bunu hiçbir test görmez. Bu döngü, penceresi olan her halka için o boşluğu kapatır.
+   */
+  const dizin = mkdtempSync(join(tmpdir(), "adspilot-pencere-"));
+  const dosya = join(dizin, "kararlar.jsonl");
+  const onceki = process.env.ADSPILOT_DECISION_LOG;
+  process.env.ADSPILOT_DECISION_LOG = dosya;
+  try {
+    const pencereliler = ZINCIR_HALKALARI.filter((h) => h.pencereIzAlani);
+    assert.ok(
+      pencereliler.length >= 2,
+      "kayıtta en az iki pencereli halka (1. ve 5.) beklenir — daha azı, kaydın bayatladığını gösterir"
+    );
+    for (const halka of pencereliler) {
+      /**
+       * Nöbetçi değer halka başına FARKLI: iki pencere alanı yanlışlıkla aynı ize
+       * bağlansa bile test bunu görebilsin (aynı sayı olsaydı çapraz bağlama sessiz
+       * kalırdı — halka kanallarında bu tuzağa bir kez düşülmüştü).
+       */
+      const nobetci = 100 + ZINCIR_HALKALARI.indexOf(halka);
+      const izHam: Record<string, unknown> = { simSwap: "kapali" };
+      izHam[halka.izAlani] = "simulasyon";
+      izHam[halka.pencereIzAlani as string] = nobetci;
+      const ag: AgKarar = { kanit: [], iz: izHam as unknown as AgIz };
+
+      const kayit = agKararKaydiOlustur(`pencere denemesi (${halka.id})`, "high", ag);
+      const alan = halka.pencereGunlukAlani as string;
+      assert.equal(
+        (kayit as unknown as Record<string, unknown>)[alan],
+        nobetci,
+        `halka '${halka.id}' penceresi KararKaydi'na geçmiyor: agKararKaydiOlustur içinde ` +
+          `iz.${String(halka.pencereIzAlani)} → ${alan} ataması eksik. Pencere kaybolursa ` +
+          `denetçi sorunun HANGİ geriye bakış aralığıyla sorulduğunu hiç öğrenemez.`
+      );
+
+      kararYaz(kayit);
+      const satirlar = readFileSync(dosya, "utf8").trim().split("\n");
+      const sonSatir = JSON.parse(satirlar[satirlar.length - 1]) as Record<string, unknown>;
+      assert.equal(
+        sonSatir[alan],
+        nobetci,
+        `halka '${halka.id}' penceresi KararKaydi'nde var ama JSONL satırına yazılmıyor: ` +
+          `kararGunlugu.ts · kararYaz() içindeki JSON.stringify alan listesine '${alan}' eklenmeli.`
       );
     }
   } finally {
@@ -277,6 +337,47 @@ test("beyin sınıflandırıcısı: her halkanın env adı da desenlerce yakalan
   }
 });
 
+/* ── 3b) Growth Brain · BASARI_IZLERI gerçek başarı metinlerine dayanıyor mu? ── */
+
+test("beyin sınıflandırıcısı: her BAŞARI imzası araçların GERÇEK çıktı metninde geçiyor", () => {
+  /**
+   * uygulama.mjs artık başarıyı yalnız POZİTİF imzayla ilan eder (tanınmayan yanıt
+   * 'belirsiz'dir, kalan adımlar iptal). Bu kapalı-arıza kuralının bedeli, imza
+   * listesinin bayatlayabilmesidir: sunucunun başarı cümlesi değişirse Growth Brain
+   * her adımı doğrulanamamış sayar ve mutlu yol sessizce durur. Uydurma ya da bayat
+   * bir imza da aynı kapıdan girer. Bu yüzden her imzanın DÜZ METİN parçaları,
+   * araçların kendi kaynaklarında GERÇEKTEN aranır.
+   */
+  const bas = KAYNAK_BEYIN.indexOf("const BASARI_IZLERI = [");
+  assert.notEqual(bas, -1, "BASARI_IZLERI bulunamadı — yeniden adlandırıldıysa bu test de güncellenmeli");
+  const son = KAYNAK_BEYIN.indexOf("];", bas);
+  assert.notEqual(son, -1, "BASARI_IZLERI dizisi kapanmıyor — kaynak ayrıştırılamadı");
+
+  const ARAC_KAYNAKLARI = oku("../src/tools/write.ts") + "\n" + oku("../src/tools/read.ts");
+  let sinanan = 0;
+  for (const satir of KAYNAK_BEYIN.slice(bas, son).split(/\r?\n/)) {
+    const m = /^\s*\/(.+)\/([a-z]*),\s*(\/\/.*)?$/.exec(satir);
+    if (!m) continue;
+    // Regex sözdizimini at, geriye kalan düz metin parçalarını kaynakta ara.
+    const parcalar = m[1]
+      .split(/\\d|\\s|\\w|[\^$+*?|()[\]{}\\]/)
+      .map((p) => p.trim())
+      .filter((p) => p.length >= 5);
+    assert.ok(parcalar.length > 0, `Başarı imzası '/${m[1]}/' hiç düz metin taşımıyor — sınanamaz`);
+    for (const parca of parcalar) {
+      sinanan++;
+      assert.ok(
+        ARAC_KAYNAKLARI.includes(parca),
+        `Başarı imzası parçası "${parca}" src/tools/{write,read}.ts'te GEÇMİYOR — imza uydurma ` +
+          `ya da bayat. Sonucu: Growth Brain gerçek bir başarıyı tanıyamaz, adımı 'belirsiz' ` +
+          `damgalar ve kalan adımları iptal eder (kapalı arıza doğru tarafa düşer ama mutlu ` +
+          `yol sessizce durur). Aracın bugünkü başarı cümlesiyle güncelle.`
+      );
+    }
+  }
+  assert.ok(sinanan >= 5, `yalnız ${sinanan} imza parçası ayrıştırılabildi — ayrıştırma bozulmuş olabilir`);
+});
+
 /* ── 4) Kayıt UYDURMUYOR: ret imzaları kapının kendi metninde geçiyor ────────── */
 
 /**
@@ -413,4 +514,138 @@ test("README.md: sinyal tablosu hiçbir halkayı atlamıyor (halka başına en a
         `okuyucu zincirin kaç halkalı olduğunu README'den öğrenir.`
     );
   }
+});
+
+/* ── 7) Karar sözlüğü: kodun yazdığı her değer belgelerde var mı? ────────────── */
+
+test("karar sözlüğü: KararSonucu'nun HER değeri .env.example ve DEMO.md'de geçiyor", () => {
+  /**
+   * Kod dört değer yazıyordu, belgeler üç değer sayıyordu: 'kademeli' hiçbirinde
+   * yoktu. Belgedeki sözlüğe bakarak sayaç/uyarı kuran operatörde, kapının YUMUŞADIĞI
+   * satırlar hiçbir kovaya girmiyordu — yani izin en çok anlam taşıyan satırları
+   * görünmez oluyordu. Sözlük artık çalışma anında okunabilen bir diziden gelir
+   * (KARAR_SONUCLARI) ve bu döngü onu belgelere bağlar.
+   *
+   * Arama TIRNAK/backtick içinde yapılır: düz alt dize araması "ret" için her yerde
+   * eşleşirdi (retNedeniKisa, retIsaretleri…) ve sınama sessizce boşa düşerdi.
+   */
+  assert.ok(KARAR_SONUCLARI.length >= 4, "sözlük daralmış görünüyor — kayıt bayat olabilir");
+
+  /**
+   * Arama BELGENİN TAMAMINDA değil, sözlüğü SAYAN satırda yapılır. Fark mutasyonla
+   * ölçüldü: değeri sözlük satırından silmek, başka bir cümlede geçtiği için testi
+   * yeşil bırakıyordu — oysa operatör kovalarını o sayımdan kurar, serbest metinden
+   * değil. Çapa bulunamazsa test SESSİZCE devre dışı kalmaz, orada durur.
+   */
+  const sozlukSatiri = (ad: string, metin: string, capa: RegExp): string => {
+    const satir = metin.split(/\r?\n/).find((s) => capa.test(s));
+    assert.ok(satir, `${ad}: karar sözlüğünü sayan satır (${capa}) bulunamadı — test yolu bayatlamış`);
+    return satir!;
+  };
+
+  const sayimlar: Array<[string, string]> = [
+    [".env.example · karar satırı", sozlukSatiri(".env.example", ENV_ORNEK, /^#\s+karar \(/)],
+    ["docs/DEMO.md · alan tablosu", sozlukSatiri("docs/DEMO.md", BELGE_DEMO, /^\| `karar` \|/)],
+    [
+      "docs/DEMO.md · terim sözlüğü",
+      sozlukSatiri("docs/DEMO.md", BELGE_DEMO, /decision-log `karar` values/),
+    ],
+  ];
+
+  for (const [ad, satir] of sayimlar) {
+    for (const deger of KARAR_SONUCLARI) {
+      assert.match(
+        satir,
+        new RegExp("[`\"]" + deger + "[`\"]"),
+        `Karar değeri '${deger}' ${ad} içinde SAYILMIYOR. Belgedeki sözlüğe göre sayaç ` +
+          `ya da uyarı kuran operatörde, o değeri taşıyan satırlar hiçbir kovaya girmez — ` +
+          `'kademeli' tam olarak böyle kaçmıştı: kod dördüncü değeri yazıyor, belgeler üç ` +
+          `değer sayıyordu, yani kapının yumuşadığı anlar görünmez oluyordu.`
+      );
+    }
+  }
+});
+
+/* ── 8) Denetim izi GERÇEKTEN yazılabilir bir yola mı gösteriliyor? ──────────── */
+
+/** systemd biriminin YAZILABİLİR bıraktığı kökler (ProtectSystem=strict altında). */
+function yazilabilirKokler(birim: string): string[] {
+  const kokler: string[] = [];
+  const topla = (anahtar: string, onek: string) => {
+    for (const m of birim.matchAll(new RegExp(`^${anahtar}=(.+)$`, "gm"))) {
+      for (const yol of m[1].trim().split(/\s+/)) if (yol) kokler.push(onek + yol);
+    }
+  };
+  topla("ReadWritePaths", "");
+  // LogsDirectory=X → /var/log/X (systemd dizini oluşturur, sahiplendirir, muaf tutar).
+  topla("LogsDirectory", "/var/log/");
+  topla("StateDirectory", "/var/lib/");
+  return kokler;
+}
+
+test("denetim izi: belgelenen ADSPILOT_DECISION_LOG yolu systemd'de YAZILABİLİR", () => {
+  /**
+   * Sessiz arızanın tam tarifi: birim ProtectSystem=strict ile koşuyor, yazılabilir
+   * tek yol /opt/adspilot/data iken .env.example ve DEMO.md /var/log/adspilot/… örneği
+   * veriyordu. Operatör günlüğü açtığını sanır; her riskli karar kum havuzuna çarpar;
+   * günlük KAPI OLMADIĞI için (yazma hatası akışı düşürmez, stderr'e tek satır yazılır)
+   * hiçbir şey bozulmaz ve JSONL boş kalır. Eksiklik ancak "geçen ay kaç ret vardı"
+   * sorulduğunda — cevabın artık üretilemeyeceği anda — fark edilir.
+   */
+  const kokler = yazilabilirKokler(BIRIM_SYSTEMD);
+  assert.ok(kokler.length > 0, "birimde hiç yazılabilir yol yok — dosya bayatlamış olabilir");
+
+  const yollar: Array<{ kaynak: string; yol: string }> = [];
+  for (const [ad, metin] of [
+    [".env.example", ENV_ORNEK],
+    ["docs/DEMO.md", BELGE_DEMO],
+    ["deploy/README.md", BELGE_DEPLOY],
+  ] as const) {
+    for (const satir of metin.split(/\r?\n/)) {
+      /**
+       * KAPSAM: yalnız systemd biriminin yönettiği yollar. Konteyner örnekleri
+       * (`docker run … -e ADSPILOT_DECISION_LOG=/data/…`) bilerek dışarıda: orada
+       * dosya sistemini bu birim değil, imajın kendi /data bağlaması belirler ve
+       * onları buraya katmak, kapsamı dışında bir kural yüzünden yanlış alarm üretirdi.
+       */
+      if (/docker|^\s*-e\s/i.test(satir)) continue;
+      const m = /ADSPILOT_DECISION_LOG=(\/[^\s`"']+)/.exec(satir);
+      if (m) yollar.push({ kaynak: ad, yol: m[1] });
+    }
+  }
+  assert.ok(
+    yollar.length >= 2,
+    `Belgelerde mutlak yollu ADSPILOT_DECISION_LOG örneği bulunamadı (${yollar.length}) — ` +
+      "örnek kaldırıldıysa bu gözcü sessizce boşa düşer; testi de birlikte güncelle."
+  );
+
+  for (const { kaynak, yol } of yollar) {
+    assert.ok(
+      kokler.some((kok) => yol === kok || yol.startsWith(kok.endsWith("/") ? kok : kok + "/")),
+      `${kaynak} '${yol}' yolunu örnek veriyor ama deploy/adspilot.service bu yolu ` +
+        `YAZILABİLİR bırakmıyor (yazılabilir kökler: ${kokler.join(", ")}). ` +
+        `Ya birime LogsDirectory=/ReadWritePaths= satırı ekle, ya da örneği yazılabilir ` +
+        `kümenin altına taşı. Aksi hâlde denetim izi ÜRETİMDE sessizce hiç oluşmaz.`
+    );
+  }
+});
+
+test("deploy runbook'u karar günlüğünün kum havuzu tuzağını ANIYOR", () => {
+  /**
+   * ADSPILOT_DB için bu uyarı zaten yazılmıştı ("must be an absolute path… which
+   * ProtectSystem=strict makes read-only"); denetim izi için hiç yazılmamıştı ve
+   * runbook DECISION_LOG'dan tek kelime etmiyordu. Aradaki fark keyfi: ikisi de aynı
+   * kum havuzuna çarpar, ama biri servisi çökertip kendini duyurur, diğeri sessizce
+   * hiçbir iz bırakmaz — yani sessiz olan, uyarıyı DAHA ÇOK hak eder.
+   */
+  assert.match(
+    BELGE_DEPLOY,
+    /ADSPILOT_DECISION_LOG/,
+    "deploy/README.md karar günlüğünden hiç söz etmiyor — operatör onu ancak burada öğrenir"
+  );
+  assert.match(
+    BELGE_DEPLOY,
+    /ProtectSystem=strict|LogsDirectory/,
+    "runbook, günlüğün yazılabilir yol koşulunu (kum havuzu) açıkça anlatmalı"
+  );
 });

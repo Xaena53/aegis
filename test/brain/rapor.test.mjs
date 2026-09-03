@@ -7,6 +7,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { raporOlustur, metniTemizle, musteriIdMaskele } from "../../scripts/brain/rapor.mjs";
+// Sözleşme testi için ÜRETİM yolu: rapor, uygula()'nın kendi dönüşüyle beslenir.
+import { uygula } from "../../scripts/brain/uygulama.mjs";
 
 const ESC = String.fromCharCode(27); // ANSI kaçış karakteri
 const BEL = String.fromCharCode(7); // zil karakteri
@@ -160,6 +162,83 @@ test("basari mesajindaki '(1 tekrar/bos atlandı)' eki yanlis pozitif uretmez", 
   assert.ok(satir.includes("| TAMAM |"), "ek bilgili basari mesaji TAMAM sayilmali");
   assert.ok(!satir.includes("BASARISIZ"));
   assert.ok(!rapor.includes("UYGULAMA KISMEN BAŞARISIZ"));
+});
+
+/* ── Durum damgası OTORİTEDİR (özet metni değil) ─────────────────────────────── */
+
+test("KRİTİK: 'belirsiz' damgalı adım tabloda TAMAM görünemez", () => {
+  /**
+   * Rapor durumu `sonucOzeti` metninden türetiyordu; oysa o özet 400 karaktere
+   * KIRPILIR ve kırpma işareti ham yanıtın 30.001. karakterindedir. Sonucu
+   * doğrulanamayan gerçek bir yazma çağrısı bu yüzden denetim tablosuna "TAMAM" diye
+   * geçiyor, rapor kendi içinde çelişiyordu. Aşağıdaki özet bilerek TERTEMİZ bir
+   * başarı metnidir: doğruyu yalnız damga söyleyebilir.
+   */
+  const girdi = ornekGirdi();
+  girdi.uygulamaSonucu.adimlar = [
+    {
+      arac: "create_search_campaign",
+      ozet: "Kampanya",
+      sonucOzeti: "Kampanya PAUSED olarak olusturuldu (2 anahtar kelime, gunluk butce 150)",
+      durum: "belirsiz",
+    },
+  ];
+  const rapor = raporOlustur(girdi);
+  const satir = rapor.split("\n").find((l) => l.includes("create_search_campaign"));
+  assert.ok(!satir.includes("| TAMAM |"), "doğrulanamayan yazma TAMAM raporlanamaz");
+  assert.ok(satir.includes("BELİRSİZ"), "'bilmiyorum' ayrı etiketle görünmeli, kesin ret gibi değil");
+  assert.ok(rapor.includes("UYGULAMA KISMEN BAŞARISIZ"));
+});
+
+test("KRİTİK sözleşme: uygula() → raporOlustur — kırpılmış koşu YARIM OLABİLİR damgası basar", async () => {
+  /**
+   * Elle kurulmuş bir şeklin değil GERÇEK üretim yolunun sınamasıdır: uygula()'nın
+   * kendi dönüşü doğrudan raporOlustur'a verilir. Damga `uygulamaSonucu.kirpik`
+   * alanını okuyordu, üreten taraf o alanı HİÇ yazmıyordu — yani belgelenen değişmez
+   * üretimde erişilemezdi. İki taraf ancak burada birbirine bağlanır.
+   */
+  const KIRPMA_ISARETI = "[... sonuç kırpıldı ...]";
+  const uzunYanit =
+    "Kampanya PAUSED olarak oluşturuldu (2 anahtar kelime, günlük bütçe 40, hedef: TR).\n" +
+    "Oluşan kaynaklar:\n" +
+    "customers/1234567890/campaigns/9002\n" +
+    "customers/1234567890/adGroups/9003\n" +
+    "x".repeat(30_000) +
+    "\n" +
+    KIRPMA_ISARETI;
+
+  const uygulamaSonucu = await uygula(
+    {
+      plan: {
+        kampanyaAdi: "Deneme",
+        hedefUlke: "TR",
+        dil: "tr",
+        butceGunlukTL: 40,
+        adGruplari: [{ ad: "Grup", anahtarKelimeler: ["kosu ayakkabisi"], eslesmeTipi: "PHRASE" }],
+        negatifKelimeler: ["ucretsiz"],
+        basariMetrikleri: ["CTR"],
+      },
+      kreatif: {
+        basliklar: ["Bir", "Iki", "Uc"],
+        aciklamalar: ["Aciklama bir.", "Aciklama iki."],
+      },
+      musteriId: "1234567890",
+      finalUrl: "https://ornek.example/kosu",
+    },
+    {
+      cagir: async (arac) => {
+        if (arac === "run_gaql") return "0 satır (0 gösteriliyor):\n[]";
+        if (arac === "create_search_campaign") return uzunYanit;
+        return "(boş yanıt)";
+      },
+    }
+  );
+
+  const rapor = raporOlustur({ ...ornekGirdi(), uygulamaSonucu });
+  assert.ok(rapor.includes("YARIM OLABİLİR"), "kırpılmış koşu damgayı GERÇEKTEN bastırmalı");
+  const satir = rapor.split("\n").find((l) => l.includes("create_search_campaign"));
+  assert.ok(!satir.includes("| TAMAM |"), "kırpık adım tabloda tamamlanmış görünemez");
+  assert.ok(rapor.includes("UYGULAMA KISMEN BAŞARISIZ"));
 });
 
 test("rakip yaklasimlari model hipotezi olarak etiketlenir, arastirma blogu uyarilidir", () => {

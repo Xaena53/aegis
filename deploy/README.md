@@ -83,6 +83,21 @@ PORT=8787
 > to the working directory, which `ProtectSystem=strict` makes read-only; the service
 > then crash-loops every five seconds.
 
+> **`ADSPILOT_DECISION_LOG` only works under a writable path.** The unit runs with
+> `ProtectSystem=strict`, so the filesystem is read-only apart from `ReadWritePaths=`
+> (`/opt/adspilot/data`) and `LogsDirectory=` (`/var/log/adspilot`, which systemd creates
+> and chowns for you). Point the log anywhere else and every risk-tagged decision hits the
+> sandbox — and *nothing breaks*: the decision log is deliberately an observation, never a
+> gate, so a write failure prints one stderr line and the approval flow continues. The file
+> simply stays empty, and you find out the month someone asks how many spend increases were
+> refused. The value below is inside the writable set:
+>
+> ```ini
+> ADSPILOT_DECISION_LOG=/var/log/adspilot/kararlar.jsonl
+> ```
+>
+> Verify after the first refusal with: `sudo -u adspilot tail /var/log/adspilot/kararlar.jsonl`
+
 > **`ADSPILOT_SOURCE_URL` must point at your own repository** if you modified the code.
 > AGPL §13 requires offering *your* version's source to your users; the upstream default
 > does not satisfy that.

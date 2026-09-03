@@ -52,7 +52,7 @@ import { appendFileSync, renameSync, statSync } from "node:fs";
 import type { AgKarar, AgRisk, HalkaIzi, NvIzi, RetNedeni, SimSwapIzi } from "./networkTrust.js";
 
 /**
- * Kapının verdiği karar.
+ * Kapının verdiği kararın SÖZLÜĞÜ — dört değer, tamamı.
  *
  * "kademeli" AYRI bir sonuçtur ve "gecti"ye katlanmaz. Denetçi için bu ayrım işin
  * kendisidir: "hiçbir sinyal bozuk değildi" ile "bir sinyal bozuktu, diğerleri temiz
@@ -61,7 +61,17 @@ import type { AgKarar, AgRisk, HalkaIzi, NvIzi, RetNedeni, SimSwapIzi } from "./
  * anlardan ayırt edilemez — ve sonradan "kaç kez yükseltme yaptık" sorusu
  * cevaplanamaz hâle gelir.
  */
-export type KararSonucu = "gecti" | "kademeli" | "ret" | "kapali";
+export const KARAR_SONUCLARI = ["gecti", "kademeli", "ret", "kapali"] as const;
+
+/**
+ * Sözlük DİZİDEN türetilir, tersi değil: belgelerin (docs/DEMO.md · .env.example)
+ * bu değerleri saydığını sınayan gözcü, çalışma anında okunabilen bir listeye
+ * ihtiyaç duyar. Elle yazılmış bir birleşim, sözlüğe sessizce dördüncü bir değer
+ * eklenmesine izin veriyordu: kod "kademeli" yazarken belgelerde üç değer vardı ve
+ * o sözlüğe göre sayaç kuran operatörde kapının yumuşadığı satırlar hiçbir kovaya
+ * girmiyordu.
+ */
+export type KararSonucu = (typeof KARAR_SONUCLARI)[number];
 
 export interface KararKaydi {
   /** ISO-8601 zaman damgası. */
@@ -127,6 +137,15 @@ export interface KararKaydi {
   maskeliNumara?: string;
   /** networkTrust'ın sabit sözlüğünden ret kodu; serbest/upstream metin DEĞİL. */
   retNedeniKisa?: RetNedeni;
+  /**
+   * Zincir boyunca üretilen TÜM ret nedenleri (bkz. AgIz.retNedenleri) —
+   * `retNedeniKisa` yalnız kararı VEREN nedendir ve yol boyunca üzerine yazılır.
+   * Bu alan olmadan "SIM değişti + çağrı yönlendirme açık" ile "yalnız çağrı
+   * yönlendirme açık" birebir aynı satırı üretiyordu: saptanmış SIM değişimi izden
+   * siliniyor, üstelik satır temiz bir sorgu izlenimi veriyordu. Hiçbir ret nedeni
+   * üretilmediyse alan HİÇ yazılmaz.
+   */
+  retNedenleri?: RetNedeni[];
 }
 
 /** Kampanya adları uzun olabilir; günlük satırını sınırlı tutar. */
@@ -232,6 +251,11 @@ export function agKararKaydiOlustur(
      */
     retNedeniKisa: ag.engel || iz.kademe === "yukseltildi" ? iz.retNedeni : undefined,
     kademeDogrulayan: iz.kademe === "yukseltildi" ? iz.kademeDogrulayan : undefined,
+    /**
+     * Boş dizi alanı AÇMAZ: "bakıldı, bozuk sinyal yoktu" ile "hiç bakılmadı" ayrımı
+     * bu dosyanın her yerindeki kuralın aynısıdır — bilinmeyen alan hiç yazılmaz.
+     */
+    retNedenleri: iz.retNedenleri?.length ? [...iz.retNedenleri] : undefined,
   };
 }
 
@@ -281,8 +305,18 @@ export function kararYaz(kayit: KararKaydi): void {
   if (!hedef) return;
   dosyayiDevret(hedef);
   try {
-    // Alan sırası bilinçli: JSON.stringify undefined alanları düşürür, böylece
-    // "ölçülemedi" ile "boş" karışmaz.
+    /**
+     * Alan sırası bilinçli: JSON.stringify undefined alanları düşürür, böylece
+     * "ölçülemedi" ile "boş" karışmaz.
+     *
+     * DİKKAT — bu liste ELLE yazılır ve eksikliği SESSİZDİR: kayıt nesnesinde
+     * bulunan bir alan burada unutulursa satır yine geçerli JSON'dur, hiçbir tip
+     * hatası çıkmaz ve alan diske hiç düşmez. `kademeDogrulayan` tam olarak böyle
+     * kaçmıştı: yükseltmeyi taşıyan kefil halkalar üretiliyor ama yazılmıyordu, yani
+     * "yükseltme olmadı" ile "kefili kaydedilmedi" kalıcı olarak karışıyordu.
+     * test/kararGunlugu.test.ts bu listeyi ÇİFT YÖNLÜ sınar: kayıttaki her dolu alan
+     * satırda da bulunmak zorundadır.
+     */
     const satir = JSON.stringify({
       zaman: kayit.zaman,
       eylem: kayit.eylem,
@@ -300,6 +334,8 @@ export function kararYaz(kayit: KararKaydi): void {
       tutar: kayit.tutar,
       maskeliNumara: kayit.maskeliNumara,
       retNedeniKisa: kayit.retNedeniKisa,
+      retNedenleri: kayit.retNedenleri,
+      kademeDogrulayan: kayit.kademeDogrulayan,
     });
     appendFileSync(hedef, satir + "\n", "utf8");
   } catch (e: any) {

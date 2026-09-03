@@ -38,6 +38,17 @@ ProtectSystem=strict
 ProtectHome=true
 # Yalnız veritabanı dizinine yazma izni (WAL yan dosyaları da buraya düşer)
 ReadWritePaths=/opt/adspilot/data
+# Denetim izinin (ADSPILOT_DECISION_LOG) yazılabilir tek yeri: /var/log/adspilot.
+# systemd bu dizini servis kullanıcısına ait olarak KENDİSİ oluşturur ve
+# ProtectSystem=strict'ten muaf tutar.
+#
+# NEDEN BURADA: karar günlüğü bilinçli olarak KAPI DEĞİL, gözlemdir — yazma hatası
+# onay akışını düşürmez, stderr'e tek satır yazılıp geçilir. Bu iyi tasarım, bu
+# satır olmadan sessiz bir arızaya dönüşüyordu: operatör .env.example'daki örnek
+# yolu (/var/log/adspilot/kararlar.jsonl) açar, her riskli karar kum havuzuna
+# çarpar, JSONL hiç oluşmaz ve eksiklik ancak "geçen ay kaç ret vardı" diye
+# sorulduğunda — yani cevabın artık üretilemeyeceği anda — fark edilir.
+LogsDirectory=adspilot
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

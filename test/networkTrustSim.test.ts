@@ -107,13 +107,13 @@ test("sim: iz 'simulasyon' der — simüle karar gerçek sorgu gibi izlenemez", 
 
 test("sim: yapılandırma hatalarında iz 'calismadi' + sabit kod, pencere/numara YAZILMAZ", async () => {
   const celiski = await agDogrula({ ...SIM_AYAR, nacToken: "gercek-token", nacSimulate: "temiz" }, "high");
-  assert.deepEqual(celiski.iz, { simSwap: "calismadi", retNedeni: "yapilandirma-celiskili" });
+  assert.deepEqual(celiski.iz, { simSwap: "calismadi", retNedeni: "yapilandirma-celiskili", retNedenleri: ["yapilandirma-celiskili"] });
 
   const tanimsiz = await agDogrula({ ...SIM_AYAR, nacSimulate: "belki" }, "high");
-  assert.deepEqual(tanimsiz.iz, { simSwap: "calismadi", retNedeni: "simulasyon-degeri-tanimsiz" });
+  assert.deepEqual(tanimsiz.iz, { simSwap: "calismadi", retNedeni: "simulasyon-degeri-tanimsiz", retNedenleri: ["simulasyon-degeri-tanimsiz"] });
 
   const numarasiz = await agDogrula({ simSwapWindowHours: 72, nacSimulate: "temiz" }, "high");
-  assert.deepEqual(numarasiz.iz, { simSwap: "calismadi", retNedeni: "onaylayici-numarasi-yok" });
+  assert.deepEqual(numarasiz.iz, { simSwap: "calismadi", retNedeni: "onaylayici-numarasi-yok", retNedenleri: ["onaylayici-numarasi-yok"] });
 });
 
 /* ── integration: gerçek MCP protokolü üzerinden, token'sız ve SDK'sız ────────── */
