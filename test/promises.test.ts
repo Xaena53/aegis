@@ -158,7 +158,12 @@ test("promise: 'Yazma kapalıysa ajan yalnız rapor okuyabilir'", async () => {
 });
 
 test("promise: 'limits kaynağındaki her kural gerçekten uygulanıyor'", async () => {
-  const { ctx } = sahteContext({ maxDailyBudget: 77, writeEnabled: false });
+  // Kelepçe raporu artık erişilebilirliği kanıtlanmış hesap ister (bkz. resources.ts).
+  const { ctx } = sahteContext({
+    maxDailyBudget: 77,
+    writeEnabled: false,
+    queries: [[/FROM customer\b/, [{ customer: { id: 1466231519 } }]]],
+  });
   const c = await baglanti(ctx);
   const res: any = await c.readResource({ uri: "adspilot://accounts/1466231519/limits" });
   const veri = JSON.parse(res.contents[0].text);

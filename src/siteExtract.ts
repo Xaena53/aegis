@@ -24,22 +24,39 @@ export interface PageFacts {
   visibleText: string;
 }
 
+/** Adlandırılmış varlıklar. Listede olmayan bir ad OLDUĞU GİBİ bırakılır. */
+const VARLIKLAR: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+
+/**
+ * HTML varlıklarını TEK GEÇİŞTE çözer.
+ *
+ * NEDEN tek geçiş: eski hâli zincirlenmiş replace'lerdi ve `&amp;` en başta duruyordu —
+ * onun ürettiği `&` sonraki halkaların girdisi oluyordu. Ölçüldü: `Fiyat &amp;lt;b&amp;gt;`
+ * → `Fiyat <b>`. Sayfada böyle bir etiket YOKTU; çözücü onu kendisi uydurdu. Aynı zincir,
+ * `&amp;lt;/site-verisi&amp;gt;` yazan bir sayfaya metin olarak GERÇEK bir ayraç kapanışı
+ * ürettiriyordu: savunma tek katmana (ayracTemizle) iniyor, çıkarımın kendisi saldırganın
+ * tarafına geçiyordu. Tarayıcı da tek geçiş yapar — bir varlığın çözümünden çıkan `&`
+ * yeni bir varlık başlatmaz.
+ */
 function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;|&apos;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => {
-      const code = parseInt(n, 16);
+  return s.replace(/&(?:#x([0-9a-f]+)|#(\d+)|([a-z]+));/gi, (tam, hex, ondalik, ad) => {
+    if (hex !== undefined) {
+      const code = parseInt(hex, 16);
       return code > 0 && code < 0x10ffff ? String.fromCodePoint(code) : "";
-    })
-    .replace(/&#(\d+);/g, (_, n) => {
-      const code = Number(n);
+    }
+    if (ondalik !== undefined) {
+      const code = Number(ondalik);
       return code > 0 && code < 0x10ffff ? String.fromCodePoint(code) : "";
-    });
+    }
+    return VARLIKLAR[String(ad).toLowerCase()] ?? tam;
+  });
 }
 
 function clean(s: string | undefined): string | undefined {

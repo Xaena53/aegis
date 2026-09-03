@@ -75,6 +75,43 @@ export function toMicrosInt(amount: number): number {
 }
 
 /**
+ * KAPALI ARIZA SAYI OKUMA: yalnız gerçekten sayıya dönen bir değer sayı sayılır.
+ *
+ * `Number(null)` ve `Number("")` sıfır üretir, `Number(undefined)` NaN — yani yaygın
+ * `Number(x ?? 0)` kalıbı "alan hiç gelmedi" ile "değer sıfırdı" arasındaki farkı siliyor.
+ * Bu depoda o fark parasal: okunamayan bir maliyeti 0 diye raporlamak ajana "harcama yok"
+ * demektir ve ajan bütçe yükseltir. Okunamadıysa undefined döner; çağıran alanı ya hiç
+ * yazmaz ya da metinde "OKUNAMADI" diye itiraf eder.
+ */
+export function sayiOku(ham: unknown): number | undefined {
+  if (typeof ham !== "number" && typeof ham !== "string") return undefined;
+  const sayi = typeof ham === "string" ? (ham.trim() === "" ? NaN : Number(ham)) : ham;
+  return Number.isFinite(sayi) ? sayi : undefined;
+}
+
+/**
+ * Google Ads `amount_micros` → hesabın para birimindeki tutar.
+ *
+ * Bu sözleşme önce write.ts'te doğdu (okunamayan bütçe 0 sayılınca 0 her tavanı geçiyor,
+ * kampanya sessizce yayına alınabiliyordu), sonra Meta istemcisinde tekrarlandı; okuma
+ * yüzeyleri (read.ts, resources.ts) ise hâlâ `?? 0` kullanıyor ve aynı yanlışı sessizce
+ * rapora yazıyordu. Tek yardımcıya taşındı ki "bilinmiyor ≠ 0" kuralının tek tanımı olsun.
+ *
+ * Negatif değer de RET: Google negatif micros göndermez, geldiyse okuma bozuktur.
+ * Micros DEĞİL para birimi döner: kayda düşen sayı insanın okuduğu sayıdır.
+ */
+export function mikrodanTutar(ham: unknown): number | undefined {
+  const sayi = sayiOku(ham);
+  if (sayi === undefined || sayi < 0) return undefined;
+  return sayi / 1e6;
+}
+
+/** Rapor metninde okunamayan sayı SUSMAZ: "0.00" yerine açık bir itiraf basılır. */
+export function sayiMetni(v: number | undefined, basamak = 0): string {
+  return v === undefined ? "OKUNAMADI" : v.toFixed(basamak);
+}
+
+/**
  * GAQL string literal: single OR double quoted.
  *
  * Matching only single quotes caused two distinct failures — the keyword scan could land
@@ -103,7 +140,22 @@ export function normalizeGaql(query: string): string {
     return `\u0000${sabitler.length - 1}\u0000`;
   });
   const sikistirilmis = maskeli.replace(/\s+/g, " ").trim();
-  return sikistirilmis.replace(/\u0000(\d+)\u0000/g, (_, i) => sabitler[Number(i)]);
+  return sikistirilmis.replace(/\u0000(\d+)\u0000/g, (_, i) => satirSonuKacir(sabitler[Number(i)]!));
+}
+
+/**
+ * Metin sabitinin İÇİNDEKİ ham satır sonunu GAQL kaçış dizisine çevirir.
+ *
+ * Sabitleri olduğu gibi geri koymak, bu fonksiyonun var olma nedeni olan arızayı sabitin
+ * İÇİNDEN geri getiriyordu: istemcinin alan ayrıştırıcısı (parser.js, `( from .*)` regex'i
+ * `s` bayrağı OLMADAN) noktayı satır sonunda durdurur. Adında satır sonu geçen bir
+ * kampanyayı sorgulayan istekte SELECT listesinin SON alanı (ölçümde metrics.clicks)
+ * bozuk bir ada dönüşüp satırlara hiç yazılmıyor; ajan bunu "tıklama yok" diye okuyor.
+ * Kaçış dizisi sabitin EŞLEŞTİĞİ metni değiştirmez, yalnız ham kontrol karakterini
+ * sorgudan çıkarır.
+ */
+function satirSonuKacir(sabit: string): string {
+  return sabit.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
 
 /** Blanks the INSIDE of string literals, preserving length, so keyword scans cannot match there. */
@@ -118,15 +170,24 @@ function maskGaqlStrings(q: string): string {
  * the same — in a shared hosted process that is an OOM that takes every tenant down with
  * it, so an existing LIMIT is clamped rather than trusted. The PARAMETERS clause must stay
  * after LIMIT, which is where GAQL requires it.
+ *
+ * SONDAKİ NOKTALI VİRGÜL BURADA DÜŞER. GAQL'de ifade sonlandırıcı yoktur, ama SQL
+ * alışkanlığıyla yazılan "... LIMIT 500000;" sorgusunda `LIMIT\s+(\d+)$` çapası tutmuyor,
+ * kelepçe hiç çalışmıyor ve sorgu "LIMIT 500000; LIMIT 100" olarak gidiyordu: tavan
+ * atlanmış, üstüne anlaşılmaz bir QueryError üretilmiş oluyordu. Kırpma, sabitleri
+ * MASKELENMİŞ metin üzerinden yapılır ki sabit içinde biten bir ";" yanlışlıkla silinmesin
+ * ve gövde ile maske aynı uzunlukta kalsın (m.index bu eşitliğe dayanıyor).
  */
 export function ensureGaqlLimit(query: string, limit: number): string {
   const q = normalizeGaql(query);
   const masked = maskGaqlStrings(q); // same length as q, so indices stay valid
   const pIdx = masked.search(/\bPARAMETERS\b/i);
   const bodyEnd = pIdx >= 0 ? pIdx : q.length;
-  const body = q.slice(0, bodyEnd).trimEnd();
-  const maskedBody = masked.slice(0, bodyEnd).trimEnd();
-  const tail = pIdx >= 0 ? ` ${q.slice(pIdx).trim()}` : "";
+  const govdeKesim = masked.slice(0, bodyEnd).replace(/[\s;]+$/, "").length;
+  const body = q.slice(0, govdeKesim);
+  const maskedBody = masked.slice(0, govdeKesim);
+  const kuyrukKesim = pIdx >= 0 ? masked.slice(pIdx).replace(/[\s;]+$/, "").length : 0;
+  const tail = pIdx >= 0 ? ` ${q.slice(pIdx, pIdx + kuyrukKesim).trim()}` : "";
 
   const m = /\bLIMIT\s+(\d+)$/i.exec(maskedBody);
   if (m) {

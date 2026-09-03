@@ -141,7 +141,7 @@ export function nacConfigFromEnv(): Pick<
   | "stepUp"
 > {
   return {
-    stepUp: parseBool(process.env.ADSPILOT_STEPUP, false),
+    stepUp: parseBool(process.env.ADSPILOT_STEPUP, false, "ADSPILOT_STEPUP"),
     nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
     approverPhone: process.env.ADSPILOT_APPROVER_PHONE?.trim() || undefined,
     // Bilerek ham geçirilir; "temiz"/"degisti" doğrulaması karar anında yapılır.
@@ -154,7 +154,7 @@ export function nacConfigFromEnv(): Pick<
      * Varsayılan KAPALI. parseBool anlaşılamayan değeri de güvenli tarafa (kapalı)
      * aldığı için bozuk bir değer halkayı açık bırakmaz — açmak açık bir niyet ister.
      */
-    reachCheck: parseBool(process.env.ADSPILOT_REACH_CHECK, false),
+    reachCheck: parseBool(process.env.ADSPILOT_REACH_CHECK, false, "ADSPILOT_REACH_CHECK"),
     // Aynı gerekçe: "beklenen"/"beklenmedik" doğrulaması karar anında yapılır.
     locSimulate: process.env.ADSPILOT_LOC_SIMULATE?.trim() || undefined,
     /**
@@ -169,10 +169,10 @@ export function nacConfigFromEnv(): Pick<
      * halka HIGH katmandaki onaya bir CAMARA gidiş-dönüşü ekler. parseBool anlaşılamayan
      * değeri de güvenli tarafa (kapalı) aldığı için bozuk bir değer halkayı açmaz.
      */
-    devSwapCheck: parseBool(process.env.ADSPILOT_DEVICESWAP_CHECK, false),
+    devSwapCheck: parseBool(process.env.ADSPILOT_DEVICESWAP_CHECK, false, "ADSPILOT_DEVICESWAP_CHECK"),
     // Aynı gerekçe: "kapali"/"acik" doğrulaması karar anında yapılır.
     callFwdSimulate: process.env.ADSPILOT_CALLFWD_SIMULATE?.trim() || undefined,
-    callFwdCheck: parseBool(process.env.ADSPILOT_CALLFWD_CHECK, false),
+    callFwdCheck: parseBool(process.env.ADSPILOT_CALLFWD_CHECK, false, "ADSPILOT_CALLFWD_CHECK"),
     simSwapWindowHours: parseNumEnv(
       "ADSPILOT_SIMSWAP_WINDOW_HOURS",
       process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS,
@@ -236,7 +236,7 @@ export function loadConfig(): AdsPilotConfig {
     clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET!.trim(),
     refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN!.trim(),
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.trim() || undefined,
-    writeEnabled: parseBool(process.env.ADSPILOT_WRITE_ENABLED, true),
+    writeEnabled: parseBool(process.env.ADSPILOT_WRITE_ENABLED, true, "ADSPILOT_WRITE_ENABLED"),
     maxDailyBudget: parseBudgetCap(process.env.ADSPILOT_MAX_DAILY_BUDGET),
     ...nacConfigFromEnv(),
   };
@@ -248,12 +248,26 @@ export function loadConfig(): AdsPilotConfig {
  * `=no` or `=off` believes writes are disabled while the tools that spend real
  * money stay enabled. Any unrecognised value is treated as off as well.
  */
-export function parseBool(raw: string | undefined, varsayilan: boolean): boolean {
+export function parseBool(raw: string | undefined, varsayilan: boolean, ad = "bayrak"): boolean {
   if (raw === undefined || raw.trim() === "") return varsayilan;
   const v = raw.trim().toLowerCase();
   if (["1", "true", "yes", "on", "evet", "acik", "açık"].includes(v)) return true;
   if (["0", "false", "no", "off", "hayir", "hayır", "kapali", "kapalı"].includes(v)) return false;
-  console.error(`[adspilot] Uyarı: anlaşılamayan bayrak değeri '${raw}' — güvenli tarafa (kapalı) alındı.`);
+  /**
+   * DEĞER YAZILMAZ, DEĞİŞKEN ADI YAZILIR.
+   *
+   * Bu uyarı stderr'e gider; stderr ise MCP günlük dosyasına, `docker logs`a ve
+   * prova/smoke terminal çıktısına akar. Yanlış slota yapıştırılmış bir jeton ya da
+   * onaylayıcı telefon numarası — ki bunlar tam da yazım hatasıyla yanlış değişkene
+   * düşen şeylerdir — eskiden buradan tamamıyla loglanırdı. networkTrust.ts yedi ayrı
+   * yerde "değer sır ihtimaline karşı gösterilmez" diyor; burası aynı kuralın tersini
+   * yapıyordu. Operatörün neyi düzelteceğini bilmesi için değişken adı + beklenen biçim
+   * yeter; hangi yanlış değeri yazdığını zaten kendisi biliyor.
+   */
+  console.error(
+    `[adspilot] Uyarı: ${ad} değeri anlaşılamadı (beklenen: 1/0, true/false, evet/hayır) — ` +
+      `güvenli tarafa (kapalı) alındı. Değer sır ihtimaline karşı gösterilmiyor.`
+  );
   return false;
 }
 
@@ -265,7 +279,11 @@ export function parseNumEnv(name: string, raw: string | undefined, varsayilan: n
   if (raw === undefined || raw.trim() === "") return varsayilan;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    console.error(`[adspilot] Uyarı: ${name}='${raw}' geçersiz — varsayılan ${varsayilan} kullanılıyor.`);
+    // parseBool ile aynı gerekçe: ham değer loga akmaz, yalnız değişken adı + beklenen biçim.
+    console.error(
+      `[adspilot] Uyarı: ${name} geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
+        `varsayılan ${varsayilan} kullanılıyor. Değer sır ihtimaline karşı gösterilmiyor.`
+    );
     return varsayilan;
   }
   return n;
@@ -280,8 +298,10 @@ function parseBudgetCap(raw: string | undefined): number {
   if (!raw?.trim()) return DEFAULT;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
+    // parseBool ile aynı gerekçe: ham değer loga akmaz.
     console.error(
-      `[adspilot] Uyarı: ADSPILOT_MAX_DAILY_BUDGET='${raw}' geçersiz — bütçe tavanı ${DEFAULT} olarak zorlandı.`
+      `[adspilot] Uyarı: ADSPILOT_MAX_DAILY_BUDGET geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
+        `bütçe tavanı ${DEFAULT} olarak zorlandı. Değer sır ihtimaline karşı gösterilmiyor.`
     );
     return DEFAULT;
   }

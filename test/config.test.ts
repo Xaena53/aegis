@@ -257,3 +257,83 @@ test("KRİTİK: her halka ayarı önbellek anahtarını GERÇEKTEN değiştirir"
     );
   }
 });
+
+/* ── UYARILAR HAM DEĞERİ SIZDIRMAZ ────────────────────────────────────────────── */
+
+/**
+ * NEDEN BU BLOK VAR: bu dosyadaki eski testler yalnız uyarının NE İÇERMESİ gerektiğini
+ * iddia ediyordu; ham değerin İÇERMEMESİ gerektiğine dair tek assert yoktu. Oysa
+ * uyarılar stderr'e gider ve stderr MCP günlük dosyasına, `docker logs`a, prova/smoke
+ * terminal çıktısına akar. Bir jeton ya da onaylayıcı telefon numarası yanlış slota
+ * düştüğünde — ki yazım hatasının doğal sonucu budur — değeri basmak onu kalıcı olarak
+ * loglamaktı. networkTrust.ts yedi ayrı yerde "değer sır ihtimaline karşı gösterilmez"
+ * diyor; ayrıştırıcılar aynı kuralın tersini yapıyordu.
+ */
+const SIZINTI_SENTINELI = "EAAG-TEST-ONLY-jeton-905551112233";
+
+/** console.error çıktısını toplar; test bitince gerçek işlevi geri koyar. */
+function stderrYakala<T>(is: () => T): { sonuc: T; yazilanlar: string } {
+  const gercek = console.error;
+  let yazilanlar = "";
+  console.error = (...p: unknown[]) => {
+    yazilanlar += p.map(String).join(" ") + "\n";
+  };
+  try {
+    return { sonuc: is(), yazilanlar };
+  } finally {
+    console.error = gercek;
+  }
+}
+
+test("parseBool uyarısı HAM DEĞERİ yazmaz, değişken ADINI yazar", () => {
+  const { sonuc, yazilanlar } = stderrYakala(() =>
+    parseBool(SIZINTI_SENTINELI, true, "ADSPILOT_WRITE_ENABLED")
+  );
+  assert.equal(sonuc, false, "anlaşılamayan değer yine de güvenli tarafa düşmeli");
+  assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e yazılmamalı");
+  assert.match(yazilanlar, /ADSPILOT_WRITE_ENABLED/, "operatör hangi değişkeni düzelteceğini görmeli");
+});
+
+test("parseNumEnv uyarısı HAM DEĞERİ yazmaz", () => {
+  const { sonuc, yazilanlar } = stderrYakala(() =>
+    parseNumEnv("ADSPILOT_SIMSWAP_WINDOW_HOURS", SIZINTI_SENTINELI, 72)
+  );
+  assert.equal(sonuc, 72);
+  assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e yazılmamalı");
+  assert.match(yazilanlar, /ADSPILOT_SIMSWAP_WINDOW_HOURS/);
+});
+
+test("bütçe tavanı uyarısı HAM DEĞERİ yazmaz", () => {
+  ayarla("ADSPILOT_MAX_DAILY_BUDGET", SIZINTI_SENTINELI);
+  ayarla("GOOGLE_ADS_DEVELOPER_TOKEN", "sahte");
+  ayarla("GOOGLE_ADS_CLIENT_ID", "sahte");
+  ayarla("GOOGLE_ADS_CLIENT_SECRET", "sahte");
+  ayarla("GOOGLE_ADS_REFRESH_TOKEN", "sahte");
+  const { sonuc, yazilanlar } = stderrYakala(() => loadConfig());
+  assert.equal(sonuc.maxDailyBudget, 500, "geçersiz tavan varsayılana zorlanmalı");
+  assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e yazılmamalı");
+  assert.match(yazilanlar, /ADSPILOT_MAX_DAILY_BUDGET/);
+});
+
+test("her nac bayrağı uyarıda KENDİ değişken adıyla anılır (ad kaybolmaz)", () => {
+  /**
+   * parseBool'a ad geçirmeyi unutan bir çağrı yeri, uyarıyı yeniden anlamsız hâle
+   * getirir: operatör hangi değişkeni düzelteceğini bilemez ve o değişkeni açık sanmaya
+   * devam eder. Bu yüzden gerçek çağrı yerleri üzerinden sınanır.
+   */
+  const eslesme = [
+    ["ADSPILOT_STEPUP", "stepUp"],
+    ["ADSPILOT_REACH_CHECK", "reachCheck"],
+    ["ADSPILOT_DEVICESWAP_CHECK", "devSwapCheck"],
+    ["ADSPILOT_CALLFWD_CHECK", "callFwdCheck"],
+  ] as const;
+  for (const [ad, alan] of eslesme) {
+    ayarla(ad, SIZINTI_SENTINELI);
+    const { sonuc, yazilanlar } = stderrYakala(() => nacConfigFromEnv());
+    assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, `${ad}: ham değer sızdı`);
+    assert.match(yazilanlar, new RegExp(ad), `${ad}: uyarı değişken adını anmalı`);
+    // Halka bozuk değerle AÇILMAZ (kapalı arıza korunuyor).
+    assert.equal(sonuc[alan], false, `${ad}: anlaşılamayan değer halkayı açmamalı`);
+    ayarla(ad, undefined);
+  }
+});

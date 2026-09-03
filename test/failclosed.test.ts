@@ -308,3 +308,33 @@ test("paylaşımlı bütçe: explicitly_shared null gelirse de reddedilir", asyn
   assert.match(out, /Reddedildi/);
   assert.equal(rec.mutations.length, 0);
 });
+
+test("KRİTİK: tek okunamayan alan 500 kampanyalık raporu DÜŞÜRMEZ", async () => {
+  /**
+   * Şema alanları zorunluyken tek bozuk satır tüm çağrıyı isError'a çeviriyordu:
+   * amount_micros "abc" gelince Number(...) NaN üretiyor, çıktı doğrulaması patlıyor ve
+   * ajan 499 sağlam kampanyayı da göremiyordu. Görünmeyen kampanya "yok" sanılır.
+   * Kural: okunamayan ALAN düşer, satır ve rapor ayakta kalır.
+   */
+  const satirlar = Array.from({ length: 60 }, (_, i) => ({
+    campaign: {
+      id: i + 1,
+      name: "Kampanya " + (i + 1),
+      status: enums.CampaignStatus.ENABLED,
+      advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+    },
+    // 7. satırın bütçesi sayıya dönmüyor; gerisi sağlam
+    campaign_budget: { amount_micros: i === 6 ? "abc" : 50_000_000 },
+    metrics: { cost_micros: 2_000_000, clicks: 1, impressions: 10, conversions: 0, ctr: 0.1, average_cpc: 2_000_000 },
+  }));
+  const { ctx } = sahteContext({ queries: [[/FROM campaign/, satirlar]] });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "campaign_performance", arguments: { customerId: M } });
+
+  assert.notEqual(res.isError, true, "tek bozuk alan yüzünden tüm rapor kaybedilemez");
+  assert.equal(res.structuredContent.kampanyalar.length, 60, "sağlam kampanyalar rapordan düşmemeli");
+  const bozuk = res.structuredContent.kampanyalar[6];
+  assert.equal(bozuk.gunlukButce, undefined, "okunamayan bütçe 0 ya da NaN diye yazılamaz");
+  assert.deepEqual(bozuk.okunamayanAlanlar, ["gunlukButce"]);
+  assert.equal(res.structuredContent.kampanyalar[7].gunlukButce, 50, "komşu satır etkilenmemeli");
+});

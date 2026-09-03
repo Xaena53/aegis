@@ -25,12 +25,20 @@ export function registerPrompts(server: McpServer, getCtx: ContextProvider): voi
     async (deger: string) => {
       try {
         // ALL accounts including sub-accounts (users usually work in a sub-account)
-        const hesaplar = await getCtx().tumHesaplar();
+        const { liste } = await getCtx().tumHesaplar();
         const onek = deger.replace(/\D/g, "");
-        return hesaplar
-          .filter((h) => !h.yonetici && h.id.startsWith(onek)) // campaigns cannot be created in an MCC
-          .map((h) => h.id)
-          .slice(0, 20);
+        /**
+         * Kırpma SDK'ya bırakılır. Burada slice(0,20) yapmak sayıyı da yalan
+         * söyletiyordu: SDK `total`i aldığı diziden üretir, 40 eşleşen hesabı olan
+         * kullanıcıya "total: 20, hasMore: false" derdi. Tam listeyi verince SDK
+         * 100'de kırpar ve hasMore'u doğru bildirir.
+         *
+         * `erisilemedi` hesap önerilmez: detayı okunamadığı için yönetici olup
+         * olmadığı bilinmiyor, önerilse her çağrısı izin hatasıyla dönerdi.
+         */
+        return liste
+          .filter((h) => !h.yonetici && !h.erisilemedi && h.id.startsWith(onek)) // campaigns cannot be created in an MCC
+          .map((h) => h.id);
       } catch {
         return []; // missing credentials or any error: completion stays silent and returns nothing
       }

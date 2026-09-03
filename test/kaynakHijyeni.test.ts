@@ -53,3 +53,37 @@ test("kaynak dosyalarda HAM NUL baytı yok (git dosyayı ikili sayar)", () => {
       `dizesini üretir, dosya metin kalır.`
   );
 });
+
+/**
+ * İMZA ANAHTARININ TEK KAYNAĞI.
+ *
+ * NEDEN VAR: çerez imzaları eskiden `process.env.ADSPILOT_MASTER_KEY ?? ""` ile
+ * üretiliyordu. Bunun sinsi yanı, imzalama ile doğrulamanın AYNI ifadeyi kullanması:
+ * anahtar hiç yokken bile her şey kendi içinde tutarlı çalışırdı — çerezler herkesin
+ * bilebileceği BOŞ DİZEYLE imzalanır, tek bir test bile kızarmazdı. Bugün açılışta
+ * eksik anahtar süreci öldürdüğü için bu yola ulaşılamıyor; ama "bugün ulaşılamıyor"
+ * bir bekçi değildir, o yüzden kaynak düzeyinde çivileniyor: HMAC anahtarı yalnız
+ * store.ts'in kırpan/fırlatan masterKeyText()'inden gelebilir.
+ */
+test("HMAC imzaları anahtarı ham env'den değil masterKeyText()'ten alır", () => {
+  const suclular: string[] = [];
+  let sayac = 0;
+  for (const yol of dosyalar(join(KOK, "src")).concat(dosyalar(join(KOK, "scripts")))) {
+    const metin = readFileSync(yol, "utf8");
+    const desen = /createHmac\(\s*(?:"[^"]*"|'[^']*'|`[^`]*`)\s*,\s*([A-Za-z0-9_.$]+\(\)|[^),]+)/g;
+    for (const m of metin.matchAll(desen)) {
+      sayac++;
+      const anahtar = m[1].trim();
+      if (anahtar !== "masterKeyText()") suclular.push(`${yol.slice(KOK.length)}: ${anahtar}`);
+    }
+  }
+  assert.ok(sayac >= 2, `createHmac çağrısı bulunamadı (${sayac}) — desen bayatlamış olabilir`);
+  assert.deepEqual(
+    suclular,
+    [],
+    `HMAC anahtarını masterKeyText() dışından alan çağrı(lar): ${suclular.join(", ")}.
+` +
+      `Ham env okumak, anahtar yokken çerezleri boş dizeyle imzalar ve bu kendi içinde ` +
+      `tutarlı olduğu için hiçbir testi kızartmaz.`
+  );
+});

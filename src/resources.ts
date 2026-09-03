@@ -8,6 +8,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums } from "google-ads-api";
 import { formatAdsError, type ContextProvider } from "./adsClient.js";
+import { mikrodanTutar } from "./util.js";
 
 function json(uri: string, veri: unknown) {
   return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(veri, null, 2) }] };
@@ -30,13 +31,26 @@ async function kaynakGuvenli<T>(uri: string, isi: () => Promise<T>): Promise<T> 
   }
 }
 
-/** Returns the accounts campaigns can be created in (non-manager accounts). */
+/**
+ * Returns the accounts campaigns can be created in (non-manager accounts).
+ *
+ * `erisilemedi` olan hesap ÖNERİLMEZ: detayı okunamadığı için yönetici olup olmadığı
+ * bilinmiyor ve önerilse her çağrısı izin hatasıyla dönerdi. Tamamlama protokolü yalnız
+ * aday KİMLİK dizisi taşıyabildiği için eksiklik burada duyurulamaz — o yük
+ * `adspilot://accounts` kaynağının (tamListeMi/not) ve list_accounts aracının üstündedir.
+ */
 async function reklamHesaplari(getCtx: ContextProvider): Promise<string[]> {
   try {
-    return (await getCtx().tumHesaplar()).filter((h) => !h.yonetici).map((h) => h.id);
+    const { liste } = await getCtx().tumHesaplar();
+    return liste.filter((h) => !h.yonetici && !h.erisilemedi).map((h) => h.id);
   } catch {
     return [];
   }
+}
+
+/** URI'den gelen serbest metni müşteri kimliğine indirger (rakam dışı her şey atılır). */
+function musteriKimligi(deger: unknown): string {
+  return String(deger ?? "").replace(/\D/g, "");
 }
 
 export function registerResources(server: McpServer, getCtx: ContextProvider): void {
@@ -50,13 +64,36 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
     },
     async (uri) =>
       kaynakGuvenli(uri.href, async () => {
-      const hesaplar = await getCtx().tumHesaplar();
+      const { liste, eksik } = await getCtx().tumHesaplar();
+      /**
+       * "toplam" alanı KALDIRILDI. Kırpılmış ya da bir hesabı okunamamış bir listeye
+       * toplam yazmak, sayıyı kesin bir gerçek gibi sunuyordu: ajan 130'u hesabın
+       * tamamı sanıp kullanıcının aradığı hesap için "öyle bir hesabınız yok" diyordu.
+       * Artık gösterilen satır sayısı ile listenin TAM olup olmadığı ayrı ayrı yazılır.
+       */
+      const nedenler: string[] = [];
+      if (eksik.okunamayan.length)
+        nedenler.push(`${eksik.okunamayan.length} hesabın detayı okunamadı (erisilemedi=true olarak listede)`);
+      if (eksik.ustHesapKirpildi) nedenler.push("üst hesap listesi tavana takıldı: listede hiç görünmeyen hesaplar var");
+      if (eksik.altHesabiKirpilan.length)
+        nedenler.push(`şu MCC'lerin alt hesap listesi kırpıldı: ${eksik.altHesabiKirpilan.join(", ")}`);
       return json(uri.href, {
-        toplam: hesaplar.length,
-        hesaplar: hesaplar.map((h) => ({
+        gosterilen: liste.length,
+        tamListeMi: !eksik.var,
+        not: eksik.var
+          ? `LİSTE EKSİK — ${nedenler.join("; ")}. Aradığın hesap burada yoksa "yok" SONUCUNA VARMA; ` +
+            `list_accounts ile doğrula ya da kullanıcıdan kimliği iste.`
+          : "Bu bağlantının eriştiği hesapların tamamı.",
+        hesaplar: liste.map((h) => ({
           id: h.id,
           ad: h.ad,
-          tur: h.yonetici ? "yönetici (MCC — kampanya kurulamaz)" : "reklam hesabı",
+          // Okunamayan hesap "reklam hesabı" diye sunulamaz: yöneticiliği BİLİNMİYOR.
+          tur: h.erisilemedi
+            ? "bilinmiyor (detay okunamadı — kampanya için kullanma)"
+            : h.yonetici
+              ? "yönetici (MCC — kampanya kurulamaz)"
+              : "reklam hesabı",
+          ...(h.erisilemedi ? { erisilemedi: true } : {}),
         })),
       });
       })
@@ -74,10 +111,33 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
         "Bu bağlantının güvenlik ayarları: günlük bütçe tavanı ve yazma izni. SALT OKUNUR — limitleri yalnız hesap sahibi değiştirebilir.",
       mimeType: "application/json",
     },
-    async (uri, { customerId }) => {
+    async (uri, { customerId }) =>
+      kaynakGuvenli(uri.href, async () => {
+      /**
+       * Kimlik ÖNCE doğrulanır, kelepçeler SONRA yazılır. Öncesinde bu şablon gelen
+       * metni hiç sormadan geri yazıyordu: "0000000000" ya da "bu-hesap-yok" için de
+       * "yazmaIzni: true, tavan: 500" diyen, yetkili görünüşlü bir rapor üretiyordu.
+       * /guvenlik-durumu istemi ajana "tahmin etme, kaynağa bak" derken kaynak
+       * erişimi hiç doğrulanmamış bir hesap için olumlu beyanda bulunuyordu.
+       */
+      const cid = musteriKimligi(customerId);
+      if (cid.length !== 10)
+        throw new Error(
+          `Geçersiz müşteri ID: '${customerId}' — Google Ads müşteri ID'si 10 hanelidir. list_accounts ile doğru ID'yi bul.`
+        );
+      /**
+       * Erişim KANITLANIR. Sorgu patlarsa kaynakGuvenli yerelleştirilmiş hatayı taşır;
+       * boş satır dönerse hesabın okunabildiği BİLİNMİYOR demektir ve bilinmeyen =
+       * RET: kelepçe alanlarının hiçbiri yazılmaz.
+       */
+      const satirlar = await getCtx().queryWithRetry(cid, `SELECT customer.id FROM customer LIMIT 1`);
+      if (!satirlar.length)
+        throw new Error(
+          `${cid} hesabı doğrulanamadı — erişilebilir olduğu teyit edilemedi, kelepçe raporu üretilmedi. list_accounts ile hesabı doğrula.`
+        );
       const cfg = getCtx().config;
       return json(uri.href, {
-        customerId,
+        customerId: cid,
         yazmaIzni: cfg.writeEnabled,
         gunlukButceTavani: cfg.maxDailyBudget,
         kurallar: [
@@ -89,7 +149,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           "Tavan tek KAMPANYA başınadır, hesabın toplam harcaması için değildir.",
         ],
       });
-    }
+      })
   );
 
   server.registerResource(
@@ -105,7 +165,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
     },
     async (uri, { customerId }) =>
       kaynakGuvenli(uri.href, async () => {
-      const cid = String(customerId).replace(/\D/g, "");
+      const cid = musteriKimligi(customerId);
       /**
        * NO segments.date filter — deliberate. With a date filter, campaigns without
        * stats in the window are not returned at all: a freshly created draft is
@@ -123,13 +183,23 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
       return json(uri.href, {
         customerId: cid,
         not: "Tüm kampanyalar (performans verisi için campaign_performance aracını kullan).",
-        kampanyalar: satirlar.filter((r: any) => r?.campaign).map((r: any) => ({
-          id: String(r.campaign.id),
-          ad: r.campaign.name,
-          durum: (enums.CampaignStatus as any)[r.campaign.status] ?? r.campaign.status,
-          kanal: (enums.AdvertisingChannelType as any)[r.campaign.advertising_channel_type] ?? r.campaign.advertising_channel_type,
-          gunlukButce: Number(r.campaign_budget?.amount_micros ?? 0) / 1e6,
-        })),
+        kampanyalar: satirlar.filter((r: any) => r?.campaign).map((r: any) => {
+          /**
+           * `?? 0` BURADAN KALDIRILDI. Bütçesi okunamayan bir kampanya kataloğa
+           * "gunlukButce: 0" diye giriyordu; /kampanya-denetle ajanı bunu "bütçesiz
+           * kalmış" diye okuyor ve toplamları eksik hesaplıyordu. Kapı beslemiyor ama
+           * yanlış bilgi de fail-closed kuralının ihlali: bilinmiyor ≠ 0. Değer
+           * okunamazsa alan JSON'a HİÇ yazılmaz, yerine açık bir bayrak konur.
+           */
+          const gunlukButce = mikrodanTutar(r.campaign_budget?.amount_micros);
+          return {
+            id: String(r.campaign.id),
+            ad: r.campaign.name,
+            durum: (enums.CampaignStatus as any)[r.campaign.status] ?? r.campaign.status,
+            kanal: (enums.AdvertisingChannelType as any)[r.campaign.advertising_channel_type] ?? r.campaign.advertising_channel_type,
+            ...(gunlukButce === undefined ? { butceOkunamadi: true } : { gunlukButce }),
+          };
+        }),
       });
       })
   );

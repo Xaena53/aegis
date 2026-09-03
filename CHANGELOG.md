@@ -41,6 +41,22 @@ is undocumented is a guard nobody dares to touch later.
 - **Docker deployment**: a three-stage `node:22-alpine` image running as a non-root user,
   with `.env` excluded from the image, plus a compose file with a persistent volume.
 
+### Changed
+
+- **BREAKING — `ADSPILOT_MASTER_KEY` must be exactly 64 hex characters or a non-hex
+  passphrase.** A hex-only value of any other length (a machine key copied one character
+  short, or the 32 hex characters of `openssl rand -hex 16`) used to be stretched with
+  scrypt as if it were a passphrase; it is now refused at startup. The silent fallback
+  derived a key the operator never intended, so a mistyped key produced a *healthy-looking*
+  process in which no stored secret could be decrypted — "unknown" was being reported as
+  "clean". The value is trimmed before every use, so a trailing newline from a secret file
+  no longer changes which branch runs.
+  **Upgrading an install that already runs such a key:** the process will not start, and
+  padding the key to 64 characters recovers nothing — the stored `refresh_token_enc` values
+  were encrypted under the scrypt-derived key. There is no migration script; set a fresh
+  64-hex key and have every tenant reconnect. Read the upgrade note at the top of
+  `deploy/README.md` **before** pulling.
+
 ### Verified
 
 - **First live CAMARA calls (2026-08-28).** SIM Swap, device swap and call forwarding all

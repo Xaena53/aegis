@@ -194,8 +194,15 @@ resolved — which let one user invalidate another's credentials. Identity that 
 established now fails the connection outright.
 
 **Refresh tokens are encrypted at rest** with AES-256-GCM. The key comes from
-`ADSPILOT_MASTER_KEY`: 64 hex characters are used directly; anything else is stretched
-with scrypt, because a human-chosen passphrase run through a plain hash is weak.
+`ADSPILOT_MASTER_KEY`, trimmed first, and exactly two shapes are accepted: **exactly 64 hex
+characters**, used directly as the 32-byte key, or a **non-hex passphrase** of at least 32
+characters, stretched with scrypt because a human-chosen passphrase run through a plain hash
+is weak. A hex-only value of any other length — a machine key copied one character short, or
+an `openssl rand -hex 16` that produces 32 hex characters — is **refused at startup** instead
+of being treated as a passphrase. That silent fallback derived a *different* key: nothing in
+the database decrypted while the process still reported itself healthy, which is the exact
+shape of failure this codebase refuses. Existing installs running such a key: see the upgrade
+note in `deploy/README.md`.
 
 **API keys are stored as hashes only.** The plaintext is shown once, at connection time.
 

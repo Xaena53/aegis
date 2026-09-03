@@ -11,6 +11,9 @@ import {
   isTransientAdsError,
   withRetry,
   toMicrosInt,
+  sayiOku,
+  mikrodanTutar,
+  sayiMetni,
   ensureGaqlLimit,
   normalizeGaql,
   cleanId,
@@ -221,4 +224,88 @@ test("withRetry geçici hatada tekrar dener, kalıcıda denemez", async () => {
     )
   );
   assert.equal(calls3, 3, "geçici hata tries kadar denenmeli");
+});
+
+/**
+ * "Bilinmiyor ≠ 0" sözleşmesinin TEK tanımı burada sınanır.
+ *
+ * Bu yardımcı write.ts'te doğdu, sonra okuma yüzeylerine taşındı: `Number(x ?? 0)`
+ * kalıbı okunamayan bir bütçeyi/metrik alanını 0 diye rapor ediyordu ve 0 hem her
+ * bütçe tavanını geçiyor hem de ajana "harcama yok" dedirtiyordu.
+ */
+test("sayiOku: okunamayan değer 0 değil undefined döner", () => {
+  for (const bozuk of [undefined, null, "", "   ", "abc", NaN, Infinity, {}, [], true]) {
+    assert.equal(sayiOku(bozuk as unknown), undefined, `${JSON.stringify(bozuk)} sayı sayılmamalı`);
+  }
+  assert.equal(sayiOku(0), 0, "gerçek sıfır okunabilir bir değerdir, düşürülmemeli");
+  assert.equal(sayiOku(12), 12);
+  assert.equal(sayiOku("12"), 12, "Google sayıları dizge olarak da gönderir");
+  assert.equal(sayiOku(-3), -3, "negatifi eleme kararı çağırana ait");
+});
+
+test("mikrodanTutar: okunamayan/negatif micros tutar üretmez", () => {
+  assert.equal(mikrodanTutar(50_000_000), 50);
+  assert.equal(mikrodanTutar("50000000"), 50);
+  assert.equal(mikrodanTutar(0), 0);
+  for (const bozuk of [undefined, null, "", "abc", -1, {}]) {
+    assert.equal(mikrodanTutar(bozuk as unknown), undefined, `${JSON.stringify(bozuk)} tutara çevrilmemeli`);
+  }
+});
+
+test("sayiMetni okunamayan değeri SUSMADAN gösterir", () => {
+  assert.equal(sayiMetni(undefined), "OKUNAMADI", "0.00 yazmak 'para yok' beyanıdır");
+  assert.equal(sayiMetni(12.345, 2), "12.35");
+  assert.equal(sayiMetni(0, 2), "0.00", "gerçek sıfır sıfır diye yazılır");
+});
+
+/**
+ * İstemcinin (google-ads-api parser.js) alan çıkarımının BİREBİR aynısı.
+ *
+ * Testin sabiti burada: kütüphane sorguyu bu regex ile ayrıştırıp hangi alanları satıra
+ * yazacağına karar veriyor ve `.` bayraksız olduğu için satır sonunda duruyor. Sunucu
+ * sabit içindeki ham satır sonunu kaçışa çevirmezse SELECT listesinin SON alanı bozuk bir
+ * ada dönüşüp satırlara hiç yazılmıyor — ajan bunu "tıklama yok" diye okuyor.
+ */
+function istemciAlanlari(gaql: string): string[] {
+  return gaql
+    .replace(/\s{2,}/g, " ")
+    .toLowerCase()
+    .replace(/(^\s*select)|( from .*)|(\s+)/g, "")
+    .split(",")
+    .filter((f) => f.length > 0);
+}
+
+test("normalizeGaql: metin sabiti İÇİNDEKİ satır sonu SELECT'in son alanını düşürmez", () => {
+  const q = "SELECT campaign.name, metrics.clicks FROM campaign WHERE campaign.name = 'Yaz\nİndirimi'";
+  const n = normalizeGaql(q);
+  assert.doesNotMatch(n, /[\r\n]/, "ham satır sonu sabitin içinde bile sorguda kalmamalı");
+  assert.match(n, /'Yaz\\nİndirimi'/, "satır sonu GAQL kaçışına çevrilmeli (sabitin eşleştiği metin aynı kalır)");
+  assert.deepEqual(
+    istemciAlanlari(n),
+    ["campaign.name", "metrics.clicks"],
+    "istemci ayrıştırıcısı iki alanı da görmeli"
+  );
+  // Kaçış olmasaydı ölçülen sonuç buydu: ["campaign.name", "metrics.clicksi̇ndirimi'"]
+  assert.notDeepEqual(istemciAlanlari(q), ["campaign.name", "metrics.clicks"]);
+});
+
+test("normalizeGaql: satır sonu kaçışı satır başı (CR) için de geçerli", () => {
+  const n = normalizeGaql("SELECT a, b FROM c WHERE d = 'x\ry'");
+  assert.doesNotMatch(n, /[\r\n]/);
+  assert.deepEqual(istemciAlanlari(n), ["a", "b"]);
+});
+
+test("ensureGaqlLimit: sondaki noktalı virgül kelepçeyi ATLATAMAZ", () => {
+  // SQL alışkanlığıyla yazılan ";" LIMIT çapasını bozuyordu: sorgu
+  // "LIMIT 500000; LIMIT 100" olarak gidiyor, tavan hiç uygulanmıyordu.
+  assert.equal(ensureGaqlLimit("SELECT x FROM y LIMIT 500000;", 100), "SELECT x FROM y LIMIT 100");
+  assert.equal(ensureGaqlLimit("SELECT x FROM y LIMIT 5 ;", 100), "SELECT x FROM y LIMIT 5");
+  assert.equal(ensureGaqlLimit("SELECT x FROM y;", 100), "SELECT x FROM y LIMIT 100");
+  assert.equal(
+    ensureGaqlLimit("SELECT x FROM y LIMIT 900 PARAMETERS include_drafts=true;", 100),
+    "SELECT x FROM y LIMIT 100 PARAMETERS include_drafts=true"
+  );
+  // Sabitin içinde biten ";" silinmez: kırpma maskelenmiş metin üzerinden yapılır.
+  const sabitli = "SELECT x FROM y WHERE name = 'bitiş;'";
+  assert.equal(ensureGaqlLimit(sabitli, 100), `${sabitli} LIMIT 100`);
 });

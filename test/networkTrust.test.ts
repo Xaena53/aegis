@@ -445,3 +445,45 @@ test("network verification kapalıyken (token yok) mevcut davranış birebir kor
   assert.equal(rec.mutations.length, 1);
   assert.match(sorulanlar[0], /Ağ doğrulaması: kapalı/, "kapalı olduğu dürüstçe gösterilmeli");
 });
+
+/* ── maskele(): kısa numara kelepçesinin bekçisi ──────────────────────────────── */
+
+/**
+ * NEDEN BU BLOK VAR: `phone.length <= 6 ? "***" : ...` kelepçesinin hiçbir bekçisi yoktu,
+ * çünkü depodaki her `approverPhone` fikstürü 13 karakterlik TEK bir biçim kullanıyor.
+ * Kelepçe düşürüldüğünde uzunluk 6'da girdinin TAMAMI açığa çıkar (4 baş + 0 yıldız +
+ * 2 kuyruk) ve uzunluk 5'te `"*".repeat(-1)` RangeError fırlatır. Bu çıktı istem kanıt
+ * satırına, karar günlüğüne ve ajana dönen ret metnine giriyor; ajan yolunda ikinci bir
+ * maskeleme katmanı yok, yani sessiz bir gerileme ham numarayı doğrudan sızdırır.
+ */
+test("maskele: kısa numaralarda (5/6/7) ne sızdırır ne fırlatır", async () => {
+  const { maskele } = await import("../src/networkTrust.js");
+
+  for (const numara of ["12345", "123456", "1234567", "+90555", "+905551112233"]) {
+    let cikti = "";
+    assert.doesNotThrow(() => {
+      cikti = maskele(numara);
+    }, `${numara}: maskeleme hiçbir uzunlukta fırlamamalı`);
+
+    assert.ok(cikti.includes("*"), `${numara}: maskesiz çıktı olamaz`);
+    assert.notEqual(cikti, numara, `${numara}: girdi olduğu gibi geri dönmemeli`);
+
+    // AÇILAN KARAKTER SAYISI TAVANI: en çok 4 baş + 2 kuyruk. Kelepçe düşerse uzunluk
+    // 6'da bu sayı 6'ya (girdinin tamamına) çıkar ve bu assert kırmızıya döner.
+    const acilan = [...cikti].filter((c) => c !== "*").length;
+    assert.ok(acilan <= 6, `${numara}: en çok 4+2 karakter açılmalı (açılan: ${acilan}, çıktı: ${cikti})`);
+    if (numara.length <= 6) {
+      assert.equal(acilan, 0, `${numara}: kısa numarada hiçbir karakter açılmamalı (çıktı: ${cikti})`);
+    }
+  }
+});
+
+test("maskele: uzun numarada baş 4 ve son 2 dışında hiçbir şey görünmez", async () => {
+  const { maskele } = await import("../src/networkTrust.js");
+  const numara = "+905551112233";
+  const cikti = maskele(numara);
+  assert.equal(cikti.startsWith("+905"), true);
+  assert.equal(cikti.endsWith("33"), true);
+  assert.equal(cikti.length, numara.length, "uzunluk korunmalı (biçim ipucu kaybolmasın)");
+  assert.ok(!cikti.includes("5551112"), "gövde açığa çıkmamalı");
+});

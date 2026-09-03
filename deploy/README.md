@@ -8,6 +8,45 @@ The files in this directory (`adspilot.service`, `nginx.conf.example`, and the
 `Dockerfile` at the repository root) carry the same warnings inline, so you'll see them
 even if you don't read this page.
 
+## Upgrading an existing install — read this before `git pull`
+
+> **Breaking change: a hex-only `ADSPILOT_MASTER_KEY` whose length is not exactly 64 no
+> longer starts.** Earlier versions silently stretched such a value with scrypt, exactly as
+> if it were a passphrase. It is now refused at startup, because "a machine key copied one
+> character short" and "a passphrase" are indistinguishable to the code and guessing wrong
+> means every stored secret is encrypted under a key the operator never intended.
+
+This matters *only* if the key you run today is all hex digits and is not 64 characters long
+(a 32-character `openssl rand -hex 16` is the common case). Check on the running host,
+before you upgrade:
+
+```bash
+sudo -u adspilot node -e '
+const line = require("fs").readFileSync("/opt/adspilot/.env", "utf8")
+  .split(/\r?\n/).map((l) => l.trim())
+  .find((l) => l.startsWith("ADSPILOT_MASTER_KEY="));
+const k = (line ? line.slice("ADSPILOT_MASTER_KEY=".length) : "").trim();
+const hex = /^[0-9a-f]+$/i.test(k);
+console.log(!hex ? (k.length >= 32 ? "passphrase — upgrade is safe" : "TOO SHORT — fix before upgrading")
+  : k.length === 64 ? "64-hex — upgrade is safe"
+  : "HEX BUT NOT 64 (" + k.length + ") — this upgrade will refuse to start");'
+```
+
+If it prints **HEX BUT NOT 64**, understand what the upgrade costs before you take it. The
+process will exit at startup (`şifreleme anahtarı kullanılamıyor`), and *padding the key back
+to 64 characters does not recover anything*: the stored `refresh_token_enc` values were
+encrypted under the scrypt-derived key, and no length-64 value reproduces it. There is no
+migration script; the supported path is:
+
+1. Note the current key value — losing it removes even the theoretical recovery route.
+2. Upgrade, then put a fresh `ADSPILOT_MASTER_KEY=<64 hex characters>` in `.env`.
+3. Have every tenant reconnect through `/connect`, which overwrites their row with a token
+   encrypted under the new key. Until they do, their first request fails.
+
+Tell your tenants before the restart, not after. Nothing else in this guide changes for an
+upgrade — steps 1 and 4 are one-time setup, and `npm ci && npm run build && systemctl restart
+adspilot` is the rest of it.
+
 ## Prerequisites
 
 | Requirement | Why it's non-negotiable |
@@ -74,6 +113,14 @@ PORT=8787
 > named `example.com   # required`, nothing matches, and **all MCP traffic returns 403**
 > — a failure that is genuinely hard to diagnose.
 > Verify with: `systemctl show adspilot -p Environment`
+
+> **`ADSPILOT_MASTER_KEY` is either exactly 64 hex characters or a non-hex passphrase.**
+> The value is trimmed before use (a trailing newline from a secret file is harmless), and
+> a hex-only value whose length is not 64 is **refused at startup** rather than silently
+> treated as a passphrase — that silent fallback derived a different key, so nothing in the
+> database could be decrypted while the process still reported itself healthy. Passphrases
+> are stretched with scrypt; the minimum length (32 characters) is enforced on the trimmed
+> value, so padding with spaces does not get past it.
 
 > **`ADSPILOT_MASTER_KEY` is unrecoverable.** Lose it and every stored refresh token
 > becomes undecryptable. Back it up separately from the database — if both are stolen

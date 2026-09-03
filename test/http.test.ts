@@ -341,18 +341,43 @@ test("İNSAN oturumuyla ayar değişir ve MCP tarafına ANINDA yansır", async (
   assert.equal(kaydet.status, 200);
   assert.match(await kaydet.text(), /yazma KAPALI/);
 
-  // 3) The MCP side must observe the new setting immediately — no stale context
+  /**
+   * 3) The MCP side must observe the new setting immediately — no stale context.
+   *
+   * Ölçüm limits KAYNAĞINDAN değil, kelepçenin GERÇEKTEN uygulandığı yazma yolundan
+   * alınıyor. Kaynak artık hesabın erişilebilirliğini kanıtlamadan kelepçe raporu
+   * yayınlamıyor (doğrulanmamış bir hesap için "yazmaIzni: true, tavan: 500" demek
+   * yetkili görünüşlü bir yalandı) ve bu testin kimlik bilgileri sahte, Google'a çıkış
+   * yok. Yazma yolu ise Google'a hiç dokunmadan reddediyor: burada ölçülen şey ayarın
+   * yansıması olmakla kalmıyor, ayarın UYGULANDIĞI da oluyor.
+   */
   const init = await mcp(apiKey, INIT);
   const sid = init.headers.get("mcp-session-id")!;
   await mcp(apiKey, { jsonrpc: "2.0", method: "notifications/initialized" }, sid);
-  const kaynak = await mcp(
-    apiKey,
-    { jsonrpc: "2.0", id: 5, method: "resources/read", params: { uri: `adspilot://accounts/${1466231519}/limits` } },
-    sid
-  );
-  const govde = await kaynak.text();
-  assert.match(govde, /\\"gunlukButceTavani\\": 25|"gunlukButceTavani": 25/, "yeni tavan MCP'ye yansımalı");
-  assert.match(govde, /\\"yazmaIzni\\": false|"yazmaIzni": false/, "yazma kapalı görünmeli");
+  const kampanyaCagrisi = (id: number, dailyBudget: number) => ({
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: {
+      name: "create_search_campaign",
+      arguments: { customerId: "1466231519", name: "T", dailyBudget, keywords: ["a"], countryCodes: ["TR"] },
+    },
+  });
+
+  const yazmaKapali = await mcp(apiKey, kampanyaCagrisi(5, 10), sid);
+  assert.match(await yazmaKapali.text(), /devre dışı/, "yazma kapatması MCP'ye ANINDA yansımalı");
+
+  // Yazmayı aç, tavanı 25'te bırak: tavanın da yansıdığı reddin METNİNDEN okunuyor.
+  const acik = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
+    body: "tavan=25&yazma=1",
+  });
+  assert.equal(acik.status, 200);
+  const tavanUstu = await mcp(apiKey, kampanyaCagrisi(6, 30), sid);
+  const ret = await tavanUstu.text();
+  assert.match(ret, /güvenlik tavanının \(25\)/, "yeni tavan MCP'ye yansımalı");
+  assert.doesNotMatch(ret, /\(500\)/, "eski/varsayılan tavan servis edilmemeli");
 });
 
 test("geçersiz tavan reddedilir (yazım hatası emniyeti)", async () => {
@@ -377,4 +402,69 @@ test("/health kimliksiz çalışır (izleme için)", async () => {
   const r = await fetch(`${BASE}/health`);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).ok, true);
+});
+
+/**
+ * BAŞLANGIÇ KAPISI: zayıf ana anahtarla süreç AYAĞA KALKMAZ.
+ *
+ * NEDEN: bu eşiğin (min 32 karakter) iki kopyası da — store.ts ve http.ts — silindiğinde
+ * tüm test paketi yeşil kalıyordu. Eşik düşerse kısa bir parola sabit tuzla geçerli bir
+ * AES anahtarı üretir ve DB dosyasını ele geçiren biri sözlük saldırısıyla tüm refresh
+ * token'ları çözer. Ayrıca uzunluk artık KIRPILMIŞ değer üzerinde ölçülüyor: "30 karakter
+ * + iki boşluk" eskiden bu kapıdan geçip ilk kullanıcıda patlıyordu, yani kapalı arıza
+ * açılışta değil, sağlık yeşile döndükten SONRA gerçekleşiyordu.
+ */
+async function zayifAnahtarlaBaslat(anahtar: string): Promise<{ kod: number | null; stderr: string }> {
+  const yalitikDB = join(tmpdir(), `adspilot-zayif-${process.pid}-${Math.random().toString(36).slice(2)}.db`);
+  const p = spawn(process.execPath, ["--import", "tsx", "src/http.ts"], {
+    // Port BİLEREK farklı: aynı portu kullansaydık EADDRINUSE de sıfırdan farklı kod
+    // verirdi ve test, anahtar kapısı hiç koşmasa bile yeşil kalırdı.
+    env: {
+      ...process.env,
+      PORT: String(PORT + 1),
+      ADSPILOT_PUBLIC_URL: `http://localhost:${PORT + 1}`,
+      ADSPILOT_DB: yalitikDB,
+      ADSPILOT_MASTER_KEY: anahtar,
+      GOOGLE_ADS_DEVELOPER_TOKEN: "sahte-token",
+      GOOGLE_ADS_CLIENT_ID: "sahte-client-id",
+      GOOGLE_ADS_CLIENT_SECRET: "sahte-secret",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  p.stderr?.on("data", (d) => {
+    stderr += String(d);
+  });
+  const kod = await new Promise<number | null>((r) => {
+    const zamanlayici = setTimeout(() => {
+      p.kill();
+      r(null); // ayakta kaldı = kapı geçirdi
+    }, 20_000);
+    p.once("exit", (c) => {
+      clearTimeout(zamanlayici);
+      r(c);
+    });
+  });
+  for (const ek of ["", "-wal", "-shm"]) {
+    try {
+      rmSync(yalitikDB + ek, { force: true });
+    } catch {
+      /* file still locked on Windows */
+    }
+  }
+  return { kod, stderr };
+}
+
+test("ZAYIF ANA ANAHTAR: 8 karakterlik anahtarla süreç sıfırdan farklı kodla çıkar", async () => {
+  const { kod, stderr } = await zayifAnahtarlaBaslat("kisa1234");
+  assert.notEqual(kod, 0, "zayıf anahtarla ayağa kalkmamalı");
+  assert.notEqual(kod, null, "süreç ayakta kalmamalı — kapı geçirmiş demektir");
+  assert.match(stderr, /ADSPILOT_MASTER_KEY/, "hangi değişkenin sorunlu olduğu söylenmeli");
+  assert.doesNotMatch(stderr, /kisa1234/, "anahtarın kendisi loga yazılmamalı");
+});
+
+test("ZAYIF ANA ANAHTAR: boşlukla 32'ye tamamlanan anahtar da REDDEDİLİR", async () => {
+  const { kod } = await zayifAnahtarlaBaslat(`  ${"k".repeat(30)}  `);
+  assert.notEqual(kod, 0, "kırpılmış uzunluk 30 — eşik boşlukla atlatılamamalı");
+  assert.notEqual(kod, null, "süreç ayakta kalmamalı");
 });

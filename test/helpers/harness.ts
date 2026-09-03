@@ -66,8 +66,23 @@ export interface Kayit {
 export function sahteContext(opts: SahteAyar = {}): { ctx: any; rec: Kayit } {
   const rec: Kayit = { mutations: [], queries: [], customerIds: [] };
 
+  /**
+   * Konserve satırlar GAQL'deki LIMIT'e UYULARAK döner.
+   *
+   * NEDEN: sahte API limiti yok sayarsa, üretimde ÖLÇÜLEMEYEN bir şey testte ölçülebilir
+   * görünür. Kırpma tespitinin tek mekanizması `LIMIT tavan+1` doyma probudur: gerçek
+   * Google `LIMIT 200` için en fazla 200 satır döndürür, dolayısıyla `rows.length > 200`
+   * ancak sorgu 201 istediyse true olabilir. Limitsiz sahte API'de bu prob koddan
+   * silinse bile satır sayısı tavanı aştığı için testler yeşil kalıyordu — yani
+   * türeyen boolean test ediliyordu, onu besleyen SORGU değil.
+   * Aynı disiplin adsClient sahte API'sinde de uygulanır (test/adsClient.test.ts).
+   */
   const yanit = (gaql: string): any[] => {
-    for (const [re, rows] of opts.queries ?? []) if (re.test(gaql)) return rows;
+    for (const [re, rows] of opts.queries ?? []) {
+      if (!re.test(gaql)) continue;
+      const limit = Number(/LIMIT\s+(\d+)/i.exec(gaql)?.[1] ?? rows.length);
+      return rows.slice(0, limit);
+    }
     return [];
   };
 

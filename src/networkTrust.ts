@@ -1034,8 +1034,15 @@ function ulkeNormalize(ham: string | undefined): string | undefined {
  * Masks all but the edges of the approver number, so prompts never leak it in full.
  * The guard covers up to 6 characters: at 5–6 the head and tail slices would overlap
  * and reveal every digit.
+ *
+ * DIŞA AÇIK OLMASININ TEK SEBEBİ TESTTİR: bu kelepçenin bekçisi yoktu, çünkü depodaki
+ * her `approverPhone` fikstürü 13 karakterlik tek bir biçim kullanıyor ve kelepçe
+ * düşerse yalnız KISA numaralarda kırılıyor — uzunluk 6'da girdinin tamamı açığa çıkar,
+ * 5'te `"*".repeat(-1)` RangeError fırlatır. Bu çıktı hem istem kanıt satırına, hem
+ * karar günlüğüne, hem de ajana dönen ret metnine giriyor ve ajan yolunda ikinci bir
+ * maskeleme katmanı yok: buradaki sessiz bir gerileme ham numarayı doğrudan sızdırır.
  */
-function maskele(phone: string): string {
+export function maskele(phone: string): string {
   return phone.length <= 6 ? "***" : phone.slice(0, 4) + "*".repeat(phone.length - 6) + phone.slice(-2);
 }
 

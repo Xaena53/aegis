@@ -252,6 +252,11 @@ export function kampanyaDurumu(ham: unknown): { durum?: MetaOkunanDurum; not?: s
  * PARAMETRESİDİR — yani ham gövdeyi olduğu gibi göstermek token'ı ajana (ve çalınmış bir
  * oturuma) vermek olurdu. Aynı ders CAMARA tarafında da yaşandı; burada baştan uygulanır.
  */
+/** Bir istisnadan metin çıkarır — `String(e)` ile aynı, ama tek yerde. */
+function hataMetni(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function hataTemizle(ham: string, token?: string): string {
   let s = ham.replace(/access_token=[^&\s"']+/gi, "access_token=***");
   if (token && token.length >= 8) s = s.split(token).join("***");
@@ -322,7 +327,16 @@ async function reklamSetiButcesi(
       "GET"
     );
   } catch (e) {
-    return { not: `reklam setleri okunamadı (${e instanceof Error ? e.message : String(e)})` };
+    /**
+     * SEBEP AJANA GİDER, AMA HAM GİTMEZ.
+     *
+     * Bu not `butceNotu` olarak set_meta_campaign_status'ün ret metnine giriyor, yani
+     * doğrudan ajanın gördüğü yüzeye. `graf` yalnız HTTP hatalarını temizliyordu; 200 +
+     * JSON olmayan gövdede atılan SyntaxError'ın mesajı UPSTREAM GÖVDENİN ÖNEKİNİ taşır
+     * ve buradan maskesiz, tavansız geçerdi. hataTemizle hem access_token'ı hem jetonun
+     * kendisini siler, hem de 300 karakterde keser.
+     */
+    return { not: `reklam setleri okunamadı (${hataTemizle(hataMetni(e), ayar.metaToken)})` };
   }
 
   const setler = Array.isArray(yanit?.data) ? yanit.data : undefined;
@@ -455,8 +469,10 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
        * Ağ arızası ile "alan gelmedi" AYNI SONUCU doğurur (çarpan bilinmiyor), bu yüzden
        * aynı cümleyle bildirilir: ret mesajını okuyan operatör tek bir sebep arar.
        */
+      // Bu mesaj da `butceNotu` üzerinden ajana ulaşıyor: ham upstream metni
+      // hataTemizle'siz taşımak jetonu ve gövde önekini ajana vermek olurdu.
       throw new Error(
-        `Meta hesabının para birimi okunamadı (${e instanceof Error ? e.message : String(e)})`
+        `Meta hesabının para birimi okunamadı (${hataTemizle(hataMetni(e), ayar.metaToken)})`
       );
     }
     const cozum = paraBirimiCoz(govde);
@@ -511,7 +527,9 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
       try {
         carpan = (await paraBirimiAl()).carpan;
       } catch (e) {
-        return { ...temel, butceNotu: e instanceof Error ? e.message : String(e) };
+        // Savunma derinliği: kaynaktaki metin zaten temizlenmiş olsa da bu sınır
+        // ajana bakıyor, dolayısıyla temizlik burada da uygulanır.
+        return { ...temel, butceNotu: hataTemizle(hataMetni(e), ayar.metaToken) };
       }
 
       const kampanyaDuzeyi = minorTutar(c?.daily_budget);

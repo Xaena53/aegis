@@ -46,7 +46,7 @@ Set these in `.env` (never baked into the image — `.dockerignore` excludes it)
 |---|---|---|
 | `GOOGLE_ADS_DEVELOPER_TOKEN` | yes | From the Google Ads MCC API Center. |
 | `GOOGLE_ADS_CLIENT_ID` / `GOOGLE_ADS_CLIENT_SECRET` | yes | OAuth **Web application** client for hosted mode. |
-| `ADSPILOT_MASTER_KEY` | yes | Min 32 chars; encrypts stored refresh tokens. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Unrecoverable if lost. |
+| `ADSPILOT_MASTER_KEY` | yes | Encrypts stored refresh tokens. Either **exactly 64 hex characters** (what the generator below prints) or a **non-hex passphrase of 32+ characters** — a hex-only value of any *other* length (e.g. the 32 hex characters of `openssl rand -hex 16`) is refused at startup rather than silently stretched into a different key. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Unrecoverable if lost. Upgrading an install that already runs a hex-but-not-64 key: read the upgrade note in `deploy/README.md` **before** pulling. |
 | `ADSPILOT_PUBLIC_URL` | recommended | Externally visible URL; Host/Origin validation and OAuth redirects derive from it. Compose defaults it to `http://localhost:8787`. |
 | `PORT` | no | Image default **8787**. Compose pins it — change the *left* side of the port mapping instead. |
 | `ADSPILOT_DB` | no | Image default `/data/adspilot.db` (persistent volume). Don't point it elsewhere. |

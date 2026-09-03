@@ -142,3 +142,28 @@ test("tamamlama API hatasında sessizce boş döner (kullanıcıyı bloklamaz)",
   });
   assert.deepEqual(res.completion.values, []);
 });
+
+test("KRİTİK: tamamlama 20'de sessizce kesmez — sayıyı SDK dürüstçe bildirir", async () => {
+  /**
+   * Eski hâlde tamamlama listesi kaynakta slice(0, 20) ile kesiliyordu. SDK `total` ve
+   * `hasMore` değerlerini KENDİSİNE verilen diziden üretir: 25 eşleşen hesabı olan
+   * kullanıcıya "total: 20, hasMore: false" deniyordu — yani sayı da yalandı, listenin
+   * eksik olduğu da görünmüyordu. Kırpmayı SDK yapınca ikisi de doğru bildiriliyor.
+   */
+  const cocuklar = Array.from({ length: 25 }, (_, i) => ({
+    customer_client: { id: 1400000000 + i, descriptive_name: `Alt ${i}`, manager: false },
+  }));
+  const { ctx } = sahteContext({
+    queries: [
+      [/FROM customer\b/, [{ customer: { descriptive_name: "MCC", manager: true } }]],
+      [/FROM customer_client/, cocuklar],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.complete({
+    ref: { type: "ref/prompt", name: "israf-bul" },
+    argument: { name: "customerId", value: "14" },
+  });
+  assert.equal(res.completion.values.length, 25, "20'de sessiz kesme kullanıcının hesabını gizliyordu");
+  assert.equal(res.completion.total, 25, "bildirilen sayı gerçek eşleşme sayısı olmalı");
+});

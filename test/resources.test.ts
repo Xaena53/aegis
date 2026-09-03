@@ -49,13 +49,65 @@ test("adspilot://accounts alt hesapları düzleştirir ve MCC'yi işaretler", as
   const { ham, mime } = await oku(c, "adspilot://accounts");
   assert.equal(mime, "application/json");
   const veri = JSON.parse(ham);
-  assert.equal(veri.toplam, 2);
+  assert.equal(veri.gosterilen, 2);
+  assert.equal(veri.tamListeMi, true, "her şey okunduysa liste TAM ilan edilmeli");
   assert.match(veri.hesaplar.find((h: any) => h.id === "1234567890").tur, /yönetici/);
   assert.equal(veri.hesaplar.find((h: any) => h.id === "1466231519").tur, "reklam hesabı");
+  assert.equal(veri.toplam, undefined, "kesin sayı iddiası taşıyan 'toplam' alanı kalkmalı");
+});
+
+test("KRİTİK: kaynak okunamayan hesabı GİZLEMEZ, liste EKSİK ilan edilir", async () => {
+  /**
+   * Aynı sunucunun list_accounts aracı bu hesap için "ERİŞİLEMEDİ" derken kaynak onu
+   * hiç yokmuş gibi gösteriyor ve kalan tek hesabı "toplam: 1" diye kesin sayı olarak
+   * sunuyordu. Ajan bunu "kullanıcının tek hesabı var" diye okur ve aranan hesap için
+   * "öyle bir hesabınız yok" der.
+   */
+  const { ctx } = sahteContext({
+    hesaplar: ["5346956094", "1466231519"],
+    okunamayanHesaplar: ["5346956094"],
+    queries: [[/FROM customer\b/, [{ customer: { descriptive_name: "Reklam Hesabı", manager: false } }]]],
+  });
+  const c = await baglanti(ctx);
+  const veri = JSON.parse((await oku(c, "adspilot://accounts")).ham);
+
+  const okunamayan = veri.hesaplar.find((h: any) => h.id === "5346956094");
+  assert.ok(okunamayan, "okunamayan hesap listeden düşmemeli");
+  assert.equal(okunamayan.erisilemedi, true);
+  assert.match(okunamayan.tur, /bilinmiyor/, "yöneticiliği bilinmiyorken 'reklam hesabı' denemez");
+  assert.equal(veri.tamListeMi, false, "eksik liste TAM diye sunulamaz");
+  assert.match(veri.not, /LİSTE EKSİK/);
+  assert.match(veri.not, /okunamadı/);
+});
+
+test("KRİTİK: kırpılmış alt hesap listesi kaynakta EKSİK olarak duyurulur", async () => {
+  /**
+   * 101 alt hesaplı MCC'de kaynak "toplam 101" diyordu; kullanıcının aradığı hesap
+   * listede olmadığında ajan "böyle bir hesabınız yok" sonucuna varıyordu.
+   */
+  const cocuklar = Array.from({ length: 102 }, (_, i) => ({
+    customer_client: { id: 2000000000 + i, descriptive_name: `Alt ${i}`, manager: false },
+  }));
+  const { ctx } = sahteContext({
+    queries: [
+      [/FROM customer\b/, [{ customer: { descriptive_name: "Büyük MCC", manager: true } }]],
+      [/FROM customer_client/, cocuklar],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const veri = JSON.parse((await oku(c, "adspilot://accounts")).ham);
+  assert.equal(veri.tamListeMi, false, "kırpma da bir eksikliktir");
+  assert.match(veri.not, /kırpıldı/);
+  assert.match(veri.not, /1234567890/, "hangi MCC'nin listesi kesildiği yazmalı");
 });
 
 test("limits kaynağı kullanıcının GERÇEK kelepçelerini yansıtır", async () => {
-  const { ctx } = sahteContext({ writeEnabled: false, maxDailyBudget: 42 });
+  const { ctx } = sahteContext({
+    writeEnabled: false,
+    maxDailyBudget: 42,
+    // Kelepçe raporu artık hesabın okunabildiğini KANITLAMADAN yayınlanmıyor.
+    queries: [[/FROM customer\b/, [{ customer: { id: 1466231519 } }]]],
+  });
   const c = await baglanti(ctx);
   const { ham } = await oku(c, "adspilot://accounts/1466231519/limits");
   const veri = JSON.parse(ham);
@@ -63,6 +115,43 @@ test("limits kaynağı kullanıcının GERÇEK kelepçelerini yansıtır", async
   assert.equal(veri.gunlukButceTavani, 42);
   assert.ok(veri.kurallar.some((k: string) => /PAUSED/.test(k)));
   assert.ok(veri.kurallar.some((k: string) => /ajan kendi limitini değiştiremez/.test(k)));
+});
+
+test("KRİTİK: limits kaynağı 10 haneli olmayan kimliği REDDEDER", async () => {
+  /**
+   * Şablon gelen metni hiç sormadan geri yazıyordu: 'bu-hesap-yok' ile gerçek bir hesap
+   * AYNI gövdeyi alıyordu. /guvenlik-durumu istemi ajana "tahmin etme, kaynağa bak"
+   * derken kaynak, var olmayan bir hesap için yazma izni ve tavan beyan ediyordu.
+   */
+  const { ctx, rec } = sahteContext({ queries: [[/FROM customer\b/, [{ customer: { id: 1 } }]]] });
+  const c = await baglanti(ctx);
+  for (const kotu of ["bu-hesap-yok", "123", "146623151900"]) {
+    await assert.rejects(
+      () => oku(c, `adspilot://accounts/${kotu}/limits`),
+      /10 hanelidir/,
+      `'${kotu}' kelepçe raporu üretmemeli`
+    );
+  }
+  assert.equal(rec.queries.length, 0, "biçim reddi API'ye hiç çıkmamalı");
+});
+
+test("KRİTİK: erişimi doğrulanamayan hesap için kelepçe alanları HİÇ yazılmaz", async () => {
+  /**
+   * Bilinmeyen = RET. Hesap okunamıyorsa "yazmaIzni" ve "gunlukButceTavani" alanlarını
+   * yazmak, ajanın o hesap üzerinde yazma yetkisi olduğunu sanmasına yol açar.
+   */
+  const { ctx } = sahteContext({ okunamayanHesaplar: ["1466231519"] });
+  const c = await baglanti(ctx);
+  await assert.rejects(() => oku(c, "adspilot://accounts/1466231519/limits"), (e: any) => {
+    const m = String(e?.message ?? "");
+    assert.doesNotMatch(m, /yazmaIzni|gunlukButceTavani/, "ret metninde bile kelepçe beyanı olmamalı");
+    return /okunamadı|erişim|izin|permission/i.test(m);
+  });
+
+  // Sorgusu patlamayan ama satır DÖNDÜRMEYEN hesap da "bilinmiyor"dur, "temiz" değil.
+  const { ctx: bos } = sahteContext({ queries: [[/FROM customer\b/, []]] });
+  const c2 = await baglanti(bos);
+  await assert.rejects(() => oku(c2, "adspilot://accounts/1466231519/limits"), /doğrulanamadı/);
 });
 
 test("campaigns kaynağı enum'ları ada çevirir ve micros'u böler", async () => {
@@ -138,4 +227,111 @@ test("customerId şablon değişkeni için otomatik tamamlama çalışır", asyn
     argument: { name: "customerId", value: "14" },
   });
   assert.deepEqual(res.completion.values, ["1466231519"], "MCC elenmiş, alt hesap önerilmiş olmalı");
+});
+
+test("kaynak tamamlaması API hatasında sessizce boş döner (kullanıcıyı bloklamaz)", async () => {
+  /**
+   * prompts.test.ts'teki bekçinin kaynak tarafındaki eşi. Tamamlama yolu yalnız sağlıklı
+   * bağlamda test edildiğinde, catch bloğu kaldırılsa bile hiçbir test kızarmıyordu:
+   * tamamlama artık boş dizi yerine PROTOKOL HATASI döndürürdü ve istemci arayüzü
+   * kullanıcıya hata basardı.
+   */
+  const ctx: any = {
+    config: { writeEnabled: true, maxDailyBudget: 500 },
+    listAccessibleCustomers: async () => {
+      throw new Error("kimlik yok");
+    },
+    tumHesaplar: async () => {
+      throw new Error("kimlik yok");
+    },
+    queryWithRetry: async () => [],
+    mutateWithRetry: async (fn: any) => fn(),
+    getCustomer: () => ({}),
+  };
+  const c = await baglanti(ctx);
+  for (const uri of ["adspilot://accounts/{customerId}/campaigns", "adspilot://accounts/{customerId}/limits"]) {
+    const res: any = await c.complete({
+      ref: { type: "ref/resource", uri },
+      argument: { name: "customerId", value: "1" },
+    });
+    assert.deepEqual(res.completion.values, [], `${uri} tamamlaması hata fırlatmamalı`);
+  }
+});
+
+test("KRİTİK: tamamlama detayı OKUNAMAYAN hesabı önermez", async () => {
+  /**
+   * Okunamayan hesabın yönetici olup olmadığı BİLİNMİYOR. Öneri listesine koymak,
+   * ajanı her çağrısı USER_PERMISSION_DENIED ile dönecek bir hesaba yönlendirir —
+   * "bilinmiyor" ile "kullanılabilir" aynı şey değildir.
+   */
+  const { ctx } = sahteContext({
+    hesaplar: ["5346956094", "1466231519"],
+    okunamayanHesaplar: ["5346956094"],
+    queries: [[/FROM customer\b/, [{ customer: { descriptive_name: "Reklam Hesabı", manager: false } }]]],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.complete({
+    ref: { type: "ref/resource", uri: "adspilot://accounts/{customerId}/campaigns" },
+    argument: { name: "customerId", value: "" },
+  });
+  assert.deepEqual(res.completion.values, ["1466231519"], "yalnız okunabilen reklam hesabı önerilmeli");
+});
+
+test("kampanyalar kaynağı: okunamayan günlük bütçe 0 diye KATALOGA GİRMEZ", async () => {
+  /**
+   * Kaynak `Number(amount_micros ?? 0) / 1e6` yazıyordu: bütçesi okunamayan YAYINDAKİ bir
+   * kampanya kataloğa "gunlukButce: 0" diye giriyor, /kampanya-denetle ajanı bunu
+   * "bütçesiz kalmış" diye okuyor ve hesap toplamlarını eksik çıkarıyordu. Aynı sözleşme
+   * write.ts'te para hareketini durduruyor; okuma yüzeyinde de bilinmiyor ≠ 0.
+   */
+  const { ctx } = sahteContext({
+    queries: [
+      [
+        /FROM campaign/,
+        [
+          {
+            campaign: {
+              id: 7,
+              name: "Bütçesi Okunamayan",
+              status: enums.CampaignStatus.ENABLED,
+              advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+            },
+            campaign_budget: { amount_micros: null },
+          },
+          {
+            campaign: {
+              id: 8,
+              name: "Alanı Hiç Gelmeyen",
+              status: enums.CampaignStatus.PAUSED,
+              advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+            },
+          },
+          {
+            campaign: {
+              id: 9,
+              name: "Sağlam",
+              status: enums.CampaignStatus.ENABLED,
+              advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+            },
+            campaign_budget: { amount_micros: 50_000_000 },
+          },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const veri = JSON.parse((await oku(c, "adspilot://accounts/1234567890/campaigns")).ham);
+  const [bosDeger, alanYok, saglam] = veri.kampanyalar;
+
+  for (const k of [bosDeger, alanYok]) {
+    assert.equal(k.gunlukButce, undefined, "okunamayan bütçe JSON'a hiç yazılmamalı");
+    assert.equal(k.butceOkunamadi, true, "okur bilinmediğini görebilmeli");
+  }
+  assert.equal(saglam.gunlukButce, 50, "okunabilen bütçe eskisi gibi yazılır");
+  assert.equal(saglam.butceOkunamadi, undefined, "sağlam satıra gereksiz bayrak konmaz");
+  assert.doesNotMatch(
+    JSON.stringify(veri.kampanyalar.slice(0, 2)),
+    /"gunlukButce": ?0/,
+    "sıfır bütçe iddiası kataloga giremez"
+  );
 });

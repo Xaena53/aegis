@@ -17,6 +17,7 @@ import {
   cleanId,
   ISO_NUMERIC,
   toMicrosInt,
+  mikrodanTutar,
   budgetGuard as budgetGuardPure,
 } from "../util.js";
 
@@ -39,22 +40,11 @@ function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: num
   return budgetGuardPure(amount, ctx.config.maxDailyBudget);
 }
 
-/**
- * Google Ads `amount_micros` → hesabın para birimindeki günlük tutar (denetim izi için).
- *
- * KAPALI ARIZA OKUMA: yalnız gerçekten sayıya dönen bir değer tutar sayılır. `Number(null)`
- * ve `Number("")` sıfır ürettiği için tip önce kontrol edilir — okunamayan bir bütçeyi "0"
- * diye kaydetmek, denetçiye "bu kararda ortada para yoktu" demek olurdu. Okunamadıysa
- * undefined döner ve alan JSON'dan tamamen düşer.
- *
- * Micros DEĞİL, para birimi döndürülür: kayda düşen sayı denetçinin okuduğu sayıdır.
+/*
+ * `mikrodanTutar` BURADAN util.ts'E TAŞINDI. Sözleşme burada doğdu (okunamayan bütçe 0
+ * sayılınca 0 her tavanı geçiyordu) ama okuma yüzeyleri kendi `?? 0` kalıplarını
+ * sürdürdüğü için aynı hata raporlarda yaşamaya devam ediyordu; tek tanım, tek davranış.
  */
-function mikrodanTutar(ham: unknown): number | undefined {
-  if (typeof ham !== "number" && typeof ham !== "string") return undefined;
-  const sayi = typeof ham === "string" ? (ham.trim() === "" ? NaN : Number(ham)) : ham;
-  if (!Number.isFinite(sayi) || sayi < 0) return undefined;
-  return sayi / 1e6;
-}
 
 /**
  * Live-campaign guard. Adding an ad or a keyword to a serving campaign starts

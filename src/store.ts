@@ -25,6 +25,48 @@ export interface StoredUser {
 let cachedMasterKey: Buffer | undefined;
 
 /**
+ * KDF TUZU VE ASGARİ UZUNLUK ÇİVİLENMİŞTİR.
+ *
+ * Sabitler burada duruyor ki testler onları koddan değil, kendi hesapladıkları
+ * bilinen-cevapla karşılaştırsın: tuz ya da uzunluk değişirse üretimdeki HER
+ * refresh_token_enc çözülemez hâle gelir, ama bu tür bir değişiklik derlemeyi de
+ * testleri de kendiliğinden kırmaz. Kıran şey, bu değerlere bağlı sabit fikstürdür.
+ */
+const ANAHTAR_TUZU = "adspilot-token-encryption-v1";
+const ANAHTAR_ASGARI_UZUNLUK = 32;
+const ANAHTAR_BAYT = 32;
+
+/**
+ * Ana anahtarın METİN hâli — KIRPILMIŞ.
+ *
+ * NEDEN KIRPMA ŞART: anahtar çoğu kurulumda bir secret dosyasından ya da `docker
+ * secret`ten gelir ve sondaki tek bir yeni satır, 64-hex düzenini bozup aynı anahtarı
+ * parola (scrypt) dalına düşürür. Sonuç sessiz felakettir: süreç açılır, hiçbir hata
+ * vermez, ama depodaki hiçbir satır çözülemez ve sıcak yedek de bozulur.
+ *
+ * HTTP TARAFI NEDEN BURAYI ÇAĞIRIYOR: aynı metin HMAC imzalarında da kullanılıyor
+ * (http.ts oturum/state çerezleri) ve orası eskiden `process.env.ADSPILOT_MASTER_KEY ?? ""`
+ * diyordu. İmzalama ve doğrulama aynı ifadeyi kullandığı için bu kendi içinde TUTARLIYDI —
+ * kırpma farkı oradaki imzaları hiç bozmazdı, o gerekçe yanlıştı. Gerçek kazanç daha küçük
+ * ve başka yerde: `?? ""` yedeği, anahtar hiç yokken çerezleri BOŞ DİZEYLE imzalardı, yani
+ * herkesin bilebileceği bir anahtarla. Buradan geçince böyle bir durum sessizce imzalamak
+ * yerine fırlatır. Bu yol bugün açılışta zaten kapalı (http.ts:validateHostedEnv modül
+ * yüklenirken koşuyor ve eksik anahtarda süreci öldürüyor), dolayısıyla ortak giriş noktası
+ * bir bekçi değil, savunma derinliğidir — ve kaynak-düzeyi bir bekçiyle korunur
+ * (test/kaynakHijyeni.test.ts: imza yollarında ham env okunmaz).
+ */
+export function masterKeyText(): string {
+  const kirpik = process.env.ADSPILOT_MASTER_KEY?.trim() ?? "";
+  if (kirpik.length < ANAHTAR_ASGARI_UZUNLUK) {
+    throw new Error(
+      `ADSPILOT_MASTER_KEY eksik ya da ${ANAHTAR_ASGARI_UZUNLUK} karakterden kısa — hosted mod token şifrelemesi için zorunlu. ` +
+        "Üretmek için: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
+  }
+  return kirpik;
+}
+
+/**
  * Encryption key derivation:
  * - 64 hex characters (recommended, machine-generated) → used directly as the 32-byte key
  * - anything else (a human-chosen passphrase) → derived with scrypt; plain SHA-256 is too
@@ -32,23 +74,59 @@ let cachedMasterKey: Buffer | undefined;
  * The fixed salt is deliberate: there is a single application secret, so there is no
  * cross-user rainbow-table exposure, and keeping a salt in the database would complicate
  * key rotation for no gain.
+ *
+ * SHA-256'ya (ya da başka ucuz bir özete) düşmek burada bir hız iyileştirmesi DEĞİL,
+ * güvenlik kaybıdır: parola tipi bir anahtarda tahmin başına maliyet ~23.000 kat düşer
+ * ve DB dosyası sızdığında parola çevrimdışı denenip tüm kiracıların refresh token'ları
+ * çözülür. Bu yüzden algoritma+tuz+uzunluk üçlüsü testte bilinen-cevapla çivilenmiştir.
+ *
+ * SALT HEX AMA 64 DEĞİLSE RET: "64 hex" ile "parola" arasındaki seçim sessizce
+ * yapılamaz. Kırpılmış/eklenmiş bir makine anahtarı (63 ya da 65 hex) parola dalına
+ * düşerdi ve operatör doğru anahtarı verdiğini sanarak hiçbir satırı açamazdı —
+ * "bilinmiyor" ile "temiz" aynı şey değildir, o yüzden açıkça reddedilir.
  */
-function masterKey(): Buffer {
-  if (cachedMasterKey) return cachedMasterKey;
-  const raw = process.env.ADSPILOT_MASTER_KEY;
-  if (!raw || raw.length < 32) {
+export function deriveMasterKey(ham: string): Buffer {
+  const kirpik = ham.trim();
+  if (kirpik.length < ANAHTAR_ASGARI_UZUNLUK) {
     throw new Error(
-      "ADSPILOT_MASTER_KEY eksik ya da 32 karakterden kısa — hosted mod token şifrelemesi için zorunlu. " +
-        "Üretmek için: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+      `ADSPILOT_MASTER_KEY ${ANAHTAR_ASGARI_UZUNLUK} karakterden kısa olamaz (kırpılmış uzunluk: ${kirpik.length}).`
     );
   }
-  cachedMasterKey = /^[0-9a-f]{64}$/i.test(raw)
-    ? Buffer.from(raw, "hex")
-    : scryptSync(raw, "adspilot-token-encryption-v1", 32);
+  if (/^[0-9a-f]{64}$/i.test(kirpik)) return Buffer.from(kirpik, "hex");
+  if (/^[0-9a-f]+$/i.test(kirpik)) {
+    throw new Error(
+      `ADSPILOT_MASTER_KEY yalnız onaltılık karakterlerden oluşuyor ama uzunluğu 64 değil (${kirpik.length}). ` +
+        "Eksik/fazla kopyalanmış bir makine anahtarı, parola olarak türetilirse depodaki hiçbir sır açılamaz. " +
+        "Ya tam 64 hex karakter ver ya da hex olmayan bir parola kullan."
+    );
+  }
+  return scryptSync(kirpik, ANAHTAR_TUZU, ANAHTAR_BAYT);
+}
+
+function masterKey(): Buffer {
+  if (cachedMasterKey) return cachedMasterKey;
+  const kirpik = masterKeyText();
+  cachedMasterKey = deriveMasterKey(kirpik);
+  // Hangi dalın koştuğu ÜRETİMDE görünmeli: "anahtarı verdim ama hiçbir şey açılmıyor"
+  // arızasının tek ucuz teşhisi budur (env'de görünmeyen bir boşluk, yanlış uzunluk).
+  console.error(
+    `[adspilot] ana anahtar türetmesi: ${
+      /^[0-9a-f]{64}$/i.test(kirpik) ? "64-hex (doğrudan)" : `parola (scrypt, tuz: ${ANAHTAR_TUZU})`
+    }`
+  );
   return cachedMasterKey;
 }
 
 export function encryptSecret(plain: string): string {
+  /**
+   * BOŞ SIR KAYNAĞINDA REDDEDİLİR.
+   *
+   * Boş düz metin "iv.tag." üretiyordu: kendi decryptSecret'imizin biçim denetiminden
+   * geçemeyen bir paket. Yani depoya yazılabilen ama okunamayan bir satır — ve okuyan
+   * taraf "Şifreli veri bozuk" görüp disk bozulması arardı. Boş bir refresh token zaten
+   * hiçbir işe yaramaz; doğru yer, üretildiği an.
+   */
+  if (plain === "") throw new Error("Boş sır şifrelenemez (kaynakta reddedildi).");
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", masterKey(), iv);
   const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
@@ -56,11 +134,26 @@ export function encryptSecret(plain: string): string {
 }
 
 export function decryptSecret(packed: string): string {
-  const [ivB64, tagB64, dataB64] = packed.split(".");
-  if (!ivB64 || !tagB64 || !dataB64) throw new Error("Şifreli veri bozuk (format).");
-  const decipher = createDecipheriv("aes-256-gcm", masterKey(), Buffer.from(ivB64, "base64"));
-  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64")), decipher.final()]).toString("utf8");
+  /**
+   * BİÇİM DENETİMİ YAPISALDIR, DOĞRULUK TEMELLİ DEĞİL.
+   *
+   * Eskiden yalnız "üç parça da boş değil mi" bakılıyordu; base64 çözümü toleranslı
+   * olduğu için 3 baytlık bir IV ya da 2 baytlık bir etiket denetimden geçip
+   * createDecipheriv'in anlaşılmaz "Unsupported state" hatasına dönüşüyordu. GCM'de
+   * IV 12, etiket 16 bayttır — ölçüsü tutmayan paket bozuktur, tahmin edilmez.
+   */
+  const parcalar = packed.split(".");
+  if (parcalar.length !== 3) throw new Error("Şifreli veri bozuk (format).");
+  const iv = Buffer.from(parcalar[0], "base64");
+  const tag = Buffer.from(parcalar[1], "base64");
+  const veri = Buffer.from(parcalar[2], "base64");
+  if (iv.length !== 12 || tag.length !== 16) throw new Error("Şifreli veri bozuk (format).");
+  // Boş gövde ayrı bir cümleyle bildirilir: operatör disk bozulması değil, sırrı boş
+  // yazan bir içe aktarma/geçiş adımı aramalı.
+  if (veri.length === 0) throw new Error("Şifreli veri boş — bu satıra hiç sır yazılmamış.");
+  const decipher = createDecipheriv("aes-256-gcm", masterKey(), iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(veri), decipher.final()]).toString("utf8");
 }
 
 /** Mints an API key: the plaintext (shown once) plus the hash that gets stored. */
@@ -78,8 +171,22 @@ export class UserStore {
 
   // `||` rather than `??`: `??` lets an empty string through, and DatabaseSync("") silently
   // opens a TEMPORARY database — every restart would then wipe all user tokens without
-  // raising a single error.
-  constructor(path = process.env.ADSPILOT_DB || "adspilot.db") {
+  // raising a single error. `.trim()` aynı kapının ikinci yarısıdır: yalnız boşluktan
+  // oluşan bir ADSPILOT_DB `??`/`||` fark etmeksizin "doğru" görünür ama diske adı
+  // boşluk olan bir dosya açar; o da her yeniden başlatmada kaybolan bir depodur.
+  constructor(path = process.env.ADSPILOT_DB?.trim() || "adspilot.db") {
+    /**
+     * AÇIKÇA VERİLEN BOŞ YOL DA RET. Varsayılan argüman yukarıda korunuyor ama
+     * `new UserStore(kullaniciYolu)` çağıran bir yol boş dize geçirirse aynı sessiz
+     * geçici-veritabanı tuzağına düşerdi: kiracı token'ları her yeniden başlatmada
+     * tek bir hata satırı bile üretmeden silinir. Bilinmeyen yol = RET.
+     */
+    if (!path.trim()) {
+      throw new Error(
+        "Veritabanı yolu boş — DatabaseSync boş yolda GEÇİCİ bir veritabanı açar ve tüm " +
+          "kullanıcı token'ları her yeniden başlatmada sessizce silinirdi. ADSPILOT_DB'ye gerçek bir yol ver."
+      );
+    }
     try {
       this.db = new DatabaseSync(path);
     } catch (e: any) {

@@ -427,3 +427,60 @@ test("KRİTİK: okunamayan değeri anlatan not, ham upstream dizesini ajana TAŞ
   assert.ok(!not.includes(String.fromCharCode(10)), "satır sonu notun kendi cümlesini taklit edemez");
   assert.ok(not.length < 160, `not sınırlı kalmalı (uzunluk: ${not.length})`);
 });
+
+/* ── UPSTREAM HATA METNİ: ajana ham ulaşmaz ───────────────────────────────────── */
+
+/**
+ * NEDEN: `graf` yalnız HTTP HATALARINI hataTemizle'den geçiriyordu. 200 + JSON olmayan
+ * gövdede atılan SyntaxError'ın mesajı UPSTREAM GÖVDENİN ÖNEKİNİ taşır ve o metin
+ * `butceNotu` olarak ajanın gördüğü ret cümlesine giriyordu — jeton maskesi de,
+ * 300 karakterlik tavan da devre dışı. Sınır tam bu tek noktada delikti; mevcut test
+ * yalnız /okunamadı/ eşlediği için mutasyonu görmüyordu.
+ */
+const JETON = "TEST-ONLY-token";
+
+test("reklam seti hatası: jeton ve upstream gövdesi nota HAM geçmez", async () => {
+  __setMetaKanalForTests(undefined);
+  const uzunGovde = "X".repeat(600);
+  globalThis.fetch = (async (url: any) => {
+    const s = String(url);
+    if (s.includes("/adsets")) {
+      // Gerçek dünyadaki karşılığı: 200 + HTML/hata gövdesi → JSON.parse SyntaxError'ı
+      // gövdenin önekini mesajına koyar.
+      throw new Error(`Beklenmeyen yanıt: access_token=${JETON} gövde=${uzunGovde}`);
+    }
+    const govde = s.split("?")[0].endsWith("/act_1") ? USD : kampanyaGovdesi();
+    return { ok: true, text: async () => JSON.stringify(govde) } as any;
+  }) as typeof fetch;
+
+  const c = await metaKanali(AYAR).kampanyaOku(KAMPANYA);
+  const not = String(c.butceNotu);
+
+  assert.equal(c.gunlukButce, undefined, "okunamayan bütçe RET tarafında kalmalı");
+  assert.match(not, /okunamadı/, "sebep yine söylenmeli");
+  assert.ok(!not.includes(JETON), "jeton ajana geçmemeli");
+  assert.ok(!not.includes("access_token=" + JETON), "sorgu parametresi maskelenmeli");
+  assert.ok(!not.includes(uzunGovde), "upstream gövdesi olduğu gibi taşınmamalı");
+  assert.ok(not.length <= 360, `not tavanlı kalmalı (uzunluk: ${not.length})`);
+});
+
+test("para birimi hatası: jeton ve upstream gövdesi nota HAM geçmez", async () => {
+  __setMetaKanalForTests(undefined);
+  const uzunGovde = "Y".repeat(600);
+  globalThis.fetch = (async (url: any) => {
+    const s = String(url);
+    if (s.split("?")[0].endsWith("/act_1")) {
+      throw new Error(`Beklenmeyen yanıt: access_token=${JETON} gövde=${uzunGovde}`);
+    }
+    return { ok: true, text: async () => JSON.stringify(kampanyaGovdesi()) } as any;
+  }) as typeof fetch;
+
+  const c = await metaKanali(AYAR).kampanyaOku(KAMPANYA);
+  const not = String(c.butceNotu);
+
+  assert.equal(c.gunlukButce, undefined);
+  assert.match(not, /para birimi okunamadı/, "sebep yine söylenmeli");
+  assert.ok(!not.includes(JETON), "jeton ajana geçmemeli");
+  assert.ok(!not.includes(uzunGovde), "upstream gövdesi olduğu gibi taşınmamalı");
+  assert.ok(not.length <= 360, `not tavanlı kalmalı (uzunluk: ${not.length})`);
+});

@@ -259,7 +259,10 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
               `Reddedildi: "${mevcut.ad}" kampanyasının günlük bütçesi doğrulanamadı, ` +
                 `dolayısıyla hesap güvenlik tavanına (${ctx.config.maxDailyBudget}) uyup uymadığı ` +
                 `bilinmiyor. Güvenlik gereği doğrulanamayan bütçeyle yayına alınmaz.` +
-                (mevcut.butceNotu ? ` Sebep: ${mevcut.butceNotu}.` : "")
+                // Sebep AJANIN gördüğü metne giriyor; sınırda ikinci kez temizlenir
+                // (jeton maskesi + 300 karakter tavanı). İstemci tarafı da temizliyor:
+                // bu, tek bir çıkışın atlanmasıyla sınırın delinmemesi içindir.
+                (mevcut.butceNotu ? ` Sebep: ${hataTemizle(mevcut.butceNotu, ctx.config.metaToken)}.` : "")
             );
           }
           const tavanHatasiYayin = budgetGuardPure(gunluk, ctx.config.maxDailyBudget);

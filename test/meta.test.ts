@@ -620,3 +620,30 @@ test("Meta reklam hesabı kimliği İNSAN istemine yazılmaya devam eder", async
   assert.equal(istemSayisi, 1);
   assert.match(istemMetinleri[0], new RegExp(HESAP), "insan hangi hesabın parası olduğunu görmeli");
 });
+
+test("KRİTİK: ret sebebi SINIRDA da temizlenir — jeton ve uzunluk tavanı", async () => {
+  /**
+   * Sebep metni istemciden geliyor ve doğrudan AJANIN gördüğü cümleye giriyor. İstemci
+   * tarafı artık temizliyor; ama sınırın tek bir çıkışa güvenmesi, o çıkışın ileride
+   * atlanmasıyla deliniyor demektir (bu bulgu tam da öyle doğdu: `graf` yalnız HTTP
+   * hatalarını temizliyordu, 200 + JSON olmayan gövdenin SyntaxError'ı temizlenmeden
+   * geçiyordu). Bu yüzden ikinci katman burada ölçülür: notu ne verirse versin, ajana
+   * çıkan metinde ne jeton olur ne de sınırsız uzunlukta upstream içeriği.
+   */
+  const uzun = "Z".repeat(600);
+  const c = await kur({
+    onay: true,
+    butceNotu: `okunamadı: access_token=${TOKEN} ve jeton ${TOKEN} ile gövde ${uzun}`,
+  });
+
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  const out = metin(r);
+  assert.match(out, /Reddedildi/, "doğrulanamayan bütçeyle yayına alınmaz");
+  assert.ok(!out.includes(TOKEN), "jeton ajana geçmemeli");
+  assert.ok(!out.includes(uzun), "upstream gövdesi olduğu gibi taşınmamalı");
+  assert.ok(!cagrilar.includes("durumDegistir:ACTIVE"), "ret sonrası Meta'ya çağrı gitmez");
+});

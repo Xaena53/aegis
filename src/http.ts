@@ -14,7 +14,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "./server.js";
 import { AdsContext } from "./adsClient.js";
-import { UserStore, encryptSecret, type StoredUser } from "./store.js";
+import { UserStore, encryptSecret, masterKeyText, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
 import { setRuntimeMode } from "./util.js";
 import { duzMetinKarari, nacAnahtarDilimi, nacConfigFromEnv, parseBool, parseNumEnv } from "./config.js";
@@ -44,8 +44,14 @@ function validateHostedEnv(): void {
   for (const k of ["GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET"]) {
     if (!process.env[k]?.trim()) eksik.push(k);
   }
-  const mk = process.env.ADSPILOT_MASTER_KEY;
-  if (!mk?.trim() || mk.length < 32) eksik.push("ADSPILOT_MASTER_KEY (min 32 karakter)");
+  /**
+   * UZUNLUK KIRPILMIŞ DEĞER ÜZERİNDE ÖLÇÜLÜR. `mk.length` ham değere bakıyordu: 30
+   * karakterlik bir anahtar + iki boşluk bu kapıdan geçiyor, sonra store.ts'in kendi
+   * (kırpan) denetiminde ilk kullanıcıda patlıyordu — yani kapalı arıza AÇILIŞTA değil,
+   * sağlık yeşile döndükten sonra gerçekleşiyordu.
+   */
+  const mk = process.env.ADSPILOT_MASTER_KEY?.trim() ?? "";
+  if (mk.length < 32) eksik.push("ADSPILOT_MASTER_KEY (min 32 karakter)");
   if (eksik.length) {
     console.error(
       `[adspilot-http] BAŞLATILAMADI — eksik/geçersiz yapılandırma:\n  - ${eksik.join("\n  - ")}\n` +
@@ -267,7 +273,13 @@ AGPL-3.0 lisanslıdır: bu servisi kullanan herkes kaynağa erişme hakkına sah
  */
 function signState(nonce: string, ts: number): string {
   const body = `${nonce}.${ts}`;
-  const mac = createHmac("sha256", process.env.ADSPILOT_MASTER_KEY ?? "").update(body).digest("base64url");
+  // HMAC ANAHTARI store.ts'in masterKeyText()'i üzerinden alınır, ham env'den DEĞİL.
+  // Kırpma farkı burada bir arıza değildi (imzalama ve doğrulama aynı ifadeyi kullanıyordu);
+  // kaldırılan şey eski `?? ""` yedeğiydi: anahtar yokken çerezler BOŞ DİZEYLE, yani
+  // herkesin bilebileceği bir anahtarla imzalanırdı. Şimdi böyle bir durumda fırlar.
+  // Bu yola bugün ulaşılamıyor (validateHostedEnv eksik anahtarda süreci açılışta öldürür);
+  // yani bu bir kapı değil, kapının arkasındaki ikinci kilittir.
+  const mac = createHmac("sha256", masterKeyText()).update(body).digest("base64url");
   return `${body}.${mac}`;
 }
 
@@ -295,7 +307,8 @@ const OTURUM_TTL_MS = 2 * 60 * 60_000; // 2 hours
 
 function signSession(userId: number, ts: number): string {
   const body = `${userId}.${ts}`;
-  const mac = createHmac("sha256", process.env.ADSPILOT_MASTER_KEY ?? "").update(`oturum:${body}`).digest("base64url");
+  // Anahtar kaynağı signState ile aynı gerekçeyle masterKeyText(): boş-anahtar yedeği yok.
+  const mac = createHmac("sha256", masterKeyText()).update(`oturum:${body}`).digest("base64url");
   return `${body}.${mac}`;
 }
 
@@ -797,7 +810,7 @@ const BIND = process.env.ADSPILOT_BIND?.trim() || "0.0.0.0";
 const duzMetin = duzMetinKarari({
   bind: BIND,
   publicUrl: PUBLIC_URL,
-  izinVerildi: parseBool(process.env.ADSPILOT_ALLOW_PLAINTEXT, false),
+  izinVerildi: parseBool(process.env.ADSPILOT_ALLOW_PLAINTEXT, false, "ADSPILOT_ALLOW_PLAINTEXT"),
 });
 if (duzMetin.engel) {
   console.error(`[adspilot-http] BAŞLATILAMADI — ${duzMetin.engel}`);

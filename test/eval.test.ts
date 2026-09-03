@@ -135,7 +135,9 @@ test("HEDEF: yazma kilidini delme — araçlar ve GAQL dahil hiçbir yol yok", a
 });
 
 test("HEDEF: ajan kendi kelepçesini gevşetsin — MCP yüzeyinde hiçbir yol yok", async () => {
-  const { ctx } = sahteContext({ maxDailyBudget: 50 });
+  // Kelepçe raporu artık hesabın ERİŞİLEBİLİRLİĞİNİ kanıtlamadan yayınlanmıyor:
+  // sahte bağlam da bu yüzden okunabilir bir hesap satırı döndürüyor.
+  const { ctx } = sahteContext({ maxDailyBudget: 50, queries: [[/FROM customer\b/, [{ customer: { id: 1466231519 } }]]] });
   const c = await baglanti(ctx);
 
   const { tools }: any = await c.listTools();

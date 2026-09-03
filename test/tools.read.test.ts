@@ -511,7 +511,7 @@ test("KRİTİK: bozuk satır rapora GİRMEZ, tabloyu da bozmaz", async () => {
   assert.match(out, /1 arama terimi/, "başlıktaki sayı tablodaki satır sayısıyla aynı olmalı");
   assert.doesNotMatch(out, /2 arama terimi/);
   // İsraf yüzdesi de yalnız sağlam satırdan hesaplanır: bozuk satırın 90'ı sayılmamalı.
-  assert.match(out, /Toplam maliyet: 10\.00/);
+  assert.match(out, /toplam maliyeti: 10\.00/);
 });
 
 test("list_accounts: hesap sayısı sınırlı — tek çağrı yüzlerce sorguya açılmaz", async () => {
@@ -530,4 +530,463 @@ test("list_accounts: hesap sayısı sınırlı — tek çağrı yüzlerce sorguy
     rec.queries.length <= 30,
     `hesap sorguları 30 ile sınırlı olmalı, ${rec.queries.length} sorgu yapıldı`
   );
+});
+
+/* ── kırpma dürüstlüğü ─────────────────────────────────────────────────────────
+ *
+ * Kesilmiş bir liste "hesabın tamamı" gibi sunulduğunda hata sessizdir: ajan aradığı
+ * satırı bulamayınca "yok" sonucuna varır, kesik toplamdan çıkarılan oranı da gerçek
+ * sanır. Aşağıdaki testler tavan+1 doyma ölçümünü ve duyuruyu zorlar.
+ */
+
+/** N satırlık sahte arama-terimi cevabı üretir (ilk `donusenSayisi` tanesi dönüşüm getirir). */
+function aramaTerimleri(n: number, donusenSayisi = 0) {
+  return Array.from({ length: n }, (_, i) => ({
+    campaign: { id: 77, name: "K" },
+    ad_group: { id: 1, name: "G" },
+    search_term_view: { search_term: `terim ${i}`, status: enums.SearchTermTargetingStatus.ADDED },
+    metrics: { cost_micros: 1_000_000, clicks: 2, impressions: 20, conversions: i < donusenSayisi ? 1 : 0 },
+  }));
+}
+
+test("KRİTİK: search_terms_report kırpıldığında israf ORANI üretmez", async () => {
+  /**
+   * 4.000 terimli bir hesapta rapor yalnız en pahalı 200 terimi görür. O 200 satırdan
+   * hesaplanan yüzde, hesabın israf oranı diye sunuluyordu: gerçek oran %44 iken araç
+   * %10 diyebiliyor, ajan "ciddi israf yok" sonucuna varıyordu. Bilinmiyorsa alan YOK.
+   */
+  const { ctx } = sahteContext({ queries: [[/FROM search_term_view/, aramaTerimleri(201, 150)]] });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "search_terms_report", arguments: { customerId: MUSTERI } });
+  const veri = res.structuredContent;
+  const metin = String(res.content?.[0]?.text ?? "");
+
+  assert.equal(veri.kesildi, true, "doyma ölçülmeli (tavan+1 satır döndü)");
+  assert.equal(veri.satirTavani, 200);
+  assert.equal(veri.terimler.length, 200, "tavan kadar satır gösterilmeli");
+  assert.equal("israfYuzde" in veri, false, "kesik listeden oran ÜRETİLMEZ, 0 da yazılmaz");
+  assert.match(metin, /KESİLDİ/, "kırpma insan-okur özette de duyurulmalı");
+  assert.match(metin, /hesabın tamamı DEĞİLDİR/);
+});
+
+test("search_terms_report kırpılmadığında oran hâlâ verilir (yanlış alarm yok)", async () => {
+  const { ctx } = sahteContext({ queries: [[/FROM search_term_view/, aramaTerimleri(200, 100)]] });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "search_terms_report", arguments: { customerId: MUSTERI } });
+  assert.equal(res.structuredContent.kesildi, false, "tam tavan kadar satır kırpma DEĞİLDİR");
+  assert.equal(res.structuredContent.israfYuzde, 50, "tam listede oran hesaplanmalı");
+  assert.doesNotMatch(String(res.content?.[0]?.text ?? ""), /KESİLDİ/);
+});
+
+test("KRİTİK: campaign_performance ve keyword_performance kırpmayı duyurur", async () => {
+  const kampanyalar = Array.from({ length: 501 }, (_, i) => ({
+    campaign: {
+      id: i,
+      name: `K${i}`,
+      status: enums.CampaignStatus.ENABLED,
+      advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+    },
+    campaign_budget: { amount_micros: 1_000_000 },
+    metrics: { cost_micros: 1_000_000, clicks: 1, impressions: 1, conversions: 0, ctr: 0.1, average_cpc: 1_000_000 },
+  }));
+  const kelimeler = Array.from({ length: 201 }, (_, i) => ({
+    campaign: { name: "K" },
+    ad_group: { name: "G" },
+    ad_group_criterion: { keyword: { text: `kelime ${i}`, match_type: enums.KeywordMatchType.EXACT } },
+    metrics: { cost_micros: 1_000_000, clicks: 1, impressions: 1, conversions: 0 },
+  }));
+  const { ctx } = sahteContext({
+    queries: [
+      [/FROM campaign\b/, kampanyalar],
+      [/FROM keyword_view/, kelimeler],
+    ],
+  });
+  const c = await baglanti(ctx);
+
+  const kmp: any = await c.callTool({ name: "campaign_performance", arguments: { customerId: MUSTERI } });
+  assert.equal(kmp.structuredContent.kesildi, true);
+  assert.equal(kmp.structuredContent.kampanyalar.length, 500);
+  assert.match(String(kmp.content?.[0]?.text ?? ""), /KESİLDİ/);
+
+  const kw: any = await c.callTool({ name: "keyword_performance", arguments: { customerId: MUSTERI } });
+  assert.equal(kw.structuredContent.kesildi, true);
+  assert.equal(kw.structuredContent.kelimeler.length, 200);
+  assert.match(String(kw.content?.[0]?.text ?? ""), /KESİLDİ/);
+});
+
+test("KRİTİK: list_accounts iki katmanlı MCC'de TORUN hesapları da gösterir", async () => {
+  /**
+   * `customer_client.level = 1` yalnız doğrudan çocukları getiriyordu; ajans
+   * kurulumunda gerçek reklam hesapları alt-MCC'nin altındadır ve listede HİÇ
+   * görünmüyordu. Araç açıklaması "tüm hesaplar" derken ajan "erişilebilir hesabınız
+   * yok" diyor ya da MCC seçip USER_PERMISSION_DENIED alıyordu.
+   */
+  const { ctx, rec } = sahteContext({
+    queries: [
+      [/FROM customer\b/, [{ customer: { descriptive_name: "Ajans MCC", currency_code: "TRY", manager: true } }]],
+      [
+        /FROM customer_client/,
+        [
+          // Gerçek API yöneticinin KENDİSİNİ de döndürür; listeye iki kez girmemeli.
+          { customer_client: { id: 1234567890, descriptive_name: "Ajans MCC", manager: true } },
+          { customer_client: { id: 2222222222, descriptive_name: "Alt MCC", manager: true } },
+          { customer_client: { id: 3333333333, descriptive_name: "Torun reklam hesabı", manager: false } },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "list_accounts", arguments: {} });
+  const idler = res.structuredContent.hesaplar.map((h: any) => h.id);
+
+  assert.ok(idler.includes("3333333333"), "torun reklam hesabı listede olmalı");
+  assert.equal(idler.filter((i: string) => i === "1234567890").length, 1, "MCC iki kez görünmemeli");
+  assert.doesNotMatch(rec.queries.join(" "), /customer_client\.level/, "level filtresi torunları gizliyordu");
+});
+
+test("KRİTİK: list_accounts alt hesap kırpmasını SESSİZ geçmez", async () => {
+  /**
+   * 90 müşterili bir MCC'de 40 hesap hiç anılmıyordu; kullanıcının sorduğu hesap için
+   * "erişiminiz yok" deniyordu. Üst hesap kırpması duyurulurken alt hesabınki değildi.
+   */
+  const cocuklar = Array.from({ length: 52 }, (_, i) => ({
+    customer_client: { id: 2000000000 + i, descriptive_name: `Alt ${i}`, currency_code: "TRY", manager: false },
+  }));
+  const { ctx } = sahteContext({
+    queries: [
+      [/FROM customer\b/, [{ customer: { descriptive_name: "Büyük MCC", currency_code: "TRY", manager: true } }]],
+      [/FROM customer_client/, cocuklar],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "list_accounts", arguments: {} });
+  const metin = String(res.content?.[0]?.text ?? "");
+  const mcc = res.structuredContent.hesaplar.find((h: any) => h.id === "1234567890");
+
+  assert.equal(mcc.altHesapKesildi, true, "kırpılan MCC şemada işaretli olmalı");
+  assert.equal(res.structuredContent.tamListeMi, false);
+  assert.match(res.structuredContent.eksikNot, /kesildi/);
+  assert.match(metin, /GÖRÜNMEYEN alt hesaplar var/, "uyarı insan-okur tabloda da olmalı");
+  assert.equal(res.structuredContent.hesaplar.filter((h: any) => h.ustHesap).length, 50, "tavan kadar alt hesap");
+});
+
+test("list_accounts tam liste TAM ilan edilir (yanlış alarm yok)", async () => {
+  const { ctx } = sahteContext({
+    queries: [[/FROM customer\b/, [{ customer: { descriptive_name: "H", currency_code: "TRY", manager: false } }]]],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "list_accounts", arguments: {} });
+  assert.equal(res.structuredContent.tamListeMi, true);
+  assert.equal("eksikNot" in res.structuredContent, false, "eksiklik yokken not yazılmaz");
+});
+
+test("KRİTİK: okunamayan hesap listeyi EKSİK yapar (tam sayılmaz)", async () => {
+  const { ctx } = sahteContext({
+    hesaplar: ["5346956094", "1466231519"],
+    okunamayanHesaplar: ["5346956094"],
+    queries: [
+      [/FROM customer\b/, [{ customer: { descriptive_name: "Reklam Hesabı", currency_code: "TRY", manager: false } }]],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "list_accounts", arguments: {} });
+  assert.equal(res.structuredContent.tamListeMi, false, "bir hesap okunamadıysa liste TAM değildir");
+  assert.match(res.structuredContent.eksikNot, /okunamadı/);
+});
+
+/* ── kırpma PROBU: türeyen boolean değil, onu besleyen SORGU ──────────────────── */
+
+test("KRİTİK: rapor sorguları tavan+1 DOYMA PROBU ister (kırpma ölçülebilir olsun)", async () => {
+  /**
+   * Kırpma tespitinin tek mekanizması budur: Google `LIMIT 200` için EN FAZLA 200 satır
+   * döndürür, dolayısıyla `rows.length > 200` ancak sorgu 201 istediyse true olabilir.
+   * Prob `LIMIT tavan`a düşerse `kesildi` üretimde KALICI olarak false olur; kesik
+   * listeden yine israf oranı yazılır ve "en pahalı N'de kesildi" uyarısı hiç basılmaz.
+   * Bu test sorgu METNİNİ pinler; harness ayrıca LIMIT'e uyarak sonucu da ölçülebilir kılar.
+   */
+  const { ctx, rec } = sahteContext({ queries: [[/.*/, []]] });
+  const c = await baglanti(ctx);
+  await c.callTool({ name: "campaign_performance", arguments: { customerId: MUSTERI } });
+  await c.callTool({ name: "search_terms_report", arguments: { customerId: MUSTERI } });
+  await c.callTool({ name: "keyword_performance", arguments: { customerId: MUSTERI } });
+  await c.callTool({ name: "list_accounts", arguments: {} });
+
+  const bul = (parca: RegExp) => rec.queries.find((q) => parca.test(q)) ?? "";
+  assert.match(bul(/FROM campaign\b/), /LIMIT 501\b/, "campaign_performance tavanı 500 + 1 prob");
+  assert.match(bul(/FROM search_term_view/), /LIMIT 201\b/, "search_terms_report tavanı 200 + 1 prob");
+  assert.match(bul(/FROM keyword_view/), /LIMIT 201\b/, "keyword_performance tavanı 200 + 1 prob");
+});
+
+test("KRİTİK: alt hesap sorgusu tavan+2 ister (prob + MCC'nin KENDİ satırı)", async () => {
+  /**
+   * customer_client sorgusu yöneticinin kendisini de (level 0) döndürür ve o satır
+   * kırpma ölçümünden düşülür. Tavan+1 yeterli DEĞİLDİR: MCC satırı elendikten sonra
+   * elde tam tavan kadar alt hesap kalır ve doyma bir daha asla ölçülemez.
+   */
+  const { ctx, rec } = sahteContext({
+    queries: [[/FROM customer\b/, [{ customer: { descriptive_name: "MCC", currency_code: "TRY", manager: true } }]]],
+  });
+  const c = await baglanti(ctx);
+  await c.callTool({ name: "list_accounts", arguments: {} });
+  const sorgu = rec.queries.find((q) => /FROM customer_client/.test(q)) ?? "";
+  assert.match(sorgu, /LIMIT 52\b/, "alt hesap tavanı 50 + 1 prob + 1 MCC satırı");
+});
+
+test("KRİTİK: sahte API LIMIT'e uyar — prob olmadan kırpma ÖLÇÜLEMEZ", async () => {
+  /**
+   * Harness'ın kendisine bekçi. Konserve satırlar LIMIT'i yok sayarsa, üretimde
+   * ölçülemeyen bir şey testte ölçülebilir görünür ve `LIMIT tavan+1` probunu silen
+   * mutasyon suiti YEŞİL bırakır (bir kez gerçekten öyle oldu).
+   */
+  const { ctx } = sahteContext({ queries: [[/FROM search_term_view/, aramaTerimleri(201, 0)]] });
+  const satirlar = await (ctx as any).queryWithRetry(MUSTERI, "SELECT x FROM search_term_view LIMIT 200");
+  assert.equal(satirlar.length, 200, "LIMIT 200 sorgusuna 201 satır dönemez — gerçek API de dönmez");
+  const probla = await (ctx as any).queryWithRetry(MUSTERI, "SELECT x FROM search_term_view LIMIT 201");
+  assert.equal(probla.length, 201, "prob istendiğinde doyma satırı GELMELİ, yoksa test bir şey ölçmez");
+});
+
+test("search_terms_report: hiç satır yokken israf ORANI yazılmaz (0/0 = bilinmiyor)", async () => {
+  /**
+   * Veri yokken 0 yazmak "israf yok" beyanıdır; oysa pencerede satır olmaması hesapta
+   * israf olmadığını göstermez. Kırpma dalındaki kuralın aynısı: bilinmiyor = alan yok.
+   */
+  const { ctx } = sahteContext({ queries: [[/FROM search_term_view/, []]] });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "search_terms_report", arguments: { customerId: MUSTERI } });
+  assert.equal("israfYuzde" in res.structuredContent, false, "veri yokken oran BİLİNMİYOR, 0 yazılmaz");
+  assert.equal(res.structuredContent.toplamMaliyet, 0);
+});
+
+test("search_terms_report: tüm terimler 0 maliyetliyken de oran yazılmaz", async () => {
+  const bedava = [
+    {
+      campaign: { id: 1, name: "K" },
+      ad_group: { id: 2, name: "G" },
+      search_term_view: { search_term: "t", status: enums.SearchTermTargetingStatus.ADDED },
+      metrics: { cost_micros: 0, clicks: 3, impressions: 9, conversions: 0 },
+    },
+  ];
+  const { ctx } = sahteContext({ queries: [[/FROM search_term_view/, bedava]] });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "search_terms_report", arguments: { customerId: MUSTERI } });
+  assert.equal("israfYuzde" in res.structuredContent, false, "0/0 oran değildir");
+  assert.doesNotMatch(String(res.content?.[0]?.text ?? ""), /%undefined/, "özet 'undefined' basmamalı");
+});
+
+test("KRİTİK: list_accounts hem MCC hem alt-MCC erişilebilirken torunu TEKRARLAMAZ", async () => {
+  /**
+   * `customer_client.level = 1` kalktıktan sonra ortaya çıkan gerçek kusur: 1111111111
+   * bir MCC ve torunları 2222222222 (alt-MCC) + 3333333333. 2222222222 üst listede DE
+   * yer alıyor, dolayısıyla hem kendisi hem torunu tabloya İKİ KEZ giriyordu. İkincil
+   * zarar: tekrarlar ALT_TAVAN kotasını yiyip yanlış kırpma alarmı üretebiliyordu.
+   */
+  const { ctx } = sahteContext({
+    hesaplar: ["1111111111", "2222222222"],
+    queries: [
+      [/FROM customer\b/, [{ customer: { descriptive_name: "MCC", currency_code: "TRY", manager: true } }]],
+      [
+        /FROM customer_client/,
+        [
+          { customer_client: { id: 2222222222, descriptive_name: "Alt MCC", manager: true } },
+          { customer_client: { id: 3333333333, descriptive_name: "Reklam hesabı", manager: false } },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "list_accounts", arguments: {} });
+  const idler: string[] = res.structuredContent.hesaplar.map((h: any) => h.id);
+  const metin = String(res.content?.[0]?.text ?? "");
+
+  assert.deepEqual([...new Set(idler)].sort(), idler.slice().sort(), "hiçbir hesap iki kez listelenmemeli");
+  assert.equal(idler.filter((i) => i === "2222222222").length, 1, "alt-MCC tek satır olmalı");
+  assert.equal(idler.filter((i) => i === "3333333333").length, 1, "torun reklam hesabı tek satır olmalı");
+  assert.equal((metin.match(/3333333333/g) ?? []).length, 1, "insan-okur tabloda da tek kez");
+  assert.equal(res.structuredContent.tamListeMi, true, "tekrarlar kotayı yiyip yanlış alarm üretmemeli");
+});
+
+test("torun olarak listelenen hesabın KENDİ sorgusu patlarsa erişilemedi işaretlenir", async () => {
+  /**
+   * Ebeveynden okunan ad doğru olsa bile hesabın kendi sorgusu patlıyorsa ajan onu
+   * seçtiğinde her çağrı USER_PERMISSION_DENIED alır: seçilmemesi gereken hesap odur.
+   * Satırı tekrarlamak yerine var olan satır işaretlenir.
+   */
+  const { ctx } = sahteContext({
+    hesaplar: ["1111111111", "2222222222"],
+    okunamayanHesaplar: ["2222222222"],
+    queries: [
+      [/FROM customer\b/, [{ customer: { descriptive_name: "MCC", currency_code: "TRY", manager: true } }]],
+      [/FROM customer_client/, [{ customer_client: { id: 2222222222, descriptive_name: "Alt hesap", manager: false } }]],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "list_accounts", arguments: {} });
+  const alt = res.structuredContent.hesaplar.filter((h: any) => h.id === "2222222222");
+
+  assert.equal(alt.length, 1, "okunamayan hesap ikinci kez eklenmemeli");
+  assert.equal(alt[0].erisilemedi, true, "kendi sorgusu patlayan hesap işaretlenmeli");
+  assert.match(String(res.content?.[0]?.text ?? ""), /ERİŞİLEMEDİ/, "rozet insan-okur tabloda da olmalı");
+  assert.equal(res.structuredContent.tamListeMi, false, "okunamayan hesap listeyi EKSİK yapar");
+});
+
+/**
+ * OKUMA YÜZEYİNDE "BİLİNMİYOR ≠ 0" — bekçi testleri.
+ *
+ * Bu üç araç okunamayan bir para/metrik alanını Number(x ?? 0) ile 0'a çeviriyordu.
+ * Ölçülen sonuç: bütçesi görünmeyen YAYINDAKİ kampanya "günlük bütçe 0.00" diye
+ * raporlanıyor, ajan "harcama yok, bütçeyi yükselt" teşhisine gidiyordu; hiçbir hata
+ * görünmüyordu. Aşağıdaki vakalar tam olarak o girdileri besliyor.
+ */
+const TAM_METRIK = { cost_micros: 2_000_000, clicks: 1, impressions: 10, conversions: 0, ctr: 0.1, average_cpc: 2_000_000 };
+
+async function kampanyaRaporu(butceSatiri: any, metrics: any = TAM_METRIK) {
+  const { ctx } = sahteContext({
+    queries: [
+      [
+        /FROM campaign/,
+        [
+          {
+            campaign: {
+              id: 7,
+              name: "Yayındaki Kampanya",
+              status: enums.CampaignStatus.ENABLED,
+              advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+            },
+            ...butceSatiri,
+            metrics,
+          },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  return (await c.callTool({ name: "campaign_performance", arguments: { customerId: MUSTERI } })) as any;
+}
+
+test("campaign_performance: okunamayan günlük bütçe 0.00 diye RAPORLANMAZ", async () => {
+  const vakalar: Array<[string, any]> = [
+    ["alan yok", {}],
+    ["null", { campaign_budget: { amount_micros: null } }],
+    ["boş dizge", { campaign_budget: { amount_micros: "" } }],
+    ["metin", { campaign_budget: { amount_micros: "abc" } }],
+  ];
+  for (const [ad, satir] of vakalar) {
+    const res = await kampanyaRaporu(satir);
+    const k = res.structuredContent.kampanyalar[0];
+    assert.notEqual(res.isError, true, ad + ": tek okunamayan alan tüm raporu düşürmemeli");
+    assert.equal(k.gunlukButce, undefined, ad + ": okunamayan bütçe alanı JSON'a yazılmamalı");
+    assert.deepEqual(k.okunamayanAlanlar, ["gunlukButce"], ad + ": okunamayan alan adı ilan edilmeli");
+    const metin = String(res.content[0].text);
+    assert.match(metin, /günlük bütçe: OKUNAMADI/, ad + ": metinde 0.00 yazamaz");
+    assert.doesNotMatch(metin, /günlük bütçe: 0\.00/, ad + ": bütçesiz kalmış teşhisine götüren satır");
+    assert.match(metin, /OKUNAMAYAN ALAN: gunlukButce/, ad + ": okur uyarılmalı");
+    assert.equal(k.maliyet, 2, ad + ": ölçülebilen alanlar yerinde kalmalı, satır tümden atılmamalı");
+  }
+});
+
+test("campaign_performance: metrics hiç gelmediğinde metrik alanları DÜŞER (0 yazılmaz)", async () => {
+  const res = await kampanyaRaporu({ campaign_budget: { amount_micros: 50_000_000 } }, null);
+  const k = res.structuredContent.kampanyalar[0];
+  assert.notEqual(res.isError, true);
+  assert.equal(k.gunlukButce, 50, "bütçe okunabiliyorsa yazılır");
+  for (const alan of ["maliyet", "tiklama", "gosterim", "donusum", "ctrYuzde", "ortTbm"]) {
+    assert.equal(k[alan], undefined, alan + " bilinmiyorken 0 diye yazılamaz");
+  }
+  assert.deepEqual(k.okunamayanAlanlar, ["maliyet", "tiklama", "gosterim", "donusum", "ctrYuzde", "ortTbm"]);
+  const metin = String(res.content[0].text);
+  assert.match(metin, /maliyet: OKUNAMADI/);
+  assert.match(metin, /CTR: OKUNAMADI/);
+});
+
+async function terimRaporu(satirlar: any[]) {
+  const { ctx } = sahteContext({ queries: [[/FROM search_term_view/, satirlar]] });
+  const c = await baglanti(ctx);
+  return (await c.callTool({ name: "search_terms_report", arguments: { customerId: MUSTERI } })) as any;
+}
+
+function terimSatiri(terim: string, metrics: any) {
+  return {
+    campaign: { id: 77, name: "K" },
+    ad_group: { id: 1, name: "G" },
+    search_term_view: { search_term: terim, status: enums.SearchTermTargetingStatus.ADDED },
+    metrics,
+  };
+}
+
+test("search_terms_report: DÖNÜŞÜMÜ okunamayan terim israf adayı İŞARETLENMEZ", async () => {
+  /**
+   * Ters yönlü arıza: conversions ?? 0 yüzünden dönüşümü okunamayan terim "0 dönüşüm"
+   * sayılıp boşa-harcama-adayı işaretleniyordu ve aracın SONRAKİ ADIM talimatı ajanı onu
+   * negatif kelime yapmaya götürüyordu — yani DÖNÜŞÜM GETİREN terim dışlanıyordu.
+   */
+  const res = await terimRaporu([
+    terimSatiri("gerçekte dönüşen terim", { cost_micros: 30_000_000, clicks: 10, conversions: null }),
+    terimSatiri("temiz terim", { cost_micros: 10_000_000, clicks: 5, conversions: 0 }),
+  ]);
+  const olculemeyen = res.structuredContent.terimler.find((t: any) => t.terim === "gerçekte dönüşen terim");
+  assert.equal(olculemeyen.israfAdayi, false, "ölçülemeyen terim israf adayı olamaz");
+  assert.equal(olculemeyen.olculemedi, true, "ölçülemeyen satır ayrı kovada işaretlenmeli");
+  assert.equal(olculemeyen.donusum, undefined, "okunamayan dönüşüm 0 diye yazılamaz");
+  assert.equal(res.structuredContent.olculemeyenSatir, 1);
+  assert.equal(res.structuredContent.toplamMaliyet, 10, "ölçülemeyen satırın maliyeti toplama girmez");
+  assert.equal(res.structuredContent.israfYuzde, undefined, "payda eksikken oran üretilemez");
+
+  const metin = String(res.content[0].text);
+  const donusenSatiri = metin.split("\n").find((satir) => satir.includes("gerçekte dönüşen terim"))!;
+  assert.doesNotMatch(donusenSatiri, /boşa-harcama-adayı/, "ölçülemeyen terim boşa-harcama-adayı diye sunulamaz");
+  assert.match(metin, /ÖLÇÜLEMEDİ/);
+  assert.match(metin, /1 terimin maliyeti\/dönüşümü OKUNAMADI/, "oranın tabanı açıkça söylenmeli");
+});
+
+test("search_terms_report: MALİYETİ okunamayan gerçek israf sessizce temize çıkmaz", async () => {
+  const res = await terimRaporu([
+    terimSatiri("pahalı ama ölçülemeyen", { cost_micros: undefined, clicks: 40, conversions: 0 }),
+    terimSatiri("temiz terim", { cost_micros: 10_000_000, clicks: 5, conversions: 2 }),
+  ]);
+  const t = res.structuredContent.terimler.find((x: any) => x.terim === "pahalı ama ölçülemeyen");
+  assert.equal(t.maliyet, undefined, "okunamayan maliyet 0 diye yazılamaz");
+  assert.equal(t.olculemedi, true);
+  assert.equal(t.israfAdayi, false, "maliyeti bilinmeyen terim hakkında israf kararı verilemez");
+  assert.equal(res.structuredContent.israfYuzde, undefined);
+  const metin = String(res.content[0].text);
+  assert.match(metin, /pahalı ama ölçülemeyen/, "terim rapordan silinmemeli, ölçülemedi diye işaretlenmeli");
+  assert.match(metin, /maliyet: OKUNAMADI/);
+});
+
+test("search_terms_report: her satır ölçülebiliyorsa oran ESKİSİ GİBİ yazılır", async () => {
+  const res = await terimRaporu([
+    terimSatiri("israf", { cost_micros: 75_000_000, clicks: 30, conversions: 0 }),
+    terimSatiri("dönüşen", { cost_micros: 25_000_000, clicks: 10, conversions: 3 }),
+  ]);
+  assert.equal(res.structuredContent.israfYuzde, 75);
+  assert.equal(res.structuredContent.olculemeyenSatir, undefined, "ölçülemeyen yoksa alan hiç yazılmaz");
+});
+
+test("keyword_performance: okunamayan maliyet/dönüşüm 0 diye raporlanmaz", async () => {
+  const { ctx } = sahteContext({
+    queries: [
+      [
+        /FROM keyword_view/,
+        [
+          {
+            campaign: { name: "K" },
+            ad_group: { name: "G" },
+            ad_group_criterion: { keyword: { text: "anime izle", match_type: enums.KeywordMatchType.EXACT } },
+            metrics: { cost_micros: null, clicks: 12, conversions: "" },
+          },
+        ],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const res: any = await c.callTool({ name: "keyword_performance", arguments: { customerId: MUSTERI } });
+  const k = res.structuredContent.kelimeler[0];
+  assert.notEqual(res.isError, true);
+  assert.equal(k.maliyet, undefined, "okunamayan maliyet bedava kelime gibi görünemez");
+  assert.equal(k.donusum, undefined);
+  assert.equal(k.tiklama, 12, "okunabilen alan yerinde kalır");
+  assert.deepEqual(k.okunamayanAlanlar, ["maliyet", "donusum"]);
+  const metin = String(res.content[0].text);
+  assert.match(metin, /maliyet: OKUNAMADI/);
+  assert.doesNotMatch(metin, /maliyet: 0\.00/, "0.00 okuyan ajan kelimeyi ölü sanıp durdurur");
 });
