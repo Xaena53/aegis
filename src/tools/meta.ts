@@ -230,10 +230,36 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
 
       try {
         const kanal = metaKanali(ctx.config);
+
+        /**
+         * DURAKLATMA HİÇBİR OKUMAYA BAĞLI DEĞİLDİR — kapalı arıza burada TERS çalışır.
+         *
+         * Okuma kapının ÖNÜNDE ve koşulsuzdu. Meta'da 500 ve #17 hız sınırı sıradan
+         * olaylardır ve GET 15 saniyeyi aşabilir; o anda `kampanyaOku` fırlatınca araç
+         * isError ile dönüyor ve durdurma POST'u HİÇ denenmiyordu. Yani kampanya para
+         * yakarken "hemen durdur" diyen kullanıcı, ilgisiz bir okuma arızası yüzünden
+         * kampanyayı yayında bırakıyordu; ajan da hata gördüğü için genelde geri çekilir.
+         *
+         * Kapalı arıza HARCAMA ARTIŞI için "yapma" demektir; harcamayı DURDURAN işlem
+         * için güvenli yön "YAP"tır. Kampanya adı burada yalnız bir gözlemdir: mesajı
+         * güzelleştirir, hiçbir kararı belirlemez, dolayısıyla okunamaması durdurmayı
+         * engelleyemez. Google ikizi bunu zaten böyle yapıyordu (tools/write.ts: bütün
+         * okumalar ENABLED dalının içinde).
+         */
+        if (status === "PAUSED") {
+          await kanal.durumDegistir(campaignId, "PAUSED");
+          let ad = campaignId;
+          try {
+            ad = (await kanal.kampanyaOku(campaignId)).ad;
+          } catch {
+            /* ad bir gözlemdir, kapı değil — durdurma zaten uygulandı */
+          }
+          return text(`Meta kampanyası "${ad}" durumu: PAUSED.`);
+        }
+
         const mevcut = await kanal.kampanyaOku(campaignId);
 
-        // Duraklatma harcamayı DÜŞÜRÜR: onay istenmez (Google tarafıyla aynı kural).
-        if (status === "ACTIVE") {
+        {
           /**
            * BÜTÇE TAVANI YAYINA ALMADA DA GEÇERLİ — ve bu, bütçeyi bu araç
            * belirlemediği için atlanması en kolay yerdir.

@@ -64,6 +64,8 @@ interface SahteSecenek {
   elicitationsiz?: boolean;
   /** İstem AÇIKKEN koşar: hesap sahibinin kelepçeyi o pencerede değiştirmesini canlandırır. */
   istemAcikken?: (config: any) => void;
+  /** kampanyaOku fırlatır — Meta'da 500 / #17 hız sınırı / 15 sn zaman aşımı sıradan olaylardır. */
+  okumaPatlasin?: boolean;
 }
 
 /** Çağrılan Meta işlemleri — "hangi araç çağrıldı" ölçülebilsin diye. */
@@ -110,6 +112,9 @@ async function kur(opts: SahteSecenek = {}) {
     },
     async kampanyaOku() {
       cagrilar.push("kampanyaOku");
+      if (opts.okumaPatlasin) {
+        throw new Error('Meta API 500: {"error":{"message":"Please reduce the amount of data"}}');
+      }
       return kampanya;
     },
     async butceGuncelle(_id, yeni) {
@@ -708,4 +713,52 @@ test("KRİTİK TOCTOU (Meta): istem açıkken tavan inerse bütçe artışı uyg
     "KRİTİK: indirilen tavan bekleyen bütçe artışını durdurmalı"
   );
   assert.match(metin(r), /tavanı 20 değerine/, "ret yeni tavanı adıyla söylemeli");
+});
+
+
+test("KRİTİK: ACİL DURDURMA, kampanya okuması PATLASA DA uygulanır", async () => {
+  /**
+   * Kullanıcı canlı bir kampanyanın parayı yaktığını görüp "hemen durdur" diyor ve tam o
+   * anda Meta tarafında geçici bir arıza var. Okuma kapının ÖNÜNDE ve koşulsuz olduğu için
+   * durdurma POST'u HİÇ denenmiyordu: araç hata döndürüyor, kampanya harcamaya devam
+   * ediyordu.
+   *
+   * Kapalı arıza harcama ARTIŞI için "yapma" demektir; harcamayı DURDURAN işlem için
+   * güvenli yön YAPMAK'tır. Ölçülen şey durdurmanın gerçekten denendiğidir.
+   */
+  const c = await kur({
+    mevcutButce: 100,
+    okumaPatlasin: true,
+  });
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "PAUSED" },
+  });
+
+  assert.ok(
+    cagrilar.some((x) => x.startsWith("durumDegistir")),
+    `KRİTİK: okuma patlasa da durdurma denenmeli (çağrılanlar: ${cagrilar.join(",")})`
+  );
+  assert.equal(istemSayisi, 0, "duraklatma insana sorulmaz");
+  assert.doesNotMatch(metin(r), /başarısız/, "durdurma başarılı olmalı");
+  assert.match(metin(r), /PAUSED/, "sonuç durumu bildirilmeli");
+});
+
+test("YAYINA ALMA, kampanya okuması patlarsa YAPILMAZ (kapalı arıza doğru yönde)", async () => {
+  /**
+   * Aynı arıza, ters yön. Harcamayı ARTIRAN işlem okunamayan durumda ilerlememelidir:
+   * durdurma için doğru olan "yine de yap", yayına alma için tam tersidir. İkisinin
+   * birlikte çivilenmesi, birinci düzeltmenin ikinciyi de gevşetmediğini gösterir.
+   */
+  const c = await kur({ mevcutButce: 100, okumaPatlasin: true });
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE", confirm: true },
+  });
+
+  assert.ok(
+    !cagrilar.some((x) => x.startsWith("durumDegistir")),
+    "KRİTİK: okunamayan kampanya yayına alınmamalı"
+  );
+  assert.equal(r.isError, true, "arıza ajana bildirilmeli");
 });
