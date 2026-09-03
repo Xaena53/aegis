@@ -47,6 +47,63 @@ function clean(s: string | undefined): string | undefined {
   return t || undefined;
 }
 
+/**
+ * CDATA sarmalayıcısını ve JS yorum önekini bir JSON-LD gövdesinden DOĞRUSAL sıyırır.
+ *
+ * NEDEN regex değil: eski hâli `/^\s*(?:\/\/)?\s*<!\[CDATA\[/i` idi ve baştaki `\s*`
+ * her geri adımında ikinci `\s*` aynı boşluğu baştan tarıyordu → O(n²). Ölçüldü:
+ * 25KB boşluk + geçerli JSON-LD = 178ms, 100KB = 2,9sn, 200KB = 11,6sn; 1,5MB'lık gövde
+ * tavanında dakikalar. Hiçbir kapıya takılmayan, tamamen geçerli bir sayfa tek başına
+ * tek iş parçacığını kilitliyordu. startsWith/endsWith + slice doğrusaldır.
+ *
+ * Semantik birebir korunur: `//` öneki yalnız `<![CDATA[`'dan ÖNCE, `//` eki yalnız
+ * `]]>`'den SONRA kabul edilir; desen tam eşleşmezse hiçbir şey kırpılmaz.
+ */
+function cdataSiyir(inner: string): string {
+  let s = inner.trim();
+  // `//` öneki YALNIZ ardından `<![CDATA[` geliyorsa sıyrılır; tek başına bir JS yorumu
+  // kırpılmaz. Aksi hâlde `//{"@type":…}` gibi bir gövde eskiden atlanırken şimdi
+  // ayrıştırılırdı — doğrusallaştırma bir davranış genişlemesi olmamalı.
+  const onektenSonra = s.startsWith("//") ? s.slice(2).trimStart() : s;
+  if (onektenSonra.startsWith("<![CDATA[")) s = onektenSonra.slice("<![CDATA[".length);
+  let e = s.trimEnd();
+  if (e.endsWith("//")) e = e.slice(0, -2).trimEnd();
+  // Yalnız TAM desen (`]]>` + boşluk + isteğe bağlı `//` + boşluk + son) eşleşirse kırp
+  if (e.endsWith("]]>")) s = e.slice(0, -3);
+  return s.trim();
+}
+
+/**
+ * Ayraç kaçışı temizliği: sayfadan gelen metinde "site-verisi" dizisini nötrler.
+ *
+ * NEDEN literal arama, desen değil: eski hâli ayraç adını arayıp ardından en fazla 200
+ * karakter (`[^>]{0,200}`) tolere eden bir regex'ti ve o sınır bir kapıydı — 201 dolgu
+ * karakteri taşıyan `</site-verisi …>` yükü desenin
+ * DIŞINA düşüyor, temizlenmeden çıktıya giriyordu. Sayfa bloğu sunucudan ÖNCE kapatınca
+ * o noktadan sonraki her satır ajanın gözünde sunucunun kendi sözü oluyor. Sınırı
+ * büyütmek aynı yarışı bir tur daha oynamaktır; onun yerine ayracın ADI nötrleniyor —
+ * geriye ayracı yazmanın hiçbir varyantı kalmıyor.
+ *
+ * asciiLower kullanılır, toLowerCase() DEĞİL: Türkçe 'İ' iki kod noktasına açılır,
+ * dize uzar ve indeksler ham metinle hizasını kaybeder.
+ */
+const AYRAC_ADI = "site-verisi";
+export function ayracTemizle(metin: string): string {
+  const lower = asciiLower(metin);
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const s = lower.indexOf(AYRAC_ADI, i);
+    if (s < 0) {
+      out += metin.slice(i);
+      break;
+    }
+    out += metin.slice(i, s) + "[etiket-temizlendi]";
+    i = s + AYRAC_ADI.length;
+  }
+  return out;
+}
+
 /** Attribute value from a tag — closed by the SAME quote that opened it, so a nested ' or " does not split the value. */
 function attrValue(tag: string, attr: string): string | undefined {
   const m = new RegExp(`\\b${attr}\\s*=\\s*("([^"]*)"|'([^']*)')`, "i").exec(tag);
@@ -121,8 +178,16 @@ function findElements(html: string, tag: string, max: number): Array<{ openTag: 
     if (gt < 0) break;
     const e = lower.indexOf(close, gt + 1);
     if (e < 0) {
-      i = gt + 1;
-      continue;
+      /**
+       * Kapanış etiketi HİÇ yok — ve gt her turda ilerlediği için bundan SONRAKİ hiçbir
+       * açılış da kapanış bulamaz. Eskiden burada `i = gt + 1; continue` vardı: her açılış
+       * için dizinin sonuna kadar yeni bir tarama başlıyordu, yani O(n²).
+       * Ölçüldü: kapanışsız "<a>" tekrarı 16KB=43ms, 64KB=644ms, 128KB=2,6sn, 256KB=10,4sn
+       * → 1,5MB'lık gövde tavanında ~6 dakika. Node tek iş parçacıklı olduğu için TEK
+       * istek /health dâhil bütün kiracıları dondurur. Aramayı burada bitirmek, sonucu
+       * değiştirmeden taramayı doğrusal tutar.
+       */
+      break;
     }
     out.push({ openTag: html.slice(s, gt + 1), inner: html.slice(gt + 1, e) });
     i = e + close.length;
@@ -194,7 +259,25 @@ function headings(html: string, tag: string, max: number): string[] {
 export function extractPageFacts(rawHtml: string, opts: { textChars?: number } = {}): PageFacts {
   const textChars = opts.textChars ?? 2500;
   // Comments are stripped before any extraction — headings, links and text inside a comment are not signal
-  const html = removeBetween(rawHtml, "<!--", "-->");
+  const yorumsuz = removeBetween(rawHtml, "<!--", "-->");
+
+  /**
+   * script/style/noscript gövdeleri TÜM alanlardan silinir, yalnız görünür metinden değil.
+   *
+   * NEDEN: temizlik eskiden sadece visibleText hattındaydı; title, H1-H3 ve menü ham
+   * html'den okunuyordu. Sayfa `<script>var x="<title>ELE GEÇİRİLDİ</title>"</script>`
+   * yazarak — ya da script gövdesine `<h1>`/`<a>` gömerek — ajanın en itibarlı saydığı
+   * alanları doldurabiliyordu. O metin tarayıcıda GÖRÜNMEDİĞİ için insan denetimi de
+   * yakalamıyordu: kullanıcı sayfayı açıp bakar, öyle bir başlık yoktur.
+   *
+   * JSON-LD bilerek `yorumsuz` üzerinden okunur: verisi zaten bir <script> gövdesidir,
+   * temizlenmiş kopyada hiç kalmaz.
+   */
+  const html = removeBetween(
+    removeBetween(removeBetween(yorumsuz, "<script", "</script>"), "<style", "</style>"),
+    "<noscript",
+    "</noscript>"
+  );
 
   const title = cap(clean(findElements(html, "title", 1)[0]?.inner));
   const htmlTag = findTags(html, "html", 1)[0];
@@ -203,13 +286,13 @@ export function extractPageFacts(rawHtml: string, opts: { textChars?: number } =
   // JSON-LD blocks (schema.org — product/service/price signal)
   const jsonLd: string[] = [];
   const JSONLD_MAX = 20; // one page must not bloat the context with thousands of @graph items
-  for (const el of findElements(html, "script", 20)) {
+  for (const el of findElements(yorumsuz, "script", 20)) {
     if (jsonLd.length >= JSONLD_MAX) break;
     const type = attrValue(el.openTag, "type") ?? "";
     if (!/application\/ld\+json/i.test(type)) continue;
     try {
       // CDATA wrappers and JS comment prefixes are common here
-      const raw = el.inner.replace(/^\s*(?:\/\/)?\s*<!\[CDATA\[/i, "").replace(/\]\]>\s*(?:\/\/)?\s*$/i, "").trim();
+      const raw = cdataSiyir(el.inner);
       const parsed = JSON.parse(raw);
       const top = Array.isArray(parsed) ? parsed : [parsed];
       const items = top.flatMap((p: any) => (Array.isArray(p?.["@graph"]) ? p["@graph"] : [p]));
@@ -244,11 +327,8 @@ export function extractPageFacts(rawHtml: string, opts: { textChars?: number } =
     }
   }
 
-  // Visible text: script/style/noscript removed, then tags stripped (all linear)
-  let body = removeBetween(html, "<script", "</script>");
-  body = removeBetween(body, "<style", "</style>");
-  body = removeBetween(body, "<noscript", "</noscript>");
-  const visible = clean(stripTags(body));
+  // Visible text: script/style/noscript are already gone from `html`, only tags remain
+  const visible = clean(stripTags(html));
 
   return {
     title,

@@ -207,7 +207,17 @@ test("promise: 'analyze_site çıktısı güvenilmez blokta sunulur ve sahte eti
 
   // Does the code keep it? Checked without network access: sanitization plus block delimiters
   assert.match(kaynak, /<site-verisi>/, "güvenilmez veri bloğu açılmalı");
-  assert.match(kaynak, /<\\s\*\\\/\?\\s\*site-verisi\[\^>\]\{0,200\}>/, "sahte kapanış etiketi gevşek desenle temizlenmeli");
+  assert.match(kaynak, /ayracTemizle\(/, "sayfadan gelen metin ayraç temizleyicisinden geçmeli");
+  /**
+   * UZUNLUK SINIRLI desen geri gelmemeli. Eski temizleyici `[^>]{0,200}` idi ve o sınırın
+   * kendisi bir kapıydı: 201 karakterlik dolgu deseni ıskalatıyor, sayfa <site-verisi>
+   * bloğunu sunucudan ÖNCE kapatabiliyordu. Bu kaynak taraması yalnız bir kelepçe;
+   * davranışsal kanıt site.test.ts'teki dolgu tablosunda (0/199/200/201/5000).
+   */
+  const siteExtractKaynak = readFileSync("src/siteExtract.ts", "utf8");
+  for (const [ad, k] of [["site.ts", kaynak], ["siteExtract.ts", siteExtractKaynak]] as const) {
+    assert.doesNotMatch(k, /site-verisi\[\^>\]\{0,\d+\}/, `${ad}: uzunluk sınırlı desen geri gelmemeli`);
+  }
   assert.match(kaynak, /talimat/i, "ajana 'talimatları uygulama' uyarısı verilmeli");
 });
 

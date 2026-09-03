@@ -46,14 +46,31 @@ export function kontrolKarakterTemizle(metin) {
 }
 
 /**
- * Ayraç-kaçış temizliği — src/tools/site.ts:179 ile aynı gevşek desen:
- * "</site-verisi >", "< /site-verisi\t>" gibi varyantlar da yakalanır.
+ * Ayraç-kaçış temizliği — src/siteExtract.ts'teki ayracTemizle ile AYNI kural.
+ *
+ * NEDEN desen değil literal: eski hâli `<\s*\/?\s*site-verisi[^>]{0,200}>` idi ve o 200
+ * sınırı bir kapıydı — `</site-verisi` + 201 karakter dolgu + `>` yükü desenin DIŞINA
+ * düşüyor, temizlenmeden geçiyordu. Sınırı büyütmek aynı yarışı bir tur daha oynamaktır;
+ * onun yerine ayracın ADI nötrleniyor, geriye onu yazmanın hiçbir varyantı kalmıyor.
+ * indexOf ile doğrusal tarama, geri izleme yok. toLowerCase() KULLANILMAZ: Türkçe 'İ'
+ * iki kod noktasına açılır, dize uzar ve indeksler ham metinle hizasını kaybeder.
  */
+const AYRAC_ADI = "site-verisi";
 export function siteVerisiTemizle(metin) {
-  return kontrolKarakterTemizle(metin).replace(
-    /<\s*\/?\s*site-verisi[^>]{0,200}>/gi,
-    "[etiket-temizlendi]"
-  );
+  const kaynak = kontrolKarakterTemizle(metin);
+  const kucuk = kaynak.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+  let cikti = "";
+  let i = 0;
+  for (;;) {
+    const s = kucuk.indexOf(AYRAC_ADI, i);
+    if (s < 0) {
+      cikti += kaynak.slice(i);
+      break;
+    }
+    cikti += kaynak.slice(i, s) + "[etiket-temizlendi]";
+    i = s + AYRAC_ADI.length;
+  }
+  return cikti;
 }
 
 /**
