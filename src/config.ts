@@ -220,6 +220,39 @@ export function nacAnahtarDilimi(nac: NacDilimi): string[] {
   ];
 }
 
+/**
+ * KİRACI DİLİMİ — bağlam önbelleği anahtarının kimlik ve kelepçe yarısı.
+ *
+ * `nacAnahtarDilimi` ile aynı gerekçeyle burada: http.ts test edilemediği için anahtarın
+ * bu yarısı da bekçisizdi ve eksikliği ölçüldü — `user.writeEnabled` ya da
+ * `user.maxDailyBudget` anahtardan tek tek veya topluca silindiğinde takım YEŞİL kalıyordu.
+ *
+ * Her alanın anahtarda olmasının ayrı bir sebebi var ve hiçbiri süs değil:
+ *   id / refreshToken / loginCustomerId → KİRACI KİMLİĞİ. Düşerse iki kiracı aynı
+ *     AdsContext'i paylaşır: birinin jetonuyla ötekinin hesabına yazılır.
+ *   writeEnabled → yazma kelepçesi. Düşerse, yazmayı KAPATAN operatör açıkken üretilmiş
+ *     bağlamı almaya devam eder; ayarlar sayfasının "anında geçerli" sözü sessizce ölür.
+ *   maxDailyBudget → harcama tavanı. Düşerse tavanı İNDİREN operatör eski, yüksek tavanla
+ *     hizmet görmeye devam eder.
+ *
+ * Not: eksiklik hep GEVŞEME yönünde ısırır — sıkılaştırma uygulanmaz, gevşeklik kalır.
+ */
+export function kiraciAnahtarDilimi(user: {
+  id: number;
+  refreshToken: string;
+  loginCustomerId?: string | null | undefined;
+  writeEnabled: boolean;
+  maxDailyBudget: number;
+}): string[] {
+  return [
+    String(user.id),
+    user.refreshToken,
+    user.loginCustomerId ?? "",
+    String(user.writeEnabled),
+    String(user.maxDailyBudget),
+  ];
+}
+
 export function loadConfig(): AdsPilotConfig {
   const missing = missingCredentials();
   if (missing.length) {

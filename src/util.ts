@@ -362,3 +362,29 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
   }
   throw lastErr;
 }
+
+/**
+ * EN AZ KULLANILANI DÜŞÜREREK bir Map'i tavana çeker — ve düşen anahtarları söyler.
+ *
+ * Map ekleme sırasını korur, dolayısıyla ilk anahtar en eskidir; çağıran her ERİŞİMDE
+ * kaydı silip yeniden eklediği sürece "en eski" gerçekten "en az kullanılan" olur.
+ *
+ * NEDEN AYRI BİR FONKSİYON: yerinde yazıldığında bekçisiz kalıyordu. http.ts bir giriş
+ * noktasıdır, testten import edilemez; tavan oradayken `while (ctxCache.size >= 500)`
+ * satırını `while (false)` yapmak — yani tavanı tamamen kaldırmak — takımı yeşil
+ * bırakıyordu (mutasyonla ölçüldü). Saf fonksiyon olarak burada davranışsal sınanabilir.
+ *
+ * Eski hâli `cache.clear()` idi ve bu tek kiracının davranışını bütün kiracılara
+ * yayıyordu: 500 farklı anahtar üreten bir kiracı, herkesin bağlamını ve onlara asılı
+ * kısa ömürlü hesap önbelleğini düşürebiliyordu.
+ */
+export function lruYerAc<K, V>(cache: Map<K, V>, tavan: number): K[] {
+  const dusenler: K[] = [];
+  while (cache.size >= tavan) {
+    const enEski = cache.keys().next();
+    if (enEski.done) break;
+    cache.delete(enEski.value);
+    dusenler.push(enEski.value);
+  }
+  return dusenler;
+}

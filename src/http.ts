@@ -16,8 +16,15 @@ import { buildServer } from "./server.js";
 import { AdsContext } from "./adsClient.js";
 import { UserStore, encryptSecret, masterKeyText, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
-import { setRuntimeMode } from "./util.js";
-import { duzMetinKarari, nacAnahtarDilimi, nacConfigFromEnv, parseBool, parseNumEnv } from "./config.js";
+import { lruYerAc, setRuntimeMode } from "./util.js";
+import {
+  duzMetinKarari,
+  kiraciAnahtarDilimi,
+  nacAnahtarDilimi,
+  nacConfigFromEnv,
+  parseBool,
+  parseNumEnv,
+} from "./config.js";
 
 /**
  * AGPL-3.0 SECTION 13 COMPLIANCE.
@@ -145,6 +152,9 @@ function oauthClient() {
  */
 const ctxCache = new Map<string, AdsContext>();
 
+/** Bağlam önbelleği tavanı — aşıldığında en az kullanılan düşer (bkz. lruYerAc). */
+const CTX_ONBELLEK_TAVANI = 500;
+
 function contextFor(user: StoredUser): AdsContext {
   // Network-verification settings join the key: env is read once per process today,
   // but a future runtime reload must not keep serving up to 500 stale contexts.
@@ -156,11 +166,13 @@ function contextFor(user: StoredUser): AdsContext {
   // Ağ-doğrulama dilimi config.ts'ten gelir: orada saf ve import edilebilir olduğu için
   // "alan düşerse anahtar değişmiyor" durumu davranışsal olarak test edilebiliyor.
   const nac = nacConfigFromEnv();
-  const key = [
-    user.id, user.refreshToken, user.loginCustomerId ?? "", user.writeEnabled, user.maxDailyBudget,
-    ...nacAnahtarDilimi(nac),
-  ].join("|");
+  const key = [...kiraciAnahtarDilimi(user), ...nacAnahtarDilimi(nac)].join("|");
   let ctx = ctxCache.get(key);
+  if (ctx) {
+    // LRU tazeleme: erişilen kayıt sıranın sonuna taşınır (Map ekleme sırasını korur).
+    ctxCache.delete(key);
+    ctxCache.set(key, ctx);
+  }
   if (!ctx) {
     const { id, secret, devToken } = oauthClient();
     ctx = new AdsContext({
@@ -173,7 +185,19 @@ function contextFor(user: StoredUser): AdsContext {
       maxDailyBudget: user.maxDailyBudget,
       ...nac,
     });
-    if (ctxCache.size > 500) ctxCache.clear(); // bound unlimited growth
+    /**
+     * TAVAN LRU'DUR, TOPTAN SİLME DEĞİL.
+     *
+     * Eski hâli `ctxCache.clear()` idi ve bu, tek bir kiracının davranışını BÜTÜN
+     * kiracılara yayıyordu: ayarlarını arka arkaya değiştiren (ya da bunu bilerek yapan)
+     * bir kiracı 500 farklı anahtar üretip herkesin AdsContext'ini — ve onlara asılı
+     * 60 saniyelik hesap önbelleğini — düşürebiliyordu. Sonuç güvenlik ihlali değil ama
+     * kiracı izolasyonunun ihlali: komşunun maliyeti sana ödetiliyordu.
+     *
+     * En eski kayıt Map'in ilk anahtarıdır; erişilen kayıt yukarıda sona taşındığı için
+     * "en eski" gerçekten en az kullanılandır.
+     */
+    lruYerAc(ctxCache, CTX_ONBELLEK_TAVANI);
     ctxCache.set(key, ctx);
   }
   return ctx;

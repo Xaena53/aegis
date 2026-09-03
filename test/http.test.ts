@@ -380,6 +380,67 @@ test("İNSAN oturumuyla ayar değişir ve MCP tarafına ANINDA yansır", async (
   assert.doesNotMatch(ret, /\(500\)/, "eski/varsayılan tavan servis edilmemeli");
 });
 
+test("KRİTİK CSRF: çapraz-site ayar gönderimi 403 ve kelepçeyi DEĞİŞTİRMEZ", async () => {
+  /**
+   * Ayarlar sayfası kelepçenin tek gevşetme noktası: yazma anahtarı ve günlük tavan
+   * buradan değişir. Oturum çerezi tarayıcı tarafından her isteğe eklendiği için, kapı
+   * yalnız "oturum var mı" diye sorsaydı, kurbanın açık sekmesi varken ziyaret ettiği
+   * herhangi bir sayfa gizli bir formla tavanı 50'den yüz binlere çıkarabilirdi.
+   *
+   * Bu kapı yazılmıştı ama BEKÇİSİZDİ: ölçüldü, iki satır da silindiğinde takım yeşil
+   * kalıyordu. Aşağıda üç vaka ayrı ayrı çivileniyor ve her birinde tavanın GERÇEKTEN
+   * değişmediği okunarak doğrulanıyor — durum kodu tek başına yeterli kanıt değil.
+   */
+  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  const { UserStore } = await import("../src/store.js");
+  const s2 = new UserStore(DB);
+  const { userId } = s2.upsertUser({ subject: "sub-csrf", email: "csrf@ornek.com", refreshToken: "sahte" });
+  s2.close();
+  const cookie = await insanOturumu(userId);
+
+  const tavani = async (): Promise<string> => {
+    const r = await fetch(`${BASE}/settings`, { headers: { Cookie: cookie } });
+    const m = /name="tavan"[^>]*value="(\d+)"/.exec(await r.text());
+    return m?.[1] ?? "(okunamadı)";
+  };
+  const once = await tavani();
+
+  // 1) Yabancı Origin
+  const yabanci = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded", Origin: "https://kotu.ornek" },
+    body: "tavan=99999&yazma=1",
+  });
+  assert.equal(yabanci.status, 403, "yabancı origin reddedilmeli");
+  assert.equal(await tavani(), once, "KRİTİK: reddedilen istek tavanı değiştirmemeli");
+
+  // 2) Origin yok ama tarayıcı çapraz-site olduğunu söylüyor (klasik gizli form gönderimi)
+  const caprazSite = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: {
+      Cookie: cookie,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Sec-Fetch-Site": "cross-site",
+    },
+    body: "tavan=99999&yazma=1",
+  });
+  assert.equal(caprazSite.status, 403, "çapraz-site gönderim reddedilmeli");
+  assert.equal(await tavani(), once, "KRİTİK: reddedilen istek tavanı değiştirmemeli");
+
+  // 3) Aynı-site gönderim GEÇMELİ — kapı meşru kullanımı öldürmüyor.
+  const mesru = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: {
+      Cookie: cookie,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Sec-Fetch-Site": "same-origin",
+    },
+    body: "tavan=77&yazma=1",
+  });
+  assert.equal(mesru.status, 200, "aynı-site gönderim çalışmalı");
+  assert.equal(await tavani(), "77", "meşru değişiklik uygulanmalı");
+});
+
 test("geçersiz tavan reddedilir (yazım hatası emniyeti)", async () => {
   process.env.ADSPILOT_MASTER_KEY = MASTER;
   const { UserStore } = await import("../src/store.js");

@@ -18,6 +18,7 @@ import {
   loadConfig,
   missingCredentials,
   nacConfigFromEnv,
+  kiraciAnahtarDilimi,
   nacAnahtarDilimi,
 } from "../src/config.js";
 
@@ -336,4 +337,70 @@ test("her nac bayrağı uyarıda KENDİ değişken adıyla anılır (ad kaybolma
     assert.equal(sonuc[alan], false, `${ad}: anlaşılamayan değer halkayı açmamalı`);
     ayarla(ad, undefined);
   }
+});
+
+
+/* ── Bağlam önbelleği anahtarının KİRACI yarısı ────────────────────────────────
+ *
+ * http.ts giriş noktası olduğu için import edilemez; anahtarın bu yarısı tam da bu
+ * yüzden bekçisiz kalmıştı. Ölçüldü: `writeEnabled` ya da `maxDailyBudget` anahtardan
+ * silindiğinde takım yeşil kalıyor, ayarlar sayfasının "anında geçerli" sözü sessizce
+ * ölüyordu. Aşağıdaki bekçiler her alanı AYRI AYRI çiviler: biri düşerse hangisi
+ * olduğu doğrudan görünür.
+ */
+
+const KIRACI = {
+  id: 7,
+  refreshToken: "rt-A",
+  loginCustomerId: "123",
+  writeEnabled: false,
+  maxDailyBudget: 50,
+};
+
+/** İki dilimin gerçekten farklı anahtar ürettiğini söyler. */
+function ayrisiyorMu(a: object, b: object): boolean {
+  return kiraciAnahtarDilimi(a as any).join("|") !== kiraciAnahtarDilimi(b as any).join("|");
+}
+
+test("kiracı anahtarı: KİMLİK alanları anahtarı ayrıştırır", () => {
+  assert.ok(ayrisiyorMu(KIRACI, { ...KIRACI, id: 8 }), "kullanıcı kimliği anahtarda olmalı");
+  assert.ok(ayrisiyorMu(KIRACI, { ...KIRACI, refreshToken: "rt-B" }), "refresh token anahtarda olmalı");
+  assert.ok(
+    ayrisiyorMu(KIRACI, { ...KIRACI, loginCustomerId: "999" }),
+    "login customer id anahtarda olmalı"
+  );
+  assert.ok(
+    ayrisiyorMu(KIRACI, { ...KIRACI, loginCustomerId: null }),
+    "yönetici hesabı kaldırıldığında da anahtar değişmeli"
+  );
+});
+
+test("KRİTİK kiracı anahtarı: KELEPÇE alanları anahtarı ayrıştırır", () => {
+  /**
+   * Bu ikisinin eksikliği tek yönlü ısırır: SIKILAŞTIRMA uygulanmaz, GEVŞEKLİK kalır.
+   * Yazmayı kapatan operatör açık bağlamı almaya, tavanı indiren operatör yüksek tavanla
+   * hizmet görmeye devam ederdi.
+   */
+  assert.ok(
+    ayrisiyorMu(KIRACI, { ...KIRACI, writeEnabled: true }),
+    "yazma kelepçesi anahtarda olmalı — kapatan operatör açık bağlam almamalı"
+  );
+  assert.ok(
+    ayrisiyorMu(KIRACI, { ...KIRACI, maxDailyBudget: 5000 }),
+    "günlük tavan anahtarda olmalı — indiren operatör eski tavanı almamalı"
+  );
+});
+
+test("kiracı anahtarı: aynı kullanıcı aynı anahtarı üretir (gereksiz ıskalama yok)", () => {
+  assert.equal(
+    kiraciAnahtarDilimi(KIRACI as any).join("|"),
+    kiraciAnahtarDilimi({ ...KIRACI } as any).join("|"),
+    "değişmeyen kullanıcı için anahtar kararlı olmalı"
+  );
+  // Boş yönetici hesabının iki yazımı ("" ve yok) aynı anahtara düşmeli.
+  assert.equal(
+    kiraciAnahtarDilimi({ ...KIRACI, loginCustomerId: null } as any).join("|"),
+    kiraciAnahtarDilimi({ ...KIRACI, loginCustomerId: undefined } as any).join("|"),
+    "null ve undefined aynı 'yönetici hesabı yok' anlamına gelir"
+  );
 });

@@ -18,6 +18,7 @@ import {
   normalizeGaql,
   cleanId,
   isConcurrentModificationError,
+  lruYerAc,
 } from "../src/util.js";
 
 test("normalizeCustomerId tireleri ve harfleri temizler", () => {
@@ -308,4 +309,50 @@ test("ensureGaqlLimit: sondaki noktalı virgül kelepçeyi ATLATAMAZ", () => {
   // Sabitin içinde biten ";" silinmez: kırpma maskelenmiş metin üzerinden yapılır.
   const sabitli = "SELECT x FROM y WHERE name = 'bitiş;'";
   assert.equal(ensureGaqlLimit(sabitli, 100), `${sabitli} LIMIT 100`);
+});
+
+/* ── LRU tavanı: bağlam önbelleğinin sınırı ───────────────────────────────────
+ *
+ * Bu tavan http.ts içinde yazılıydı ve BEKÇİSİZDİ: mutasyonla ölçüldü, tavanı tamamen
+ * kaldırmak (`while (false)`) takımı yeşil bırakıyordu. Sınır artık saf bir fonksiyonda
+ * ve davranışı burada çivilenmiş durumda.
+ */
+
+test("lruYerAc: tavana ulaşınca EN ESKİ kayıt düşer", () => {
+  const m = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  const dusen = lruYerAc(m, 3);
+  assert.deepEqual(dusen, ["a"], "en eski anahtar düşmeli");
+  assert.equal(m.has("a"), false);
+  assert.equal(m.size, 2, "yeni kayda yer açılmalı");
+  assert.deepEqual([...m.keys()], ["b", "c"], "kalanların sırası korunmalı");
+});
+
+test("KRİTİK lruYerAc: TOPTAN SİLME yapmaz — komşu kiracılar ayakta kalır", () => {
+  /**
+   * Eski hâli `cache.clear()` idi: tek kiracının 500 anahtar üretmesi HERKESİN bağlamını
+   * düşürüyordu. Bu iddia tam olarak o davranışın geri gelmesini engeller.
+   */
+  const m = new Map<string, number>();
+  for (let i = 0; i < 10; i++) m.set(`k${i}`, i);
+  lruYerAc(m, 10);
+  assert.ok(m.size > 0, "KRİTİK: tavan aşımı önbelleği tamamen boşaltmamalı");
+  assert.equal(m.size, 9, "yalnız bir kayda yer açılmalı");
+  assert.equal(m.has("k9"), true, "en yeni kayıt korunmalı");
+});
+
+test("lruYerAc: erişimle tazelenen kayıt hayatta kalır (gerçek LRU)", () => {
+  const m = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  // "a"ya erişildi → sona taşınır (http.ts'in isabet dalında yaptığı şey).
+  const v = m.get("a")!;
+  m.delete("a");
+  m.set("a", v);
+  const dusen = lruYerAc(m, 3);
+  assert.deepEqual(dusen, ["b"], "tazelenen 'a' değil, artık en eski olan 'b' düşmeli");
+  assert.equal(m.has("a"), true, "yakın zamanda kullanılan kayıt korunmalı");
+});
+
+test("lruYerAc: tavanın altındaki önbelleğe dokunmaz", () => {
+  const m = new Map<string, number>([["a", 1]]);
+  assert.deepEqual(lruYerAc(m, 500), [], "yer varken hiçbir şey düşmemeli");
+  assert.equal(m.size, 1);
 });
