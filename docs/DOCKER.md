@@ -19,7 +19,7 @@ Then open <http://localhost:8787/connect> to link a Google Ads account.
 
 ```bash
 docker build -t adspilot .
-docker run -d --name adspilot -p 8787:8787 \
+docker run -d --name adspilot -p 127.0.0.1:8787:8787 \
   --env-file .env -e PORT=8787 -e ADSPILOT_DB=/data/adspilot.db \
   -v adspilot-data:/data --restart unless-stopped adspilot
 ```
@@ -27,6 +27,16 @@ docker run -d --name adspilot -p 8787:8787 \
 The two `-e` flags mirror what `docker-compose.yml` does: they pin the in-container
 port to the mapped one and keep the database on the volume even if `.env` sets
 `PORT`/`ADSPILOT_DB` to something else (or to an empty string).
+
+The `127.0.0.1:` prefix on the published port is not decoration. This server speaks
+plain HTTP; TLS belongs to the nginx/Caddy in front of it. Without the prefix Docker
+binds `0.0.0.0`, so an unencrypted `:8787` sits next to your `:443` and the reverse
+proxy becomes optional *for an attacker*: `/connect` and `/settings` answer over plain
+HTTP, and `/mcp` only asks for a matching `Host` header. API keys and OAuth codes would
+then travel in the clear. Keep the publish on loopback and expose the service through
+the TLS terminator — see `deploy/README.md`. If you deliberately need a non-loopback
+bind (a private network with no proxy in front), the server refuses to start on a
+plaintext public URL unless you acknowledge that with `ADSPILOT_ALLOW_PLAINTEXT=1`.
 
 ## Environment variables
 

@@ -32,10 +32,13 @@
  *   --musteri verilmezse demo kuru koşusu ATLANIR (uyarı) — diğer kontroller yine çalışır.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { config as dotenvYukle } from "dotenv";
+// Kararlar burada değil, sınanabilir saf fonksiyonlarda yaşıyor (bkz. onucusKurallari.mjs):
+// betiğe gömülü bir kuralın yanlış olduğunu hiçbir test söyleyemiyordu.
+import { agKapisiKarari, derlemeTazeligi } from "./onucusKurallari.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST_GIRIS = join(ROOT, "dist", "index.js");
@@ -123,38 +126,6 @@ function surumKarsilastir(a, b) {
   return 0;
 }
 
-/** Ağaçtaki en yeni dosyanın mtime'ı — `npm run build` gerekip gerekmediğinin ölçüsü. */
-function enYeniDosya(dizin, kabul) {
-  let enYeni = { ms: 0, yol: "" };
-  const gez = (d) => {
-    let girdiler;
-    try {
-      girdiler = readdirSync(d, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const g of girdiler) {
-      const tam = join(d, g.name);
-      if (g.isDirectory()) {
-        gez(tam);
-        continue;
-      }
-      if (!kabul(g.name)) continue;
-      try {
-        const s = statSync(tam);
-        if (s.mtimeMs > enYeni.ms) enYeni = { ms: s.mtimeMs, yol: tam };
-      } catch {
-        /* okunamayan dosya kontrolü bozmasın */
-      }
-    }
-  };
-  gez(dizin);
-  return enYeni;
-}
-
-const kisaYol = (yol) => (yol ? relative(ROOT, yol).replace(/\\/g, "/") : "");
-const saat = (ms) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
-
 /** Bir komutu zaman aşımıyla çalıştırır; ENOENT (komut yok) hata değil, sonuçtur. */
 function komutCalistir(komut, argumanlar, zamanAsimiMs, ek = {}) {
   return new Promise((coz) => {
@@ -241,21 +212,17 @@ await kontrol("Node sürümü yeterli", "engines.node", async () => {
 
 /* ── 2) dist/ güncelliği ─────────────────────────────────────────────────────── */
 
-const distVar = existsSync(DIST_GIRIS);
+/**
+ * Tazelik kararı UYARI değil ENGEL: uyarı çıkış kodunu bozmuyordu, dolayısıyla derlemeyi
+ * unutan geliştirici "SAHNEYE HAZIR" raporu alıyor, prova da bayat ikiliyi koşturup o
+ * ikilinin sağlam kapılarını doğruluyordu. Sahnede oynayan kod ise başka bir koddu.
+ * Karar artık onucusKurallari.mjs'te ve sınanıyor.
+ */
+const TAZELIK = derlemeTazeligi(ROOT);
 
-await kontrol("dist/ kaynakla güncel", "build tazeliği", async () => {
-  if (!distVar) return kaldiSonuc("dist/index.js yok — `npm run build` çalıştır");
-  const kaynak = enYeniDosya(join(ROOT, "src"), (a) => a.endsWith(".ts"));
-  const derleme = enYeniDosya(join(ROOT, "dist"), (a) => a.endsWith(".js"));
-  if (!kaynak.ms || !derleme.ms) return uyariSonuc("mtime okunamadı — tazelik doğrulanamadı");
-  if (kaynak.ms > derleme.ms) {
-    return uyariSonuc(
-      `${kisaYol(kaynak.yol)} (${saat(kaynak.ms)}) derlemeden yeni ` +
-        `(${kisaYol(derleme.yol)}, ${saat(derleme.ms)}) — \`npm run build\` çalıştır`
-    );
-  }
-  return gectiSonuc(`en yeni kaynak ${saat(kaynak.ms)} <= derleme ${saat(derleme.ms)}`);
-});
+await kontrol("dist/ kaynakla güncel", "build tazeliği", async () =>
+  TAZELIK.taze ? gectiSonuc(TAZELIK.not) : kaldiSonuc(TAZELIK.not)
+);
 
 /* ── 3) .env — zorunlular, hosted anahtarı, demo ağ kapısı ───────────────────── */
 
@@ -293,31 +260,42 @@ await kontrol("Demo ağ kapısı yapılandırması", ".env — NAC / onaylayıc�
   const telefonVar = envVar("ADSPILOT_APPROVER_PHONE");
   const ozet = [varYok("ADSPILOT_NAC_SIMULATE"), varYok("ADSPILOT_NAC_TOKEN"), varYok("ADSPILOT_APPROVER_PHONE")].join(", ");
 
-  // Çelişkili yapılandırma sahnede en sinsi arıza: sunucu HER harcama artışını reddeder,
-  // Perde 1 kırılır ve Perde 2 beklenen SIM metni yerine yapılandırma reti verir.
-  if (simVar && tokenVar) {
-    return kaldiSonuc(
-      `${ozet} — ikisi birlikte tanımlı: sunucu çelişkili yapılandırma sayıp her harcama artışını ` +
-        "reddeder (Perde 1 kırılır). Demo için token'ı, gerçek doğrulama için SIMULATE'i kaldır"
-    );
-  }
-  if (tokenVar && !telefonVar) {
-    return kaldiSonuc(`${ozet} — token var ama onaylayıcı numarası yok: kapalı arıza, her artış reddedilir`);
-  }
-  if (simVar) {
-    const deger = envDegeri("ADSPILOT_NAC_SIMULATE");
-    if (deger !== "temiz" && deger !== "degisti") {
-      // Değer bilerek yazdırılmaz (sunucu da yazdırmaz — sır olabilir).
+  // Kural sunucunun kapalı arıza davranışının aynasıdır ve saf fonksiyonda sınanır;
+  // burada yalnız RAPORLANIR. (Değerler asla yazdırılmaz — sır olabilir.)
+  const karar = agKapisiKarari({
+    simVar,
+    tokenVar,
+    telefonVar,
+    simDeger: envDegeri("ADSPILOT_NAC_SIMULATE"),
+  });
+
+  switch (karar.kod) {
+    // Çelişkili yapılandırma sahnede en sinsi arıza: sunucu HER harcama artışını reddeder,
+    // Perde 1 kırılır ve Perde 2 beklenen SIM metni yerine yapılandırma reti verir.
+    case "yapilandirma-celiskili":
+      return kaldiSonuc(
+        `${ozet} — ikisi birlikte tanımlı: sunucu çelişkili yapılandırma sayıp her harcama artışını ` +
+          "reddeder (Perde 1 kırılır). Demo için token'ı, gerçek doğrulama için SIMULATE'i kaldır"
+      );
+    // Onaylayıcı numarası SİMÜLASYONDA DA zorunlu (src/networkTrust.ts, "onaylayici-numarasi-yok"):
+    // eskiden bu dal yalnız gerçek token için sorulurdu; compose'da yalnız simülasyonu açan
+    // operatör yeşil rapor alıp sahnede her artışın istemsiz reddedildiğini görüyordu.
+    case "onaylayici-numarasi-yok":
+      return kaldiSonuc(
+        `${ozet} — ${tokenVar ? "token" : "simülasyon kanalı"} var ama onaylayıcı numarası yok: ` +
+          "kapalı arıza, her artış istem gösterilmeden reddedilir (ADSPILOT_APPROVER_PHONE ekle)"
+      );
+    case "simulasyon-degeri-tanimsiz":
       return uyariSonuc(
         `${ozet} — ADSPILOT_NAC_SIMULATE değeri tanınmadı (gösterilmez; geçerli: "temiz" | "degisti"). ` +
           "Senaryo betiği kendi değerini geçirdiği için `npm run demo` etkilenmez, betik dışı sürüşte reddedilir"
       );
-    }
+    default:
+      return gectiSonuc(
+        `${ozet} — senaryo betiği simülasyon kanalını ve demo onaylayıcı numarasını kendi geçirir; ` +
+          ".env ayarı yalnız betik dışı sürüşte (masaüstü MCP istemcisi) gerekir"
+      );
   }
-  return gectiSonuc(
-    `${ozet} — senaryo betiği simülasyon kanalını ve demo onaylayıcı numarasını kendi geçirir; ` +
-      ".env ayarı yalnız betik dışı sürüşte (masaüstü MCP istemcisi) gerekir"
-  );
 });
 
 /* ── 4) Canlı Google Ads okuması (refresh token gerçekten çalışıyor mu) ──────── */
@@ -401,7 +379,9 @@ async function hesaplariOku() {
 }
 
 await kontrol("Refresh token canlı", "list_accounts (salt-okunur)", async () => {
-  if (!distVar) return uyariSonuc("dist/index.js yok — canlı çağrı atlandı (`npm run build`)");
+  // Bayat/doğrulanamayan ikili KOŞTURULMAZ: koşturulursa raporun ölçtüğü kod ile sahnede
+  // oynayacak kod farklı olur ve rapor, artık var olmayan bir sürümün fişi hâline gelir.
+  if (!TAZELIK.taze) return kaldiSonuc(`derleme güvenilmez (${TAZELIK.kod}) — canlı çağrı KOŞTURULMADI; \`npm run build\``);
   const r = await hesaplariOku();
   if (r.hataMi) {
     const ipucu = /invalid_grant/i.test(r.metin) ? " → token süresi dolmuş/iptal: `npm run auth`" : "";
@@ -422,7 +402,8 @@ await kontrol("Refresh token canlı", "list_accounts (salt-okunur)", async () =>
 
 await kontrol("Demo senaryosu kuru koşuda geçer", "demo-senaryo.mjs (kuru)", async () => {
   if (!MUSTERI) return uyariSonuc("--musteri verilmedi — kuru koşu atlandı (sahneden önce mutlaka koştur)");
-  if (!distVar) return uyariSonuc("dist/index.js yok — kuru koşu atlandı (`npm run build`)");
+  // Aynı gerekçe: bayat ikilinin kuru koşusu sahneyi temsil etmez, "geçti" demesi yanıltır.
+  if (!TAZELIK.taze) return kaldiSonuc(`derleme güvenilmez (${TAZELIK.kod}) — kuru koşu KOŞTURULMADI; \`npm run build\``);
 
   const argumanlar = [join(ROOT, "scripts", "demo-senaryo.mjs"), "--musteri", MUSTERI];
   if (KAMPANYA) argumanlar.push("--kampanya", KAMPANYA);

@@ -30,12 +30,38 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { derlemeTazeligi, saatMetni } from "./onucusKurallari.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ARGS = process.argv.slice(2);
 const WRITE = ARGS.includes("--write");
 const CUSTOMER_ARG = (ARGS.find((a) => a.startsWith("--customer=")) ?? "").split("=")[1];
 const CALL_TIMEOUT_MS = 90_000;
+
+/* ── freshness precondition ─────────────────────────────────────────────────────── */
+
+/**
+ * DERLEME TAZELİĞİ ÖNKOŞULU — kapalı arıza, istemci kurulmadan ÖNCE.
+ *
+ * Bu betiğin çıktısı bir FİŞTİR: "canlı doğrulandı" diye PR'a yapıştırılır. Fişin
+ * değeri, sınanan ikilinin depodaki kaynağı temsil etmesine bağlı. Kapıyı gevşeten bir
+ * katkıcı `npm run build`i unutursa, eski derlemenin hâlâ sağlam kapısı "geçti" der ve
+ * fiş, artık var olmayan bir sürüm için verilmiş olur. Bayat VE tazeliği ölçülemeyen
+ * derlemede koşu hiç başlamaz — "bilinmiyor" ile "temiz" aynı şey değildir.
+ *
+ * Sınanan ikilinin mtime'ı rapora basılır: fişi okuyan, hangi derlemenin sınandığını
+ * betiğe güvenmek zorunda kalmadan görebilsin.
+ */
+const TAZELIK = derlemeTazeligi(ROOT);
+if (!TAZELIK.taze) {
+  console.error(
+    `\n  AdsPilot — canlı duman testi BAŞLATILMADI (${TAZELIK.kod})\n` +
+      `  ${TAZELIK.not}\n\n` +
+      "  Sınanmayan bir derlemenin fişi kesilmez: `npm run build` sonra tekrar dene.\n"
+  );
+  process.exit(1);
+}
+const SINANAN_DERLEME = `dist ${saatMetni(TAZELIK.derleme.ms)} (kaynak ${saatMetni(TAZELIK.kaynak.ms)})`;
 
 /* ── MCP client over stdio ──────────────────────────────────────────────────────── */
 
@@ -366,7 +392,7 @@ try {
 const gecen = sonuclar.filter((s) => s.gecti).length;
 const genislik = Math.max(...sonuclar.map((s) => s.soz.length), 10);
 
-console.log("\n  AdsPilot — canlı duman testi\n");
+console.log(`\n  AdsPilot — canlı duman testi  [sınanan ikili: ${SINANAN_DERLEME}]\n`);
 for (const s of sonuclar) {
   const isaret = s.gecti ? "GEÇTİ" : "KALDI";
   console.log(`  ${isaret}  ${s.soz.padEnd(genislik)}  ${s.ad}`);

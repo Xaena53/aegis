@@ -17,7 +17,7 @@ import { AdsContext } from "./adsClient.js";
 import { UserStore, encryptSecret, type StoredUser } from "./store.js";
 import { RateLimiter } from "./rateLimit.js";
 import { setRuntimeMode } from "./util.js";
-import { nacAnahtarDilimi, nacConfigFromEnv, parseNumEnv } from "./config.js";
+import { duzMetinKarari, nacAnahtarDilimi, nacConfigFromEnv, parseBool, parseNumEnv } from "./config.js";
 
 /**
  * AGPL-3.0 SECTION 13 COMPLIANCE.
@@ -784,14 +784,28 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
   });
 }
 
-server.listen(PORT, () => {
-  console.log(`[adspilot-http] ${PUBLIC_URL} üzerinde dinliyor (port ${PORT})`);
+/**
+ * DÜZ METİN KARARI, DİNLEMEDEN ÖNCE.
+ *
+ * Karar burada değil src/config.ts'te (duzMetinKarari) çünkü hem sınanabilir olmalı hem de
+ * tek bir yerden okunmalı. Engel varsa süreç HİÇ dinlemez: şifresiz bir genel adres, ancak
+ * ADSPILOT_ALLOW_PLAINTEXT ile AÇIKÇA onaylandığında kabul edilir. Uyarı, PUBLIC_URL https
+ * olsa bile susmaz — çünkü dinleyicinin kendisi düz HTTP'dir ve 0.0.0.0'a yayınlandığında
+ * ters vekil atlanabilir hâle gelir.
+ */
+const BIND = process.env.ADSPILOT_BIND?.trim() || "0.0.0.0";
+const duzMetin = duzMetinKarari({
+  bind: BIND,
+  publicUrl: PUBLIC_URL,
+  izinVerildi: parseBool(process.env.ADSPILOT_ALLOW_PLAINTEXT, false),
+});
+if (duzMetin.engel) {
+  console.error(`[adspilot-http] BAŞLATILAMADI — ${duzMetin.engel}`);
+  process.exit(1);
+}
+
+server.listen(PORT, BIND, () => {
+  console.log(`[adspilot-http] ${PUBLIC_URL} üzerinde dinliyor (port ${PORT}, bağlanma adresi ${BIND})`);
   console.log(`[adspilot-http] Bağlanma sayfası: ${PUBLIC_URL}/connect`);
-  const pub = new URL(PUBLIC_URL);
-  if (pub.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(pub.hostname)) {
-    console.error(
-      "[adspilot-http] UYARI: PUBLIC_URL http:// — API anahtarları ve OAuth kodları AÇIK METİN taşınır. " +
-        "Üretimde TLS (nginx/Caddy) arkasına al ve ADSPILOT_PUBLIC_URL'i https:// yap."
-    );
-  }
+  if (duzMetin.uyari) console.error(`[adspilot-http] UYARI: ${duzMetin.uyari}`);
 });

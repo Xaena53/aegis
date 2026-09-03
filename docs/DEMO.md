@@ -314,7 +314,7 @@ A hit in what remains is worth investigating.
 In containers, put the file on the existing data volume so it survives restarts:
 
 ```bash
-docker run -d --name adspilot -p 8787:8787 \
+docker run -d --name adspilot -p 127.0.0.1:8787:8787 \
   --env-file .env -e PORT=8787 -e ADSPILOT_DB=/data/adspilot.db \
   -e ADSPILOT_DECISION_LOG=/data/kararlar.jsonl \
   -v adspilot-data:/data --restart unless-stopped adspilot

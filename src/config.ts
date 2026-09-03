@@ -287,3 +287,69 @@ function parseBudgetCap(raw: string | undefined): number {
   }
   return n;
 }
+
+/**
+ * DÜZ METİN (TLS'siz) DİNLEME KARARI — yayın biçiminden BAĞIMSIZ.
+ *
+ * NEDEN VAR: hosted sunucu her zaman düz HTTP konuşur; şifrelemeyi önündeki nginx/Caddy
+ * sonlandırır. Eski uyarı yalnız ADSPILOT_PUBLIC_URL'e bakıyordu, dolayısıyla TLS'in
+ * gerçekten atlanabildiği iki durumda SUSUYORDU:
+ *   1) PUBLIC_URL https:// ama süreç 0.0.0.0'a bağlı — 443'ün yanında şifresiz bir port
+ *      açık kalır; /connect ve /settings düz HTTP yanıtlar, /mcp için doğru Host başlığı
+ *      yeter. Ters vekil, saldırgan için isteğe bağlı hâle gelir.
+ *   2) PUBLIC_URL http:// ama makine "localhost" değil bir iç ad — kimlik bilgileri
+ *      açık metin taşınır.
+ * Karar bu yüzden İKİ girdiye birden bakar: nereye bağlandık ve kullanıcılar bize hangi
+ * şemayla ulaşıyor. Düz metin bir genel adres artık sessiz bir uyarı değil, AÇIK ONAY
+ * (ADSPILOT_ALLOW_PLAINTEXT) isteyen bir engeldir — "bilinmiyor" ile "güvenli" aynı şey
+ * değildir ve varsayılan RET olmalıdır.
+ */
+const YEREL_ADLAR = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0:0:0:0:0:0:0:1"]);
+
+/** Yalnız bu makineden erişilebilen bir bağlanma adresi mi? */
+export function yerelAdres(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (YEREL_ADLAR.has(h) || YEREL_ADLAR.has(`[${h}]`)) return true;
+  // 127.0.0.0/8'in tamamı loopback'tir (127.0.0.1 dışındaki adresler de dahil).
+  return /^127\./.test(h);
+}
+
+export function duzMetinKarari(girdi: {
+  bind: string;
+  publicUrl: string;
+  izinVerildi: boolean;
+}): { engel?: string; uyari?: string } {
+  let sema = "";
+  let konak = "";
+  try {
+    const u = new URL(girdi.publicUrl);
+    sema = u.protocol;
+    konak = u.hostname;
+  } catch {
+    // Okunamayan URL "temiz" sayılmaz: doğrulanamayan yapılandırma uyarıyı hak eder.
+    return { uyari: `ADSPILOT_PUBLIC_URL çözümlenemedi ('${girdi.publicUrl}') — TLS durumu DOĞRULANAMADI.` };
+  }
+
+  const genelDuzMetin = sema === "http:" && !yerelAdres(konak);
+  if (genelDuzMetin && !girdi.izinVerildi) {
+    return {
+      engel:
+        `ADSPILOT_PUBLIC_URL düz http:// ve '${konak}' yerel değil — API anahtarları ve OAuth ` +
+        "kodları AÇIK METİN taşınır. TLS (nginx/Caddy) arkasına al ve URL'i https:// yap. " +
+        "Bilerek şifresiz koşuyorsan ADSPILOT_ALLOW_PLAINTEXT=1 ile açıkça onayla.",
+    };
+  }
+
+  // Dinleyicinin kendisi her hâlükârda düz HTTP: loopback dışına bağlıysa bunu SÖYLE.
+  // https bir PUBLIC_URL bu portu kapatmaz; yalnız vekilin önerilen yolunu anlatır.
+  if (!yerelAdres(girdi.bind)) {
+    return {
+      uyari:
+        `düz HTTP dinleyicisi ${girdi.bind}:PORT üzerinde — bu portu doğrudan dışarı YAYINLAMA. ` +
+        "Konteynerde yayın adresini 127.0.0.1'e sabitle (\"127.0.0.1:8787:8787\"), dışarıya yalnız " +
+        "TLS sonlandırıcıyı aç; aksi hâlde şifreli 443'ün yanında şifresiz bir kapı açık kalır." +
+        (genelDuzMetin ? " (ADSPILOT_ALLOW_PLAINTEXT ile şifresiz genel adres ONAYLANDI.)" : ""),
+    };
+  }
+  return {};
+}

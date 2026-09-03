@@ -8,6 +8,12 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    // Node tipleri BEYAN EDİLEREK gelsin. Eskiden hiçbir yerde istenmiyordu ve derleme,
+    // dört seviye derinde bir ÇALIŞMA-ZAMANI bağımlılığından (google-ads-api → google-gax
+    // → protobufjs → @types/node) hoisting sayesinde düşen tiplere dayanıyordu. Kilit
+    // tazelendiğinde o paket nested'a düşse ya da majörü atlasa derleme, sebebi görünmeyen
+    // yüzlerce hatayla kırılırdı. Paket artık devDependencies'te ve burada açıkça isteniyor.
+    "types": ["node"],
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
     "sourceMap": false

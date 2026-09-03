@@ -13,7 +13,7 @@ services:
     environment:
       # Konteynerin İÇ portu sabit 8787: .env'deki PORT değerini bilerek ezer,
       # yoksa aşağıdaki port eşlemesi kırılır. Dış portu değiştirmek istersen
-      # ports satırının SOL tarafını değiştir (örn. "9000:8787").
+      # ports satırının SOL tarafını değiştir (örn. "127.0.0.1:9000:8787").
       PORT: "8787"
       # Dışarıdan görünen adres — MCP Host/Origin doğrulaması bunu kullanır,
       # eşlenen portla aynı olmalı. .env'de tanımlıysa oradaki değer kazanır.
@@ -30,7 +30,13 @@ services:
       # ADSPILOT_NAC_SIMULATE: "temiz"
       # ADSPILOT_APPROVER_PHONE: "+905551112233"   # simülasyonda da ZORUNLU
     ports:
-      - "8787:8787"
+      # YALNIZ LOOPBACK'E YAYINLA. Sunucu düz HTTP konuşur; TLS'i önündeki nginx/Caddy
+      # sonlandırır. Yayın adresi yazılmazsa Docker 0.0.0.0'a bağlar ve 443'ün YANINDA
+      # şifresiz bir 8787 açılır: saldırgan /connect ve /settings'e düz HTTP konuşur,
+      # /mcp için doğru Host başlığını göndermesi yeter — API anahtarları ve OAuth
+      # kodları açık metin taşınır. Yani ters vekil, atlanabilir bir süs olur.
+      # Dışarıya açmak İSTİYORSAN bunu değil, önündeki TLS sonlandırıcıyı aç.
+      - "127.0.0.1:8787:8787"
     volumes:
       # Kalıcı birim: kullanıcı token'ları burada yaşar; silinirse tüm
       # kullanıcıların bağlantısı düşer ve herkes yeniden /connect yapar.

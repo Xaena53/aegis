@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# HAFTALIK KİLİT TAZELEME.
+#
+# NEDEN VAR: CI'daki `npm audit --omit=dev` kapısı, kilit elle tazelenmediği sürece bir
+# gün kaçınılmaz olarak kırmızıya döner (fast-uri ve qs tam da böyle olmuştu: paket
+# beyanı Eylül'ken kilit Ağustos'ta kalmıştı). Kapı sürekli kırmızı kalınca "yeni
+# kırmızı" ile "eski kırmızı" ayırt edilemez hâle gelir ve kapı susturulur — yani
+# zafiyet kapısı, tam da işe yarayacağı gün güvenilmez olur. Tazeleme otomatik olsun.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Tek tek PR yerine gruplanmış tazeleme: inceleme yükü kapıyı boğmasın.
+      butun-bagimliliklar:
+        patterns: ["*"]
