@@ -378,11 +378,84 @@ export function sniffCharset(contentTypeHeader: string | null, bodyPrefix: strin
   return "utf-8";
 }
 
-/** SSRF guard: reject localhost, private IPs and internal network names (hostname-based). */
+/**
+ * Köşeli parantezleri soyulmuş IPv6 metnini 8 hextet'e AÇAR — ya da IPv6 değilse undefined.
+ *
+ * Açmak şart, çünkü aşağıdaki gömülü-IPv4 tanıları sıkıştırılmış yazımda ("::ffff:7f00:1")
+ * karakter karşılaştırmasıyla bulunamaz. `::` en fazla bir kez geçebilir; iki kez geçen
+ * metin geçerli IPv6 değildir ve tanınmamış sayılır (kapalı arıza: tanınmayan adres
+ * "genel" diye geçmez, çağıran onu DNS'e sorar ve orada çözülemezse istek reddedilir).
+ */
+function hextetleriAc(ham: string): number[] | undefined {
+  /**
+   * Noktalı KUYRUK önce iki hextet'e normalleştirilir: `::ffff:192.168.1.1` ile
+   * `::ffff:c0a8:101` aynı adrestir ve ikisi de aynı yoldan geçmelidir. Bu adım
+   * atlandığında noktalı biçim "hextet değil" diye tanınmaz olur — ölçüldü: mevcut
+   * `::ffff:192.168.1.1` bekçisi tam olarak bu yüzden kızardı.
+   */
+  let v6 = ham;
+  const nokta = /:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v6);
+  if (nokta) {
+    const o = [Number(nokta[1]), Number(nokta[2]), Number(nokta[3]), Number(nokta[4])];
+    if (o.some((x) => x > 255)) return undefined;
+    const ust = ((o[0]! << 8) | o[1]!).toString(16);
+    const alt = ((o[2]! << 8) | o[3]!).toString(16);
+    v6 = `${v6.slice(0, nokta.index)}:${ust}:${alt}`;
+  }
+  const parcalar = v6.split("::");
+  if (parcalar.length > 2) return undefined;
+  const say = (grup: string): number[] =>
+    grup === "" ? [] : grup.split(":").map((x) => (/^[0-9a-f]{1,4}$/.test(x) ? parseInt(x, 16) : NaN));
+  const bas = say(parcalar[0] ?? "");
+  const son = parcalar.length === 2 ? say(parcalar[1] ?? "") : [];
+  if ([...bas, ...son].some(Number.isNaN)) return undefined;
+  if (parcalar.length === 1) return bas.length === 8 ? bas : undefined;
+  const bosluk = 8 - bas.length - son.length;
+  if (bosluk < 0) return undefined;
+  return [...bas, ...Array(bosluk).fill(0), ...son];
+}
+
+/**
+ * Bir IPv6 adresinin İÇİNE GÖMÜLÜ IPv4 adresini noktalı yazıma çevirir — yoksa undefined.
+ *
+ * NEDEN: IPv6, bir IPv4 adresini üç ayrı standart biçimde taşıyabilir ve üçü de aynı
+ * yere gider. Eski kod yalnız `::ffff:` önekini, üstelik yalnız NOKTALI kuyrukla
+ * (`::ffff:192.168.1.1`) tanıyordu. Aynı adresin HEX yazımı (`::ffff:c0a8:101`) o daldan
+ * kaçıyor, ardından "iki nokta var → IPv6" dalında fc/fe8 kalıplarına uymadığı için
+ * GENEL sayılıyordu. Yani 127.0.0.1'e `::ffff:7f00:1` yazarak ulaşılabiliyordu.
+ *
+ * Üç biçim de burada tek yerde çözülür ve sonuç IPv4 kurallarına geri verilir:
+ *   ::ffff:a.b.c.d / ::ffff:XXXX:XXXX  → IPv4-mapped (RFC 4291)
+ *   2002:XXXX:XXXX::/16                → 6to4 (RFC 3056) — 2002:7f00:1:: = 127.0.0.1
+ *   64:ff9b::XXXX:XXXX                 → NAT64 (RFC 6052) — 64:ff9b::7f00:1 = 127.0.0.1
+ */
+function gomuluIPv4(v6: string): string | undefined {
+  const h = hextetleriAc(v6);
+  if (!h) return undefined;
+  const noktali = (ust: number, alt: number): string =>
+    `${(ust >> 8) & 0xff}.${ust & 0xff}.${(alt >> 8) & 0xff}.${alt & 0xff}`;
+  const sifirBas = h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+  if (sifirBas && h[5] === 0xffff) return noktali(h[6]!, h[7]!); // IPv4-mapped
+  if (h[0] === 0x2002) return noktali(h[1]!, h[2]!); // 6to4
+  if (h[0] === 0x64 && h[1] === 0xff9b) return noktali(h[6]!, h[7]!); // NAT64
+  return undefined;
+}
+
+/**
+ * SSRF kapısı: localhost, özel/ayrılmış IP'ler ve iç ağ adları reddedilir.
+ *
+ * Kapsam RFC 1918'in ötesine BİLEREK taşırıldı. "Özel" yalnız 10/172.16/192.168 değildir;
+ * bulut sağlayıcılarının üstveri uçları ayrılmış ama RFC1918 DIŞI bloklarda oturur ve
+ * kimlik istemeden kalıcı erişim jetonu dağıtırlar. Somut örnek: Oracle Cloud'un IMDS'i
+ * 192.0.0.192'dedir — 192.0.0.0/24 (IETF protokol atamaları) içinde, eski listede yok.
+ * Çokluyayın (224/4) ve ayrılmış (240/4, 255.255.255.255 dâhil) bloklar da dışarıdan
+ * hiçbir meşru sayfa barındırmaz; onları geçirmek kapıyı bedavaya genişletmekten başka
+ * bir şey yapmaz.
+ */
 export function isPrivateHostname(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, "");
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
-  if (h === "0.0.0.0" || h === "::" ) return true;
+  if (h === "0.0.0.0" || h === "::") return true;
 
   // IPv6
   if (h.includes(":")) {
@@ -390,19 +463,28 @@ export function isPrivateHostname(hostname: string): boolean {
     if (v6 === "::1") return true;
     if (/^f[cd]/i.test(v6)) return true; // fc00::/7 unique-local
     if (/^fe[89ab]/i.test(v6)) return true; // fe80::/10 link-local
-    if (v6.startsWith("::ffff:")) return isPrivateHostname(v6.slice(7)); // v4-mapped
+    const gomulu = gomuluIPv4(v6);
+    if (gomulu) return isPrivateHostname(gomulu); // mapped / 6to4 / NAT64
     return false;
   }
 
   // IPv4 literal
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
   if (m) {
-    const [a, b] = [Number(m[1]), Number(m[2])];
+    const [a, b, c] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    if (a > 255 || b > 255 || c > 255 || Number(m[4]) > 255) return true; // 999.1.1.1 adres değil
     if (a === 127 || a === 10 || a === 0) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true; // link-local / cloud metadata
+    if (a === 169 && b === 254) return true; // link-local / AWS-GCP-Azure IMDS
     if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a === 192 && b === 0 && c === 0) return true; // 192.0.0.0/24 — Oracle Cloud IMDS 192.0.0.192
+    if (a === 192 && b === 0 && c === 2) return true; // TEST-NET-1
+    if (a === 192 && b === 88 && c === 99) return true; // 6to4 relay anycast
+    if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 kıyaslama
+    if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2
+    if (a === 203 && b === 0 && c === 113) return true; // TEST-NET-3
+    if (a >= 224) return true; // 224/4 çokluyayın + 240/4 ayrılmış + 255.255.255.255
   }
   return false;
 }

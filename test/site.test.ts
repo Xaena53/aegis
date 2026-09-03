@@ -104,6 +104,38 @@ test("KRİTİK SSRF: yönlendirme özel ağa giderse İZLENMEZ", async () => {
   assert.ok(!istenenler.some((u) => u.includes("127.0.0.1")));
 });
 
+test("KRİTİK SSRF: gömülü IPv4 taşıyan IPv6 değişmezi reddedilir", async () => {
+  /**
+   * `::ffff:7f00:1` = 127.0.0.1. Eski kapı yalnız NOKTALI `::ffff:` kuyruğunu tanıdığı
+   * için bu HEX yazım "genel IPv6" sayılıp geçiyordu. Kapı adres biçimine değil, adresin
+   * GİTTİĞİ YERE bakmak zorunda.
+   */
+  cagriKaydet();
+  const out = await analiz("http://[::ffff:7f00:1]/");
+  assert.match(out, /SSRF/, "gömülü IPv4 çözülmeli ve reddedilmeli");
+  assert.equal(istenenler.length, 0, "KRİTİK: bağlantı hiç kurulmamalı");
+});
+
+test("MEŞRU IPv6 sayfası çalışır — kapı köşeli parantezde ölmüyor", async () => {
+  /**
+   * `new URL("http://[2606:4700::1111]/").hostname` parantezleri KORUR, dns.lookup ise
+   * parantezli metni kabul etmez. Bu ikisi arasındaki uyumsuzluk, HER meşru IPv6 sayfasını
+   * "DNS çözümlenemedi" ile öldürüyordu — güvenliğe hiçbir katkısı olmayan bir işlev kaybı.
+   *
+   * Çözümleyici BİLEREK patlayacak şekilde kuruldu: IP değişmezi zaten ölçülmüştür,
+   * DNS'e hiç sorulmamalıdır. Çağrılırsa bu test kızarır.
+   */
+  __setSiteCozumleyiciForTests(async () => {
+    throw new Error("IP değişmezi için DNS'e sorulmamalıydı");
+  });
+  sayfaVer("<html><head><title>IPv6 sayfası</title></head><body><h1>Merhaba</h1></body></html>");
+
+  const out = await analiz("http://[2606:4700::1111]/");
+  assert.doesNotMatch(out, /DNS çözümlenemedi/, "meşru IPv6 DNS'te ölmemeli");
+  assert.match(out, /IPv6 sayfası/, "sayfa gerçekten çekilmeli");
+  assert.equal(istenenler.length, 1, "tam bir istek kurulmalı");
+});
+
 test("KRİTİK SSRF: ad özel adrese ÇÖZÜLÜYORSA reddedilir (DNS rebinding)", async () => {
   /**
    * Adın kendisi masum ("ornek.com"), A kaydı 192.168.1.1. Yalnız metne bakan bir kontrol

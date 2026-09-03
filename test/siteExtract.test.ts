@@ -54,6 +54,59 @@ test("extractPageFacts textChars sınırı", () => {
   assert.ok(f.visibleText.length <= 500);
 });
 
+test("KRİTİK SSRF: bulut üstveri uçları ve ayrılmış bloklar özeldir", () => {
+  /**
+   * Bu vakaların TAMAMI eski listeden GEÇİYORDU. En pahalısı 192.0.0.192: Oracle Cloud'un
+   * IMDS'i oradadır, kimlik istemez ve çağırana kalıcı erişim jetonu verir. RFC1918
+   * dışında olduğu için "özel ağ" sezgisine takılmaz — kapıyı adres adres yazmak şart.
+   *
+   * Her satır AYRI iddiadır: tek bir aralık listeden düşerse hangi aralık olduğu
+   * doğrudan görünür. Toplu bir döngü, kaybolan aralığı gizlerdi.
+   */
+  assert.equal(isPrivateHostname("192.0.0.192"), true, "Oracle Cloud IMDS");
+  assert.equal(isPrivateHostname("192.0.0.1"), true, "192.0.0.0/24 IETF atamaları");
+  assert.equal(isPrivateHostname("192.0.2.5"), true, "TEST-NET-1");
+  assert.equal(isPrivateHostname("192.88.99.1"), true, "6to4 aktarma anycast");
+  assert.equal(isPrivateHostname("198.18.0.1"), true, "kıyaslama 198.18.0.0/15");
+  assert.equal(isPrivateHostname("198.19.255.254"), true, "kıyaslama üst sınır");
+  assert.equal(isPrivateHostname("198.51.100.7"), true, "TEST-NET-2");
+  assert.equal(isPrivateHostname("203.0.113.7"), true, "TEST-NET-3");
+  assert.equal(isPrivateHostname("224.0.0.1"), true, "çokluyayın");
+  assert.equal(isPrivateHostname("239.255.255.250"), true, "SSDP çokluyayın");
+  assert.equal(isPrivateHostname("240.0.0.1"), true, "ayrılmış 240/4");
+  assert.equal(isPrivateHostname("255.255.255.255"), true, "sınırlı yayın");
+
+  // Komşu meşru adresler AÇIK kalmalı — kapı genişledi diye interneti kapatmasın.
+  assert.equal(isPrivateHostname("192.0.1.1"), false, "192.0.1.0/24 meşru");
+  assert.equal(isPrivateHostname("198.17.255.255"), false, "198.18'in hemen altı meşru");
+  assert.equal(isPrivateHostname("198.20.0.1"), false, "198.18/15'in hemen üstü meşru");
+  assert.equal(isPrivateHostname("223.255.255.255"), false, "224'ün hemen altı meşru");
+  assert.equal(isPrivateHostname("192.88.98.1"), false, "komşu blok meşru");
+});
+
+test("KRİTİK SSRF: IPv6 içine GÖMÜLÜ IPv4 çözülür (mapped/6to4/NAT64)", () => {
+  /**
+   * Aynı hedefe giden üç ayrı yazım. Eski kod yalnız `::ffff:` önekini, üstelik yalnız
+   * NOKTALI kuyrukla tanıyordu; aşağıdaki HEX biçimler "iki nokta var → IPv6" dalına
+   * düşüp fc/fe8 kalıplarına uymadıkları için GENEL sayılıyordu. Yani 127.0.0.1'e
+   * `::ffff:7f00:1` yazarak ulaşılabiliyordu.
+   */
+  assert.equal(isPrivateHostname("::ffff:7f00:1"), true, "IPv4-mapped hex → 127.0.0.1");
+  assert.equal(isPrivateHostname("::ffff:c0a8:101"), true, "IPv4-mapped hex → 192.168.1.1");
+  assert.equal(isPrivateHostname("::ffff:a9fe:a9fe"), true, "IPv4-mapped hex → 169.254.169.254 IMDS");
+  assert.equal(isPrivateHostname("2002:7f00:1::"), true, "6to4 → 127.0.0.1");
+  assert.equal(isPrivateHostname("2002:a9fe:a9fe::"), true, "6to4 → 169.254.169.254");
+  assert.equal(isPrivateHostname("64:ff9b::7f00:1"), true, "NAT64 → 127.0.0.1");
+  assert.equal(isPrivateHostname("64:ff9b::a9fe:a9fe"), true, "NAT64 → 169.254.169.254");
+  assert.equal(isPrivateHostname("[::ffff:7f00:1]"), true, "köşeli parantezli hâli de");
+
+  // Gömülü IPv4'ü GENEL olan biçimler geçmeli — dönüşüm kör bir ret değil.
+  assert.equal(isPrivateHostname("::ffff:0808:0808"), false, "mapped → 8.8.8.8 meşru");
+  assert.equal(isPrivateHostname("2002:0808:0808::"), false, "6to4 → 8.8.8.8 meşru");
+  assert.equal(isPrivateHostname("2606:4700::1111"), false, "düz genel IPv6 meşru");
+  assert.equal(isPrivateHostname("2001:db8::1"), false, "gömülü IPv4 yok");
+});
+
 test("isPrivateHostname özel ağları yakalar", () => {
   for (const h of ["localhost", "foo.localhost", "printer.local", "db.internal",
                    "127.0.0.1", "127.9.9.9", "10.0.0.5", "172.16.0.1", "172.31.255.255",

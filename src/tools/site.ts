@@ -6,6 +6,7 @@
  * SSRF checks run per redirect hop, the body is capped, and extracted content is
  * returned inside a delimited untrusted-data block.
  */
+import net from "node:net";
 import { z } from "zod";
 import { lookup } from "node:dns/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -87,9 +88,21 @@ async function assertPublicHost(hostname: string): Promise<void> {
   if (isPrivateHostname(hostname)) {
     throw new Error(`'${hostname}' yerel/özel ağ adresi — SSRF koruması.`);
   }
+  /**
+   * `new URL("http://[2606:4700::1111]/").hostname` KÖŞELİ PARANTEZLERİ KORUR (Node'da
+   * ölçüldü). isPrivateHostname parantezi kendi soyar, ama dns.lookup soymaz: parantezli
+   * metin ona geçerli bir ad değildir, çözümleme patlar ve MEŞRU her IPv6 sayfası
+   * "DNS çözümlenemedi" ile reddedilirdi — kapı güvenliği artırmadan işlevi öldürüyordu.
+   *
+   * IP değişmezinin ayrıca çözümlenmesi zaten anlamsızdır: yukarıdaki kontrol onu
+   * doğrudan ölçtü, DNS'in ekleyeceği bir şey yok.
+   */
+  const cozulecek = hostname.replace(/^\[|\]$/g, "");
+  if (net.isIP(cozulecek) !== 0) return;
+
   let addrs: { address: string }[];
   try {
-    addrs = await cozumleyici(hostname);
+    addrs = await cozumleyici(cozulecek);
   } catch {
     throw new Error(`DNS çözümlenemedi: ${hostname}`);
   }
