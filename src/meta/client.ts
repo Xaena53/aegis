@@ -285,7 +285,31 @@ async function graf(
       istek.body = new URLSearchParams({ ...govde, access_token: token }).toString();
     }
     const hedefUrl = yontem === "GET" ? `${url}?${new URLSearchParams({ ...govde, access_token: token })}` : url;
-    const cevap = await fetch(hedefUrl, istek);
+    let cevap: Response;
+    try {
+      cevap = await fetch(hedefUrl, istek);
+    } catch (e: any) {
+      /**
+       * ZAMAN AŞIMINA UĞRAYAN BİR YAZMA "BAŞARISIZ" DEĞİLDİR — SONUCU BİLİNMEYENDİR.
+       *
+       * İptal istemci tarafında olur; Meta isteği çoktan almış ve UYGULAMIŞ olabilir.
+       * "Meta işlemi başarısız" demek, ajanı ve kullanıcıyı hiçbir şey olmadığına
+       * inandırır; tipik sonraki hamle tekrar denemektir ve bu, bütçeyi ikinci kez
+       * değiştirmek ya da ikinci bir kampanya doğurmak demek olabilir.
+       *
+       * OKUMA farklıdır: bir GET'in iptali hiçbir şey değiştirmez, o gerçekten
+       * başarısızdır. Bu yüzden ayrım yönteme göre yapılır.
+       */
+      if (e?.name === "AbortError" && yontem === "POST") {
+        throw new Error(
+          "Meta işleminin SONUCU BİLİNMİYOR: istek 15 saniyede yanıt vermediği için " +
+            "iptal edildi, ama iptal bizim tarafımızdadır — Meta isteği almış ve UYGULAMIŞ " +
+            "olabilir. TEKRAR DENEME; önce Meta Ads Manager'dan kampanyanın güncel durumunu " +
+            "ve bütçesini doğrula."
+        );
+      }
+      throw e;
+    }
     const metin = await cevap.text();
     if (!cevap.ok) {
       throw new Error(`Meta API ${cevap.status}: ${hataTemizle(metin, token)}`);
@@ -506,7 +530,21 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
         special_ad_categories: "[]",
         daily_budget: String(minorUnit(gunlukButce, carpan)),
       });
-      return { id: String(cevap.id), ad, durum: "PAUSED", gunlukButce };
+      /**
+       * KİMLİKSİZ YANIT BAŞARI DEĞİLDİR. `String(cevap.id)` undefined'ı "undefined"
+       * dizesine çeviriyordu ve araç "kampanya oluşturuldu (id undefined)" diye
+       * raporluyordu: kullanıcı kampanyanın kurulduğuna inanıyor, o kimlikle yapılan
+       * her sonraki çağrı ise anlamsız bir kimliğe gidiyordu. Kampanya gerçekten
+       * kurulmuş da olabilir kurulmamış da — ikisi de "oluşturuldu" değildir.
+       */
+      const yeniId = cevap?.id;
+      if (yeniId === undefined || yeniId === null || String(yeniId).trim() === "") {
+        throw new Error(
+          "Meta kampanya oluşturma yanıtında kimlik (id) yok — kampanyanın kurulup " +
+            "kurulmadığı doğrulanamıyor. TEKRAR DENEME; önce Meta Ads Manager'dan kontrol et."
+        );
+      }
+      return { id: String(yeniId), ad, durum: "PAUSED", gunlukButce };
     },
     async kampanyaOku(kampanyaId) {
       const c = await graf(ayar, kampanyaId, { fields: "id,name,status,daily_budget" }, "GET");

@@ -251,3 +251,80 @@ test("çarpansız çevrim FIRLATIR — sessizce NaN üretmez", () => {
   assert.equal(minorUnit(100, 100), 10000, "geçerli çarpanda çalışmaya devam etmeli");
   assert.equal(minorUnitTers(10000, 1), 10000);
 });
+
+/* ── Bilinmeyen sonuç, başarısızlık DEĞİLDİR ──────────────────────────────────
+ *
+ * İki ayrı vaka, aynı ilke: "olmadı" demek ile "olup olmadığını bilmiyorum" demek aynı
+ * şey değildir. Birincisi ajanı ve kullanıcıyı tekrar denemeye iter; yazma yollarında
+ * tekrar denemek bütçeyi ikinci kez değiştirmek ya da ikinci bir kampanya doğurmak
+ * demek olabilir.
+ */
+
+test("KRİTİK: 15 sn'de iptal edilen YAZMA 'başarısız' değil 'sonucu bilinmiyor' der", async () => {
+  /**
+   * İptal İSTEMCİ tarafındadır; Meta isteği almış ve uygulamış olabilir. Eski metin
+   * ("Meta işlemi başarısız") hiçbir şey olmadığını ima ediyordu.
+   */
+  globalThis.fetch = (async () => {
+    const e: any = new Error("The operation was aborted");
+    e.name = "AbortError";
+    throw e;
+  }) as typeof fetch;
+  __setMetaKanalForTests(undefined);
+  const k = metaKanali(AYAR);
+
+  await assert.rejects(
+    () => k.durumDegistir("120200000000009", "PAUSED"),
+    (e: any) => {
+      assert.match(e.message, /SONUCU BİLİNMİYOR/u, "sonucun bilinmediği açıkça söylenmeli");
+      assert.match(e.message, /UYGULAMIŞ olabilir/u, "işlemin geçmiş olabileceği söylenmeli");
+      assert.match(e.message, /TEKRAR DENEME/u, "tekrar denemenin tehlikesi söylenmeli");
+      assert.doesNotMatch(e.message, /başarısız/iu, "'başarısız' yanlış ve tehlikeli bir özettir");
+      return true;
+    }
+  );
+});
+
+test("İptal edilen OKUMA gerçekten başarısızdır (yöntem ayrımı korunur)", async () => {
+  /**
+   * Bir GET'in iptali hiçbir şey değiştirmez. Düzeltmeyi "her iptal belirsizdir"e
+   * genişletmek, okuma arızalarını da çözülemez belirsizlik gibi raporlardı.
+   */
+  globalThis.fetch = (async () => {
+    const e: any = new Error("The operation was aborted");
+    e.name = "AbortError";
+    throw e;
+  }) as typeof fetch;
+  __setMetaKanalForTests(undefined);
+  const k = metaKanali(AYAR);
+
+  await assert.rejects(
+    () => k.kampanyaOku("120200000000009"),
+    (e: any) => {
+      assert.doesNotMatch(e.message, /SONUCU BİLİNMİYOR/u, "okuma iptali belirsizlik değildir");
+      return true;
+    }
+  );
+});
+
+test("KRİTİK: kimliksiz oluşturma yanıtı 'oluşturuldu' diye raporlanmaz", async () => {
+  /**
+   * `String(cevap.id)` undefined'ı "undefined" dizesine çeviriyordu: kullanıcı kampanyanın
+   * kurulduğuna inanıyor, o kimlikle yapılan her sonraki çağrı anlamsız bir kimliğe
+   * gidiyordu.
+   */
+  const k = kanalKur({ name: "Yaz" }); // yanıtta id YOK
+  await assert.rejects(
+    () => k.kampanyaOlustur({ ad: "Yaz", hedef: "OUTCOME_TRAFFIC", gunlukButce: 100 }),
+    (e: any) => {
+      assert.match(e.message, /kimlik \(id\) yok/u, "eksik kimlik adıyla söylenmeli");
+      assert.doesNotMatch(e.message, /undefined/u, "'undefined' kimlik olarak sunulmamalı");
+      return true;
+    }
+  );
+});
+
+test("boş dizeli kimlik de kabul edilmez", async () => {
+  const k = kanalKur({ id: "   " });
+  await assert.rejects(() => k.kampanyaOlustur({ ad: "Yaz", hedef: "OUTCOME_TRAFFIC", gunlukButce: 100 }));
+});
