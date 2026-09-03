@@ -32,7 +32,17 @@ import { fileURLToPath } from "node:url";
 import { KADEME_UYGUN, ZINCIR_HALKALARI } from "../src/networkTrust.js";
 
 const yol = (goreli: string) => fileURLToPath(new URL(goreli, import.meta.url));
-const oku = (goreli: string) => readFileSync(yol(goreli), "utf8");
+/**
+ * Belgeler LF'e NORMALLEŞTİRİLEREK okunur.
+ *
+ * Aşağıdaki bölüm sınırları BOŞ SATIR arıyor. Windows'ta bir düzenleyici — ya da bu
+ * depoyu düzenleyen bir betik — dosyayı CRLF'e çevirdiğinde o sınır CR+LF çiftine
+ * dönüşür, arama tutmaz ve gözcü BÖLÜM YERİNE DOSYANIN YARISINI tarar: iddia, belgenin
+ * geri kalanından toplanmış anlamsız bir listeyle karşılaştırılıp kızarır. Ölçüldü —
+ * tam olarak böyle oldu. Gözcünün kızarma sebebi belgenin İÇERİĞİ olmalı, hangi işletim
+ * sisteminde kaydedildiği değil.
+ */
+const oku = (goreli: string) => readFileSync(yol(goreli), "utf8").replace(/\r\n/g, "\n");
 
 const BELGE_DEMO = oku("../docs/DEMO.md");
 const BELGE_CAMARA = oku("../docs/CAMARA.md");
