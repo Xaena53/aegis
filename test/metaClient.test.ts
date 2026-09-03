@@ -14,7 +14,13 @@
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { metaKanali, hataTemizle, __setMetaKanalForTests } from "../src/meta/client.js";
+import {
+  metaKanali,
+  hataTemizle,
+  minorUnit,
+  minorUnitTers,
+  __setMetaKanalForTests,
+} from "../src/meta/client.js";
 
 const TOKEN = "TEST-ONLY-gizli-jeton-123456";
 const AYAR = { metaToken: TOKEN, metaAdAccountId: "act_1" };
@@ -31,15 +37,23 @@ afterEach(() => {
   urller = [];
 });
 
-function kanalKur(yanitGovdesi: unknown = { id: "120200000000009" }) {
+/** Hesabın para birimi yanıtı — çarpan artık hesaptan okunuyor (USD 100, JPY 1). */
+const USD = { currency: "USD", currency_offset: 100 };
+
+function kanalKur(yanitGovdesi: unknown = { id: "120200000000009" }, hesap: unknown = USD) {
   globalThis.fetch = (async (u: any, init: any) => {
     urller.push(String(u));
     if (init?.body) govdeler.push(new URLSearchParams(String(init.body)));
-    return { ok: true, text: async () => JSON.stringify(yanitGovdesi) } as any;
+    const yol = String(u).split("?")[0];
+    const govde = yol.endsWith("/act_1") ? hesap : yanitGovdesi;
+    return { ok: true, text: async () => JSON.stringify(govde) } as any;
   }) as typeof fetch;
   __setMetaKanalForTests(undefined);
   return metaKanali(AYAR);
 }
+
+/** POST edilen kampanya oluşturma isteği (hesap GET'i gövdesiz olduğu için ayıklanır). */
+const olusturmaGovdeleri = () => govdeler.filter((g) => g.get("name") !== null);
 
 /* ── kampanyalar duraklatılmış doğar ──────────────────────────────────────────── */
 
@@ -150,4 +164,90 @@ test("KRİTİK SIZINTI: API hatası ajana ulaşırken jeton taşımaz", async ()
 test("jeton tanımsızken maskeleme yine de çalışır (çökmez)", () => {
   const temiz = hataTemizle('{"url":"https://x/?access_token=abc123"}', undefined);
   assert.match(temiz, /access_token=\*\*\*/, "sorgu parametresi jeton bilinmese de maskelenmeli");
+});
+
+
+/* ── para birimi telde: çarpan hesaptan gelir ─────────────────────────────── */
+
+test("KRİTİK: JPY hesapta telde giden minor unit 100 ile ÇARPILMAZ", async () => {
+  /**
+   * Sabit ×100, JPY (offset 1) bir hesapta ¥10.000'lik bir bütçeyi Meta'ya 1.000.000
+   * olarak gönderirdi: aynı onay, yüz katı harcama. Çarpan hesabın para biriminden
+   * okunmadıkça bu sapma sessizdir — telde ölçülmesinin sebebi bu.
+   */
+  const k = kanalKur({ id: "1" }, { currency: "JPY", currency_offset: 1 });
+  await k.kampanyaOlustur({ ad: "Yaz", hedef: "OUTCOME_TRAFFIC", gunlukButce: 10_000 });
+
+  assert.equal(olusturmaGovdeleri()[0].get("daily_budget"), "10000", "JPY: 1 birim = 1 yen");
+});
+
+test("USD hesapta aynı tutar 100 ile çarpılır (karşı kontrol)", async () => {
+  const k = kanalKur({ id: "1" });
+  await k.kampanyaOlustur({ ad: "Yaz", hedef: "OUTCOME_TRAFFIC", gunlukButce: 10_000 });
+  assert.equal(olusturmaGovdeleri()[0].get("daily_budget"), "1000000", "USD: 1 birim = 100 cent");
+});
+
+test("bütçe güncelleme de hesabın çarpanını kullanır", async () => {
+  const k = kanalKur({ id: "1" }, { currency: "JPY", currency_offset: 1 });
+  await k.butceGuncelle("120200000000001", 500);
+  const guncelleme = govdeler.filter((g) => g.get("daily_budget") !== null);
+  assert.equal(guncelleme[0].get("daily_budget"), "500");
+});
+
+for (const [ad, hesap] of [
+  ["alan yok", {}],
+  ["offset yok", { currency: "USD" }],
+  ["offset sayı değil", { currency: "USD", currency_offset: "yüz" }],
+  ["offset sıfır", { currency: "USD", currency_offset: 0 }],
+] as Array<[string, unknown]>) {
+  test(`KRİTİK: para birimi okunamıyorsa (${ad}) kampanya HİÇ oluşturulmaz`, async () => {
+    /**
+     * Yanlış ölçekli bir bütçeyle kampanya doğurmaktansa hiç doğurmamak: yazma yolunda
+     * belirsizliğin karşılığı tahmin değil, hiç istek göndermemektir.
+     */
+    const k = kanalKur({ id: "1" }, hesap);
+    const hata = await k
+      .kampanyaOlustur({ ad: "Yaz", hedef: "OUTCOME_TRAFFIC", gunlukButce: 100 })
+      .then(() => null, (e: Error) => e);
+
+    assert.ok(hata, "okunamayan para birimi sessizce geçilemez");
+    assert.match(hata!.message, /para birimi okunamadı/);
+    assert.equal(olusturmaGovdeleri().length, 0, "KRİTİK: Meta'ya oluşturma isteği gitmemeli");
+  });
+
+  test(`KRİTİK: para birimi okunamıyorsa (${ad}) bütçe güncelleme isteği GİTMEZ`, async () => {
+    const k = kanalKur({ id: "1" }, hesap);
+    const hata = await k.butceGuncelle("120200000000001", 100).then(() => null, (e: Error) => e);
+
+    assert.ok(hata);
+    assert.equal(
+      govdeler.filter((g) => g.get("daily_budget") !== null).length,
+      0,
+      "KRİTİK: ölçeği bilinmeyen bir bütçe telde yazılamaz"
+    );
+  });
+}
+
+test("çarpan bir kez okunur, her çağrıda hesap yeniden sorulmaz", async () => {
+  const k = kanalKur({ id: "1" });
+  await k.kampanyaOlustur({ ad: "A", hedef: "OUTCOME_TRAFFIC", gunlukButce: 10 });
+  await k.butceGuncelle("120200000000001", 20);
+  assert.equal(
+    urller.filter((u) => u.split("?")[0].endsWith("/act_1")).length,
+    1,
+    "para birimi hesap başına sabittir; her yazmada tekrar sorulması gereksiz gecikmedir"
+  );
+});
+
+test("çarpansız çevrim FIRLATIR — sessizce NaN üretmez", () => {
+  /**
+   * Çarpan zorunlu parametre; yine de 0/negatif/kesirli bir değer geçirilirse sonuç
+   * NaN ya da Infinity olurdu ve o sayı doğrudan tavan kapısına girerdi.
+   */
+  for (const kotu of [0, -1, 1.5, NaN]) {
+    assert.throws(() => minorUnit(100, kotu), /para birimi çarpanı/, `minorUnit(${kotu})`);
+    assert.throws(() => minorUnitTers(100, kotu), /para birimi çarpanı/, `minorUnitTers(${kotu})`);
+  }
+  assert.equal(minorUnit(100, 100), 10000, "geçerli çarpanda çalışmaya devam etmeli");
+  assert.equal(minorUnitTers(10000, 1), 10000);
 });

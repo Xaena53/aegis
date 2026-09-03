@@ -99,18 +99,29 @@ if (yazmaModu) {
     );
 
     const geri = await kanal.kampanyaOku(k.id);
+    /**
+     * DURUM ARTIK "OKUNDU MU" SORUSUNU DA SORUYOR. Eskiden istemci `status !== "ACTIVE"`
+     * olan her gövdeyi PAUSED'a çeviriyordu; bu satır Meta hiç `status` göndermese bile
+     * yeşil basıyor, yani "bilinmiyor"u bir teyit gibi yazıyordu. Artık okunamayan durum
+     * undefined'dır ve bu doğrulama KALIR — istediğimiz de bu.
+     */
     kayit(
-      "geri okuma Meta'dan PAUSED doğruluyor",
+      "geri okuma Meta'dan PAUSED doğruluyor (durum GERÇEKTEN okundu)",
       geri.durum === "PAUSED",
-      `Meta'nın döndürdüğü durum = ${geri.durum}`
+      `Meta'nın döndürdüğü durum = ${geri.durum ?? "okunamadı"}${geri.durumNotu ? ` · ${geri.durumNotu}` : ""}`
     );
     kayit(
       "bütçe geri okunabiliyor ve kaynağı bildiriliyor",
       geri.gunlukButce !== undefined,
       `gunlukButce = ${geri.gunlukButce} · kaynak = ${geri.butceKaynagi}${geri.butceNotu ? ` · not: ${geri.butceNotu}` : ""}`
     );
+    /**
+     * Bu satır aynı zamanda PARA BİRİMİ ÇARPANININ canlı kanıtıdır: çarpan hesabın
+     * `currency_offset` alanından okunuyor ve yazma ile okuma aynı çarpanı kullanıyor.
+     * Yanlış çarpan (ör. JPY hesapta sabit ×100) burada 100 kat sapma olarak görünür.
+     */
     kayit(
-      "bütçe gidiş-dönüşte bozulmuyor (minor unit çevrimi)",
+      "bütçe gidiş-dönüşte bozulmuyor (hesabın para birimi çarpanı doğru okundu)",
       geri.gunlukButce === 100,
       `yazılan 100 → okunan ${geri.gunlukButce}`
     );

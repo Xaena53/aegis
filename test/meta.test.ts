@@ -39,6 +39,8 @@ interface SahteSecenek {
   mevcutButce?: number;
   /** Bütçe okunamadıysa istemcinin bildirdiği sebep (ret mesajına geçmeli). */
   butceNotu?: string;
+  /** Rakamın NEREDEN geldiği; onay özetinin bunu söylemesi gerekir. */
+  butceKaynagi?: "kampanya" | "reklam-setleri";
   /** İnsan onay istemine verilecek cevap. */
   onay?: boolean;
   /** Yazma izni. */
@@ -51,12 +53,19 @@ interface SahteSecenek {
 let cagrilar: string[] = [];
 /** Gösterilen onay istemi sayısı — "istem hiç gösterilmedi" ölçülebilsin diye. */
 let istemSayisi = 0;
+/**
+ * İnsana GÖSTERİLEN metinler. Sayıyı saymak "insana soruldu mu" sorusunu cevaplar ama
+ * "insana NE soruldu" sorusunu cevaplamaz — ve onay özetinin içeriği tam da operatörün
+ * rakamı Ads Manager'da doğrulayıp doğrulayamayacağını belirleyen şeydir.
+ */
+let istemMetinleri: string[] = [];
 
 afterEach(() => {
   __setMetaKanalForTests(undefined);
   __setSimSwapKanalForTests(undefined);
   cagrilar = [];
   istemSayisi = 0;
+  istemMetinleri = [];
   // Günlük bir SÜREÇ AYARI: açık bırakılırsa sonraki testler farkında olmadan yazar.
   delete process.env.ADSPILOT_DECISION_LOG;
   if (gunlukKok) {
@@ -72,6 +81,7 @@ async function kur(opts: SahteSecenek = {}) {
     durum: "PAUSED",
     gunlukButce: opts.mevcutButce,
     butceNotu: opts.butceNotu,
+    butceKaynagi: opts.butceKaynagi,
   };
 
   __setMetaKanalForTests({
@@ -120,8 +130,9 @@ async function kur(opts: SahteSecenek = {}) {
     { name: "meta-test", version: "1.0.0" },
     { capabilities: { elicitation: { form: {} } } }
   );
-  istemci.setRequestHandler(ElicitRequestSchema, async () => {
+  istemci.setRequestHandler(ElicitRequestSchema, async (istek: any) => {
     istemSayisi++;
+    istemMetinleri.push(String(istek?.params?.message ?? ""));
     return opts.onay === false
       ? { action: "decline" as const }
       : { action: "accept" as const, content: { onay: true } };
@@ -284,9 +295,18 @@ test("KRİTİK: Meta hata metni access_token'ı ajana SIZDIRMAZ", () => {
 /* ── 5) Birim dönüşümü — iki API'nin iki ayrı ölçeği ──────────────────────── */
 
 test("minorUnit: Meta kuruş ister — 12.34 → 1234, yuvarlama aleyhe kesmez", () => {
-  assert.equal(minorUnit(12.34), 1234);
-  assert.equal(minorUnit(1.005), 101, "kesme değil yuvarlama: müşteri aleyhine eksiltme olmaz");
-  assert.equal(minorUnit(0.1), 10);
+  assert.equal(minorUnit(12.34, 100), 1234);
+  assert.equal(minorUnit(1.005, 100), 101, "kesme değil yuvarlama: müşteri aleyhine eksiltme olmaz");
+  assert.equal(minorUnit(0.1, 100), 10);
+});
+
+test("minorUnit: çarpan para birimine göre değişir — JPY'de ×100 yoktur", () => {
+  /**
+   * Çarpanın parametre olmasının sebebi bu: aynı sayı USD hesapta 1234, JPY hesapta
+   * 12'dir (offset 1, tam sayıya yuvarlanır). Sabit ×100 JPY'de 100 kat fazla harcatırdı.
+   */
+  assert.equal(minorUnit(1234, 1), 1234, "JPY: 1 birim = 1 yen");
+  assert.equal(minorUnit(1234, 100), 123400, "USD: 1 birim = 100 cent");
 });
 
 test("hesapYolu: act_ öneki tekrarlanmaz, çıplak rakam normalize edilir", () => {
@@ -443,13 +463,45 @@ test("bütçe reklam setlerinden geldiyse onay özeti bunu SÖYLER", async () =>
    * Operatör onay ekranında gördüğü rakamı Ads Manager'da doğrulamak isterse, reklam
    * setleri toplamını kampanya sayfasında ARAYAMAZ — orada öyle bir sayı yoktur.
    * Özet, rakamın nereden geldiğini söylemezse operatör yanlış yere bakar.
+   *
+   * Bu test bir kez adında bir davranış vaat edip yalnız `istemSayisi === 1` iddiasını
+   * taşıyordu: sahte kampanya `butceKaynagi` bile set etmiyordu, dolayısıyla açıklama
+   * cümlesi tools/meta.ts'ten silinse de yeşil kalıyordu. Artık istemin METNİ ölçülüyor.
    */
-  const c = await kur({ onay: true, mevcutButce: 300 });
+  const c = await kur({ onay: true, mevcutButce: 300, butceKaynagi: "reklam-setleri" });
   await c.callTool({
     name: "set_meta_campaign_status",
     arguments: { campaignId: "120200000000001", status: "ACTIVE" },
   });
+
   assert.equal(istemSayisi, 1, "onay istemi gösterilmeli");
+  assert.match(istemMetinleri[0], /300/, "rakam özet metninde görünmeli");
+  assert.match(
+    istemMetinleri[0],
+    /reklam setlerinin toplamı/,
+    "operatör bu rakamı kampanya sayfasında arayamaz; nereden geldiği yazılmalı"
+  );
+});
+
+test("bütçe KAMPANYA düzeyindeyse özet o açıklamayı EKLEMEZ (karşı kontrol)", async () => {
+  /**
+   * Açıklama her zaman yazılsaydı da test yeşil kalırdı — ve o zaman CBO kampanyalarda
+   * operatöre var olmayan bir "toplam" anlatılırdı. Cümlenin KOŞULLU olduğu ancak
+   * karşı kontrolle ölçülür.
+   */
+  const c = await kur({ onay: true, mevcutButce: 300, butceKaynagi: "kampanya" });
+  await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  assert.equal(istemSayisi, 1);
+  assert.doesNotMatch(
+    istemMetinleri[0],
+    /reklam setlerinin toplamı/,
+    "kampanya düzeyi bütçede böyle bir toplam yoktur"
+  );
+  assert.match(istemMetinleri[0], /300/, "rakam yine de görünmeli");
 });
 
 test("Tavanın ALTINDAKİ bütçe yayına almayı engellemez — kapı geçirgen kalmalı", async () => {
