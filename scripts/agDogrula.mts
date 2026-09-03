@@ -167,8 +167,20 @@ console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══�
   );
   kayit(
     "yükseltmeyi GERÇEK halkalar taşıyor",
-    (k.kademe?.dogrulayan.length ?? 0) >= 2,
-    `${k.kademe?.dogrulayan.length ?? 0} bağımsız gerçek sinyal`
+    (k.kademe?.dogrulayan.length ?? 0) >= 1,
+    `${k.kademe?.dogrulayan.length ?? 0} bağımsız gerçek sinyal: ${k.kademe?.dogrulayan.join(",") ?? "-"}`
+  );
+  /**
+   * KEFİL İLGİLİ OLMAK ZORUNDA. Bu kontrol eskiden yalnız SAYIYA bakıyordu ("en az iki
+   * gerçek sinyal") ve sayı, erişilebilirlik halkasını da kefil saydığı için doluyordu.
+   * Erişilebilirlik bir CANLILIK sinyalidir: ele geçirilmiş bir SIM'deki telefon da
+   * şebekeden erişilebilirdir, dolayısıyla o sinyalle ÇELİŞMEZ ve ona kefil olamaz
+   * (bkz. KEFIL_ESLEMESI). Canlı kontrol artık sayı yerine bunu ölçüyor.
+   */
+  kayit(
+    "canlılık sinyali kefil sayılmıyor (erişilebilirlik yükseltme taşımaz)",
+    !(k.kademe?.dogrulayan ?? []).includes("reach"),
+    `doğrulayanlar: ${k.kademe?.dogrulayan.join(",") ?? "-"}`
   );
   kayit(
     "iz 'yukseltildi' taşıyor (denetçi ayırt edebilsin)",
