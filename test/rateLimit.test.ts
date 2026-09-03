@@ -83,3 +83,45 @@ test("sweep süresi geçmiş pencereleri temizler (bellek)", () => {
   // A fresh window after the sweep grants the full allowance
   assert.deepEqual(rl.remaining(1), { minute: 5, day: 10 });
 });
+
+/* ── JETON = İŞLEM, İSTEK DEĞİL ────────────────────────────────────────────────
+ *
+ * Sayaç istek başına bir kez arttığı sürece, tek bir POST'a konan N elemanlı JSON-RPC
+ * dizisi N araç çağrısını tek jetona satın alıyordu. Ölçülen şey (istek) ile korunan
+ * şey (paylaşılan upstream kotası, CAMARA sorguları, bu süreç) birbirinden kopmuştu.
+ * ─────────────────────────────────────────────────────────────────────────────── */
+
+test("toplu istek ADEDİ kadar jeton düşer (tek çağrı, N işlem)", () => {
+  const c = clock();
+  const rl = new RateLimiter({ perMinute: 10, perDay: 100 }, c.now);
+  assert.equal(rl.check(1, 6).allowed, true, "6 işlem 10'luk tavana sığmalı");
+  assert.deepEqual(rl.remaining(1), { minute: 4, day: 94 }, "altı jeton düşmeli, bir değil");
+  assert.equal(rl.check(1, 5).allowed, false, "kalan 4 iken 5 işlem geçemez");
+  assert.equal(rl.check(1, 4).allowed, true, "tam sığan istek geçmeli");
+  assert.deepEqual(rl.remaining(1), { minute: 0, day: 90 });
+});
+
+test("tavanı tek başına aşan toplu istek KISMEN koşmaz, HİÇ koşmaz", () => {
+  const c = clock();
+  const rl = new RateLimiter({ perMinute: 5, perDay: 100 }, c.now);
+  const red = rl.check(1, 50);
+  assert.equal(red.allowed, false);
+  assert.match(red.reason!, /50 işlem/, "kaç işlem istendiği söylenmeli");
+  assert.deepEqual(rl.remaining(1), { minute: 5, day: 100 }, "reddedilen istek sayacı ARTIRMAZ");
+});
+
+test("günlük kota da işlem başına tükenir", () => {
+  const c = clock();
+  const rl = new RateLimiter({ perMinute: 100, perDay: 10 }, c.now);
+  assert.equal(rl.check(1, 7).allowed, true);
+  c.advance(61_000); // dakikalık pencere sıfırlanır, günlük sıfırlanmaz
+  assert.equal(rl.check(1, 7).allowed, false, "günlük kota 10 iken 7+7 geçemez");
+  assert.equal(rl.check(1, 3).allowed, true);
+});
+
+test("adet varsayılanı 1 (mevcut çağrı yerleri değişmeden çalışır)", () => {
+  const c = clock();
+  const rl = new RateLimiter({ perMinute: 3, perDay: 100 }, c.now);
+  rl.check(1);
+  assert.deepEqual(rl.remaining(1), { minute: 2, day: 99 });
+});

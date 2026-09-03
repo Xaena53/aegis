@@ -25,7 +25,7 @@ import {
   minorUnit,
   type MetaKampanya,
 } from "../src/meta/client.js";
-import { __setSimSwapKanalForTests } from "../src/networkTrust.js";
+import { __setSimSwapKanalForTests, __setErisimKanalForTests } from "../src/networkTrust.js";
 
 const HESAP = "act_555000111";
 const TOKEN = "meta-gizli-jeton-1234567890";
@@ -47,6 +47,16 @@ interface SahteSecenek {
   yazma?: boolean;
   metaToken?: string;
   metaHesap?: string;
+  /**
+   * Kademeli doğrulama (ADSPILOT_STEPUP) açık mı? Açıkken erişilebilirlik halkası da
+   * GERÇEK kanaldan koşar: yükseltmenin en az bir gerçek doğrulayana ihtiyacı vardır.
+   */
+  stepUp?: boolean;
+  /**
+   * İstemci MCP elicitation BİLDİRMİYOR — yani insana soracak bir kanal yok. Kapının
+   * zayıf (confirm) dalı tam olarak burada koşar.
+   */
+  elicitationsiz?: boolean;
 }
 
 /** Çağrılan Meta işlemleri — "hangi araç çağrıldı" ölçülebilsin diye. */
@@ -63,6 +73,7 @@ let istemMetinleri: string[] = [];
 afterEach(() => {
   __setMetaKanalForTests(undefined);
   __setSimSwapKanalForTests(undefined);
+  __setErisimKanalForTests(undefined);
   cagrilar = [];
   istemSayisi = 0;
   istemMetinleri = [];
@@ -106,6 +117,8 @@ async function kur(opts: SahteSecenek = {}) {
   __setSimSwapKanalForTests({
     verifySimSwap: async () => opts.simDegisti === true,
   });
+  // Yükseltmeyi TAŞIYACAK gerçek halka: temiz dönmezse kademe zaten düz rette biter.
+  if (opts.stepUp) __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
 
   const config: any = {
     developerToken: "x",
@@ -117,7 +130,8 @@ async function kur(opts: SahteSecenek = {}) {
     metaToken: "metaToken" in opts ? opts.metaToken : TOKEN,
     metaAdAccountId: "metaHesap" in opts ? opts.metaHesap : HESAP,
     simSwapWindowHours: 72,
-    reachCheck: false,
+    reachCheck: opts.stepUp === true,
+    stepUp: opts.stepUp === true,
     devSwapCheck: false,
     callFwdCheck: false,
     // agKapali: token yok → ağ katmanı "kapalı" dalına girer, kapı geçirir.
@@ -128,15 +142,19 @@ async function kur(opts: SahteSecenek = {}) {
   const server = buildServer(() => ({ config }) as any);
   const istemci = new Client(
     { name: "meta-test", version: "1.0.0" },
-    { capabilities: { elicitation: { form: {} } } }
+    { capabilities: opts.elicitationsiz ? {} : { elicitation: { form: {} } } }
   );
-  istemci.setRequestHandler(ElicitRequestSchema, async (istek: any) => {
-    istemSayisi++;
-    istemMetinleri.push(String(istek?.params?.message ?? ""));
-    return opts.onay === false
-      ? { action: "decline" as const }
-      : { action: "accept" as const, content: { onay: true } };
-  });
+  // Yeteneği bildirmeyen istemciye SDK zaten handler taktırmaz; istem sayacının 0
+  // kalması "gösterilecek kanal hiç yoktu"nun ölçüsüdür.
+  if (!opts.elicitationsiz) {
+    istemci.setRequestHandler(ElicitRequestSchema, async (istek: any) => {
+      istemSayisi++;
+      istemMetinleri.push(String(istek?.params?.message ?? ""));
+      return opts.onay === false
+        ? { action: "decline" as const }
+        : { action: "accept" as const, content: { onay: true } };
+    });
+  }
 
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), istemci.connect(b)]);
@@ -514,4 +532,91 @@ test("Tavanın ALTINDAKİ bütçe yayına almayı engellemez — kapı geçirgen
 
   assert.match(metin(r), /ACTIVE/, "meşru kampanya reddedilmemeli (aksi hâlde kapı bir duvar olur)");
   assert.ok(cagrilar.includes("durumDegistir:ACTIVE"));
+});
+
+/* ── Kademeli doğrulama × zayıf kanal: platformdan BAĞIMSIZ ───────────────────
+ *
+ * Kapının boğazı tektir (approval.ts/onayAl), dolayısıyla oradaki bir gevşeme Google'da
+ * da Meta'da da aynı anda açılır. Bu bekçi, kapatılan boşluğun ikinci harcama alanında
+ * da kapalı olduğunu ölçer: aksi hâlde "Google tarafında düzelttik" cümlesi Meta
+ * tarafında yanlış olurdu ve kimse fark etmezdi.
+ * ─────────────────────────────────────────────────────────────────────────────── */
+
+test("KRİTİK (Meta): kademe + elicitation'sız istemci + confirm=true → yazma YOK", async () => {
+  const c = await kur({ simDegisti: true, mevcutButce: 100, stepUp: true, elicitationsiz: true });
+  const r: any = await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE", confirm: true },
+  });
+
+  assert.equal(istemSayisi, 0, "gösterilecek istem yoktu");
+  assert.ok(
+    !cagrilar.some((x) => x.startsWith("durumDegistir")),
+    "KRİTİK: taşınmış SIM ile kampanya insana sorulmadan yayına alınamaz"
+  );
+  assert.match(metin(r), /AĞ SİNYALİ BOZUK/, "ajan bozuk sinyali görmeli");
+  assert.match(metin(r), /YÜKSELTME YAPILAMAZ/);
+});
+
+test("KRİTİK (Meta): kademe AÇIKKEN bile bütçe artışı (medium) düz RET — yükseltme yok", async () => {
+  /**
+   * MEDIUM KATMANDA YÜKSELTME YAPISAL OLARAK İMKÂNSIZDIR ve bu iyi bir şeydir:
+   * o katmanda yalnız SIM-Swap halkası koşar, dolayısıyla bozulan sinyali doğrulayacak
+   * ikinci bir gerçek halka hiç yoktur. Yükseltme ikinci bir kanıta dayanır; kanıt
+   * yoksa kapı eski sertliğinde kalır. Bekçi burada, ileride "medium'a da bir halka
+   * ekleyip yükseltelim" denirse kararın sessizce değil bilerek alınmasını sağlar.
+   */
+  const c = await kur({ simDegisti: true, mevcutButce: 100, stepUp: true, elicitationsiz: true });
+  const r: any = await c.callTool({
+    name: "update_meta_campaign_budget",
+    arguments: { campaignId: "120200000000001", dailyBudget: 400, confirm: true },
+  });
+
+  assert.equal(istemSayisi, 0);
+  assert.ok(!cagrilar.some((x) => x.startsWith("butceGuncelle")), "bütçe değişmemeli");
+  assert.match(metin(r), /AĞ DOĞRULAMASI BAŞARISIZ/);
+  assert.match(metin(r), /GERÇEK bir ağ halkası koşmadı/, "yükseltmenin neden olmadığı yazılı olmalı");
+});
+
+test("Meta kademe, elicitation'LI istemcide İNSANA sorulur ve onayla geçer", async () => {
+  const c = await kur({ simDegisti: true, mevcutButce: 100, stepUp: true });
+  await c.callTool({
+    name: "set_meta_campaign_status",
+    arguments: { campaignId: "120200000000001", status: "ACTIVE" },
+  });
+
+  assert.equal(istemSayisi, 1, "güçlü kanalda yükseltme yolu açık kalmalı");
+  assert.match(istemMetinleri[0], /AĞ SİNYALİ BOZUK/);
+  assert.ok(cagrilar.some((x) => x === "durumDegistir:ACTIVE"), "insan onayladıysa uygulanmalı");
+});
+
+/* ── Sunucu tarafı sır: reklam hesabı kimliği ─────────────────────────────────
+ *
+ * META_AD_ACCOUNT_ID ajanın gönderdiği bir argüman değil, sunucunun yapılandırmasıdır.
+ * Onay özeti iki okura birden gidiyordu; elicitation'sız istemcide ret metni ajanın
+ * bağlamına — oradan transkriptlere — yazılıyordu.
+ * ─────────────────────────────────────────────────────────────────────────────── */
+
+test("SIZINTI (Meta): reklam hesabı kimliği elicitation'sız RET metninde GEÇMEZ", async () => {
+  const c = await kur({ mevcutButce: 100, agKapali: true, elicitationsiz: true });
+  const r: any = await c.callTool({
+    name: "update_meta_campaign_budget",
+    arguments: { campaignId: "120200000000001", dailyBudget: 400 }, // confirm YOK → ret metni
+  });
+
+  const out = metin(r);
+  assert.match(out, /Reddedildi/, "onaysız artış reddedilmeli");
+  assert.match(out, /Mevcut: 100/, "ajanın kendi isteğine ait özet kalmalı");
+  assert.doesNotMatch(out, new RegExp(HESAP), "sunucu tarafı hesap kimliği ajana dönmemeli");
+});
+
+test("Meta reklam hesabı kimliği İNSAN istemine yazılmaya devam eder", async () => {
+  const c = await kur({ mevcutButce: 100, agKapali: true, onay: false });
+  await c.callTool({
+    name: "update_meta_campaign_budget",
+    arguments: { campaignId: "120200000000001", dailyBudget: 400 },
+  });
+
+  assert.equal(istemSayisi, 1);
+  assert.match(istemMetinleri[0], new RegExp(HESAP), "insan hangi hesabın parası olduğunu görmeli");
 });

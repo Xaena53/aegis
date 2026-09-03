@@ -14,7 +14,7 @@
  */
 import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -890,4 +890,58 @@ test("uzun kampanya adı kaydı şişirmez (eylem kısaltılır) ve satır tek s
   assert.ok(k.eylem.length <= 160, `eylem kısaltılmalı, uzunluk ${k.eylem.length}`);
   assert.equal(k.karar, "gecti");
   assert.equal(k.simSwapKanali, "gercek");
+});
+
+/* ── GÜNLÜĞÜN BAYT TAVANI ─────────────────────────────────────────────────────
+ *
+ * Günlüğün hiçbir üst sınırı yoktu: her riskli karar bir satır ekliyor, dosya yalnızca
+ * büyüyordu. Onay bile gerektirmeyen — çünkü kapı zaten reddediyor — bir istek seli
+ * diski doldurabilirdi; ve dolu disk bu modülün EN KÖTÜ arıza biçimidir, çünkü yazma
+ * hatası akışı düşürmez: denetim izi sessizce durur ve kimse fark etmez.
+ * ─────────────────────────────────────────────────────────────────────────────── */
+
+/** src/kararGunlugu.ts içindeki GUNLUK_AZAMI_BAYT ile aynı olmak ZORUNDA. */
+const AZAMI_BAYT = 16 * 1024 * 1024;
+
+function ornekKayit() {
+  return agKararKaydiOlustur(
+    "kampanya yayına alınacak",
+    "high",
+    { kanit: [], iz: { simSwap: "kapali" } },
+    MUSTERI
+  );
+}
+
+test("tavana ulaşan günlük DEVREDİLİR: eski dosya .1 olur, yeni dosya taze başlar", () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  // Tavanı aşan bir dosya kur; içeriği ayırt edilebilir olsun ki devredildiği ölçülebilsin.
+  writeFileSync(gunluk, "ESKI-KUSAK\n" + "x".repeat(AZAMI_BAYT), "utf8");
+
+  kararYaz(ornekKayit());
+
+  assert.ok(existsSync(`${gunluk}.1`), "tavana ulaşan dosya devredilmeli");
+  assert.match(readFileSync(`${gunluk}.1`, "utf8").slice(0, 40), /ESKI-KUSAK/, "eski kuşak korunmalı");
+
+  const yeni = satirlar();
+  assert.equal(yeni.length, 1, "yeni dosya yalnız bu kaydı içermeli");
+  assert.equal(yeni[0].hesapId, MUSTERI);
+  assert.ok(statSync(gunluk).size < 4096, "yeni dosya taze olmalı");
+});
+
+test("tavanın ALTINDAKİ günlük devredilmez (gereksiz kuşak üretilmez)", () => {
+  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  writeFileSync(gunluk, "KUCUK\n", "utf8");
+
+  kararYaz(ornekKayit());
+
+  assert.equal(existsSync(`${gunluk}.1`), false, "tavana ulaşmayan dosya devredilmemeli");
+  assert.match(readFileSync(gunluk, "utf8"), /^KUCUK/, "mevcut içerik korunmalı");
+});
+
+test("devretme günlük KAPALIYKEN hiç çalışmaz (dosya oluşturmaz)", () => {
+  delete process.env.ADSPILOT_DECISION_LOG;
+  kararYaz(ornekKayit());
+  assert.equal(existsSync(gunluk), false);
+  assert.equal(existsSync(`${gunluk}.1`), false);
+  assert.deepEqual(readdirSync(kok), [], "kapalı günlük hiçbir dosya bırakmamalı");
 });

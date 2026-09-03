@@ -20,9 +20,20 @@
  *
  * Her ağ kararı (ret VE geçiş) denetim izi için kararGunlugu.ts'e yazılır. Günlük
  * gözlemdir, kapı değildir: yazılamazsa akış aynen sürer.
+ *
+ * İKİ KANAL, İKİ İZLEYİCİ. Onay özetinin gördüğü iki ayrı okur vardır: karar veren
+ * İNSAN ve isteği yapan AJAN. `satirlar` ikisine birden gider (elicitation'sız
+ * istemcide ret metnine de yazılır); `insanSatirlari` YALNIZ insana gider. Kapının
+ * kendi kanıtı — maskeli numara, geriye bakış penceresi, beklenen ülke — ve sunucu
+ * tarafı sırlar ikinci kanaldadır: çalınmış bir oturumdaki ajan, reddedildiği her
+ * denemede kapının ölçülerini öğrenmemelidir.
+ *
+ * KADEMELİ DOĞRULAMA ZAYIF KANALDA GEÇMEZ. Yükseltme, insana daha güçlü bir soru
+ * sorabilmeye dayanır; soracak istemi olmayan bir istemcide yükseltme de yoktur ve
+ * ajanın `confirm=true`su o istemin yerine geçmez.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { agDogrula, type AgAyar, type AgRisk } from "./networkTrust.js";
+import { agDogrula, type AgAyar, type AgRisk, type KademeKarari } from "./networkTrust.js";
 import { agKararKaydiOlustur, kararYaz } from "./kararGunlugu.js";
 
 export type OnayKanali = "insan" | "ajan" | "ag";
@@ -37,8 +48,28 @@ export interface OnaySonucu {
 export interface OnayOzeti {
   /** The action as a single sentence, e.g. "the campaign will go live". */
   eylem: string;
-  /** The concrete lines the user needs to see in order to decide. */
+  /**
+   * The concrete lines the user needs to see in order to decide.
+   *
+   * DİKKAT: bu satırlar elicitation'sız istemcide RET METNİYLE BİRLİKTE AJANA DÖNER.
+   * Ajanın zaten bildiği (kendi gönderdiği) bilgiler buraya; ajanın bilmesi
+   * gerekmeyen her şey `insanSatirlari`na.
+   */
   satirlar: string[];
+  /**
+   * YALNIZ İNSANA gösterilen satırlar — ajana ASLA dönmez.
+   *
+   * `satirlar` iki ayrı yere birden gidiyordu: elicitation istemine VE elicitation'sız
+   * istemcideki ret metnine. İkinci yol, kapının kendi kanıtını (maskeli onaylayıcı
+   * numarası, geriye bakış penceresi, beklenen ülke) ve sunucu tarafı sırları (Meta
+   * reklam hesabı kimliği) ajanın bağlamına — oradan da transkriptlere — yazıyordu.
+   * Çalınmış bir oturumdaki ajan, reddedildiği her denemede kapının ŞEKLİNİ öğreniyordu.
+   *
+   * Ayrım şudur: insanın KARAR VERMEK için görmesi gereken ama ajanın BİLMESİ
+   * GEREKMEYEN her şey buraya. Ajanın kendi gönderdiği değerler (müşteri kimliği,
+   * istenen bütçe) `satirlar`da kalabilir — onları gizlemek kimseden bir şey saklamaz.
+   */
+  insanSatirlari?: string[];
   /** Label of the confirmation checkbox. */
   soru?: string;
   /** Spend-risk tier; with `agAyar` set, the network is consulted before any prompt. */
@@ -93,6 +124,13 @@ export async function onayAl(
   agentConfirm: boolean | undefined
 ): Promise<OnaySonucu> {
   /**
+   * Kademeli doğrulama devreye girdi mi? Zayıf (confirm) kanalın bunu GÖRMESİ şart:
+   * yükseltme "yine de sana soruyoruz" demektir ve soracak bir istem yoksa yükseltme
+   * de yoktur (aşağıdaki zayıf kanal bloğuna bak).
+   */
+  let kademe: KademeKarari | undefined;
+
+  /**
    * Network check runs FIRST — before the weak (confirm) and strong (elicitation)
    * branches alike. A compromised approver must be refused on both paths; gating only
    * the elicitation branch would let a stolen session fall back to confirm=true.
@@ -131,7 +169,15 @@ export async function onayAl(
      */
     kararYaz(agKararKaydiOlustur(ozet.eylem, ozet.risk, ag, ozet.hesapId, ozet.tutar));
     if (ag.engel) return { onaylandi: false, kanal: "ag", mesaj: ag.engel };
-    if (ag.kanit.length) ozet = { ...ozet, satirlar: [...ozet.satirlar, ...ag.kanit] };
+    /**
+     * Kapının kanıt satırları YALNIZ İNSANA gider (bkz. OnayOzeti.insanSatirlari).
+     * Eskiden `satirlar`a ekleniyorlardı ve elicitation'sız istemcide ret metniyle
+     * birlikte ajana dönüyorlardı: maskeli onaylayıcı numarası, geriye bakış penceresi
+     * ve beklenen ülke, kapıyı aşmak isteyene kapının ölçülerini veriyordu.
+     */
+    if (ag.kanit.length) {
+      ozet = { ...ozet, insanSatirlari: [...(ozet.insanSatirlari ?? []), ...ag.kanit] };
+    }
 
     /**
      * KADEMELİ DOĞRULAMA İSTEMİN BAŞINA YAZILIR — kanıt satırlarının arasına DEĞİL.
@@ -146,6 +192,7 @@ export async function onayAl(
      * bir soru sorulur, böylece onay o sinyale VERİLMİŞ olur.
      */
     if (ag.kademe) {
+      kademe = ag.kademe;
       ozet = {
         ...ozet,
         eylem:
@@ -158,6 +205,42 @@ export async function onayAl(
   }
 
   if (!elicitationVar(server)) {
+    /**
+     * YÜKSELTME ZAYIF KANALDA GEÇİŞ ÜRETMEZ.
+     *
+     * Kademeli doğrulama bir GEVŞEME değil, bir TAKAStır: kapı bozuk bir sinyali düz
+     * retle karşılamayı bırakır, karşılığında insandan DAHA GÜÇLÜ bir onay ister —
+     * bozuk sinyali adıyla söyleyen bir istem, değişmiş bir soru, düşürülmüş bir tavan.
+     * Yükseltmenin ön koşulu, o istemi gerçekten gösterebilmektir.
+     *
+     * Elicitation'sız istemcide gösterilecek istem YOKTUR. Geriye yalnız ajanın
+     * `confirm=true` iddiası kalır ve o, takasın verdiği taraf değil aldığı taraftır:
+     * tek atışlık, sunucunun doğrulayamadığı, üstelik ağ kapısı hiç koşmadan ÖNCE
+     * üretilmiş bayat bir rızadır — bozuk sinyalin adını, değişen soruyu ve kanıt
+     * satırlarını taşıyan hiçbir kanalı yoktur. Böyle bir istemcide yükseltmeyi
+     * geçirmek, kapıyı tam da zorlandığı anda gevşetmek olurdu: çalınmış bir oturum,
+     * taşınmış bir SIM ile kampanyayı insana hiç sorulmadan yayına alabilirdi.
+     *
+     * Bu yüzden burada RET. Ret metni, yükseltmeyi tetikleyen bozuk sinyali ADIYLA
+     * söyler (uyarı başlığı yukarıda ozet.eylem'e yazıldı) ki ajan kullanıcıya
+     * aktarabilsin; kapının KENDİ kanıt satırları bilerek yazılmaz — onlar insanın
+     * kanalına aittir (bkz. OnayOzeti.insanSatirlari).
+     */
+    if (kademe) {
+      return {
+        onaylandi: false,
+        kanal: "ag",
+        mesaj:
+          `Reddedildi: ${ozet.eylem}\n` +
+          ozet.satirlar.map((s) => `  • ${s}`).join("\n") +
+          `\n\nBU İSTEMCİDE YÜKSELTME YAPILAMAZ: kademeli doğrulama, bozuk sinyali adıyla ` +
+          `söyleyen bir İNSAN istemi gerektirir; bu istemci MCP elicitation desteklemiyor. ` +
+          `Ajanın confirm=true iddiası o istemin yerine GEÇMEZ. Elicitation destekleyen bir ` +
+          `istemciyle tekrar dene ya da bozuk sinyal geçene kadar bekle. Kullanıcıya bozuk ` +
+          `ağ sinyalini MUTLAKA bildir.`,
+      };
+    }
+
     // Old or limited client: fall back to the agent-mediated gate
     if (agentConfirm === true) return { onaylandi: true, kanal: "ajan" };
     return {
@@ -171,7 +254,12 @@ export async function onayAl(
   }
 
   // Strong path: ask the human directly
-  const metin = `${ozet.eylem}\n\n${ozet.satirlar.map((s) => `• ${s}`).join("\n")}`;
+  /**
+   * İnsan istemi HER İKİ kanalı da görür: ajana da dönen `satirlar` ve yalnız insana
+   * ait `insanSatirlari`. Karar veren kişiden bilgi saklanmıyor; saklanan taraf ajandır.
+   */
+  const insanIcinSatirlar = [...ozet.satirlar, ...(ozet.insanSatirlari ?? [])];
+  const metin = `${ozet.eylem}\n\n${insanIcinSatirlar.map((s) => `• ${s}`).join("\n")}`;
   try {
     const cevap = await server.server.elicitInput(
       {

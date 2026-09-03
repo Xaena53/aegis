@@ -158,12 +158,23 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
               eylem: `Meta: "${mevcut.ad}" kampanyasının GÜNLÜK BÜTÇESİ DEĞİŞTİRİLECEK.`,
               satirlar: [
                 `Platform: Meta (Facebook/Instagram)`,
-                `Reklam hesabı: ${ctx.config.metaAdAccountId}`,
                 eskiBilinmiyor
                   ? `Mevcut bütçe OKUNAMADI → Yeni: ${dailyBudget} (güvenlik gereği onay isteniyor)`
                   : `Mevcut: ${eski} → Yeni: ${dailyBudget} (günlük artış: +${(dailyBudget - eski!).toFixed(2)})`,
                 `Hesap güvenlik tavanı: ${ctx.config.maxDailyBudget}`,
               ],
+              /**
+               * REKLAM HESABI KİMLİĞİ YALNIZ İNSANA GÖSTERİLİR.
+               *
+               * Bu değer ajanın gönderdiği bir argüman değil, SUNUCU TARAFI
+               * yapılandırmadır (META_AD_ACCOUNT_ID): ajan onu hiç bilmez ve bilmesi de
+               * gerekmez. Oysa `satirlar` elicitation'sız istemcide ret metniyle birlikte
+               * ajana dönüyordu — yani her reddedilen bütçe denemesi hesap kimliğini model
+               * bağlamına ve transkriptlere yazıyordu. Karar veren insanın parasını hangi
+               * hesaptan harcayacağını görmesi ise şarttır; bu yüzden satır silinmedi,
+               * KANAL DEĞİŞTİRDİ.
+               */
+              insanSatirlari: [`Reklam hesabı: ${ctx.config.metaAdAccountId}`],
               soru: "Meta bütçe artışını onaylıyor musun?",
               risk: "medium",
               agAyar: ctx.config,
@@ -264,7 +275,6 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
               eylem: `Meta: "${mevcut.ad}" kampanyası YAYINA ALINACAK — gerçek harcama başlar.`,
               satirlar: [
                 `Platform: Meta (Facebook/Instagram)`,
-                `Reklam hesabı: ${ctx.config.metaAdAccountId}`,
                 `Kampanya: ${mevcut.ad} (id ${campaignId})`,
                 gunluk === undefined
                   ? `Günlük bütçe OKUNAMADI — yayına alma yine de gerçek harcama başlatır`
@@ -273,6 +283,18 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
                       ? " (reklam setlerinin toplamı — Ads Manager'da kampanyada tek bir sayı olarak görünmez)"
                       : ""),
               ],
+              /**
+               * REKLAM HESABI KİMLİĞİ YALNIZ İNSANA GÖSTERİLİR.
+               *
+               * Bu değer ajanın gönderdiği bir argüman değil, SUNUCU TARAFI
+               * yapılandırmadır (META_AD_ACCOUNT_ID): ajan onu hiç bilmez ve bilmesi de
+               * gerekmez. Oysa `satirlar` elicitation'sız istemcide ret metniyle birlikte
+               * ajana dönüyordu — yani her reddedilen bütçe denemesi hesap kimliğini model
+               * bağlamına ve transkriptlere yazıyordu. Karar veren insanın parasını hangi
+               * hesaptan harcayacağını görmesi ise şarttır; bu yüzden satır silinmedi,
+               * KANAL DEĞİŞTİRDİ.
+               */
+              insanSatirlari: [`Reklam hesabı: ${ctx.config.metaAdAccountId}`],
               soru: "Meta kampanyasını yayına almayı onaylıyor musun?",
               risk: "high",
               agAyar: ctx.config,

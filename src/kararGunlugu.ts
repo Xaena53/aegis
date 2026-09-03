@@ -40,10 +40,15 @@
  *    okuyabildiyse. Okunamayan bütçe için alan HİÇ yazılmaz; 0 yazmak "bilmiyorum"u
  *    "sıfır harcama" diye kaydetmek, yani bu dosyanın var oluş nedenine aykırı olurdu.
  *
+ * 5) GÜNLÜĞÜN BİR TAVANI VAR. Sınırsız büyüyen bir denetim dosyası, onay bile
+ *    gerektirmeyen bir istek seliyle diski doldurulabilir; ve dolu diskte yazma hatası
+ *    akışı düşürmediği için iz SESSİZCE durur. Tavana ulaşan dosya `<yol>.1` olarak
+ *    devredilir (bkz. GUNLUK_AZAMI_BAYT).
+ *
  * Günlük varsayılan olarak KAPALIDIR: ADSPILOT_DECISION_LOG tanımlı değilse hiçbir
  * dosya oluşturulmaz ve hiçbir şey yazılmaz (demo/compose ortamı açar).
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, renameSync, statSync } from "node:fs";
 import type { AgKarar, AgRisk, HalkaIzi, NvIzi, RetNedeni, SimSwapIzi } from "./networkTrust.js";
 
 /**
@@ -237,9 +242,44 @@ export function agKararKaydiOlustur(
  * Env karar anında okunur (modül yüklenirken değil): tek bir süreçte günlüğü açıp
  * kapatabilmek hem operatör hem test için gerekir.
  */
+/**
+ * GÜNLÜK DOSYASININ BAYT TAVANI ve tek yedek kuşağı.
+ *
+ * Kayıt yazmanın hiçbir üst sınırı yoktu: her riskli karar bir satır ekliyor, dosya
+ * yalnızca büyüyordu. Tek bir kötü niyetli (ya da hatalı) ajan, onay bile gerektirmeyen
+ * — çünkü kapı zaten reddediyor — istek seliyle diski doldurabilirdi. Ve dolu disk bu
+ * modülün en kötü arıza biçimidir: yazma hatası akışı düşürmediği için kimse fark
+ * etmez, denetim izi sessizce durur.
+ *
+ * Tavana ulaşıldığında dosya `<yol>.1` olarak devredilir ve yeni dosya açılır. Tek
+ * kuşak bilinçli: iki dosyalık sabit bir tavan, "sınırsız büyüme" ile "hiç iz yok"
+ * arasındaki tek dürüst orta noktadır. Uzun süreli saklama operatörün log toplayıcısının
+ * işidir, bu modülün değil.
+ */
+const GUNLUK_AZAMI_BAYT = 16 * 1024 * 1024;
+
+/**
+ * Tavana ulaşan dosyayı devreder. HATA YUTULMAZ ama YÜKSELTİLMEZ de: devretme
+ * başarısız olursa (dosya kilitli, dizin salt-okunur) satır yine de eklenir —
+ * "döndüremedim" yüzünden denetim izini kesmek, tavanın çözdüğünden büyük bir sorundur.
+ */
+function dosyayiDevret(hedef: string): void {
+  try {
+    if (statSync(hedef).size < GUNLUK_AZAMI_BAYT) return;
+    renameSync(hedef, `${hedef}.1`);
+  } catch (e: any) {
+    // ENOENT = dosya henüz yok: devredilecek bir şey de yok, sessiz geçilir.
+    if (e?.code === "ENOENT") return;
+    console.error(
+      `[adspilot] karar günlüğü devredilemedi (${hedef}): ${e?.message ?? e} — satır yine de eklenecek`
+    );
+  }
+}
+
 export function kararYaz(kayit: KararKaydi): void {
   const hedef = process.env.ADSPILOT_DECISION_LOG?.trim();
   if (!hedef) return;
+  dosyayiDevret(hedef);
   try {
     // Alan sırası bilinçli: JSON.stringify undefined alanları düşürür, böylece
     // "ölçülemedi" ile "boş" karışmaz.

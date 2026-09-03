@@ -559,6 +559,27 @@ function bearerFrom(req: http.IncomingMessage): string | undefined {
   return h.slice(7).trim();
 }
 
+/**
+ * TEK POST'TAKİ AZAMİ JSON-RPC MESAJI.
+ *
+ * JSON-RPC gövdesi bir DİZİ olabilir ve MCP taşıması dizinin her elemanını ayrı bir
+ * mesaj olarak işler. Bayt tavanı bunu görmez: 4 MB'lık bir gövdeye on binlerce ufak
+ * araç çağrısı sığar. Tavan bu yüzden bayt cinsinden değil, MESAJ cinsinden de olmak
+ * zorundadır — ve aşıldığında istek kısmen koşturulmaz, hiç koşturulmaz (kapalı arıza:
+ * yarısı uygulanmış bir toplu harcama isteği hiç uygulanmamış olandan çok daha zor
+ * geri alınır).
+ *
+ * Değer, meşru istemcilerin bir turda gönderdiği mesaj sayısının çok üstündedir;
+ * amaç kullanımı kısıtlamak değil, çarpanı kapatmaktır.
+ */
+const MAX_MCP_TOPLU_MESAJ = 20;
+
+/** Gövdedeki JSON-RPC MESAJ adedi; dizi değilse tek mesaj sayılır. */
+function mcpMesajAdedi(body: unknown): number {
+  // Boş dizi de bir istektir: 0 jeton düşmek "bedava istek" kapısı açardı.
+  return Array.isArray(body) ? Math.max(1, body.length) : 1;
+}
+
 async function readBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -580,16 +601,6 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   const user = store.findByApiKey(key);
   if (!user) return json(res, 401, { error: "invalid_api_key" });
 
-  // Per-user limit that protects both the shared Google Ads quota and this server
-  const rl = limiter.check(user.id);
-  if (!rl.allowed) {
-    res.writeHead(429, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Retry-After": String(rl.retryAfterSec ?? 60),
-    });
-    return res.end(JSON.stringify({ error: "rate_limited", message: rl.reason, retryAfterSec: rl.retryAfterSec }));
-  }
-
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const session = sessionId ? sessions.get(sessionId) : undefined;
 
@@ -608,6 +619,38 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
     body = await readBody(req);
   } catch (e: any) {
     return json(res, 400, { error: "bad_request", message: e?.message });
+  }
+
+  /**
+   * HIZ SINIRI GÖVDEYİ OKUDUKTAN SONRA, MESAJ BAŞINA UYGULANIR.
+   *
+   * Kontrol eskiden gövdeden ÖNCE ve istek başına bir kez koşuyordu; JSON-RPC gövdesi
+   * bir dizi olabildiği için tek POST = 1 jeton = N araç çağrısı demekti. Her çağrı
+   * kendi ağ kapısını (CAMARA sorgusu), kendi denetim günlüğü satırını ve kendi upstream
+   * kotasını tükettiği için limitin ölçtüğü şey ile korumaya çalıştığı şey birbirinden
+   * kopmuştu. Artık jeton MESAJ başına düşülür; tavanı aşan toplu istek hiç koşturulmaz.
+   *
+   * Sıra bilinçli: ölçebilmek için gövdeyi okumak gerekir, ama gövde taşımaya
+   * VERİLMEDEN önce ölçülür — yani reddedilen bir toplu istekte hiçbir mesaj işlenmez.
+   */
+  const mesajAdedi = mcpMesajAdedi(body);
+  if (mesajAdedi > MAX_MCP_TOPLU_MESAJ) {
+    res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": "1" });
+    return res.end(
+      JSON.stringify({
+        error: "batch_too_large",
+        message: `Tek istekte en fazla ${MAX_MCP_TOPLU_MESAJ} JSON-RPC mesajı gönderilebilir (gelen: ${mesajAdedi}).`,
+      })
+    );
+  }
+  // Per-user limit that protects both the shared Google Ads quota and this server
+  const rl = limiter.check(user.id, mesajAdedi);
+  if (!rl.allowed) {
+    res.writeHead(429, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Retry-After": String(rl.retryAfterSec ?? 60),
+    });
+    return res.end(JSON.stringify({ error: "rate_limited", message: rl.reason, retryAfterSec: rl.retryAfterSec }));
   }
 
   if (session) {

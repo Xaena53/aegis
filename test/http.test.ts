@@ -188,6 +188,47 @@ test("hız sınırı: tavan aşılınca 429 + Retry-After", async () => {
   assert.match(JSON.stringify(await sonuncu!.json()), /rate_limited/);
 });
 
+/* ── TOPLU İSTEK (JSON-RPC batch) ─────────────────────────────────────────────
+ *
+ * JSON-RPC gövdesi bir DİZİ olabilir ve MCP taşıması her elemanı ayrı bir mesaj olarak
+ * işler. Hız sınırı istek başına bir kez koştuğu sürece tek POST = 1 jeton = N araç
+ * çağrısı demekti: paylaşılan Google/Meta kotası, operatörün CAMARA kotası ve bu süreç,
+ * limitin hiç görmediği bir çarpanla tüketilebiliyordu. Hiçbir test /mcp'ye dizi
+ * göndermediği için boşluk sessizdi.
+ *
+ * NOT: sunucu ADSPILOT_RATE_PER_MINUTE=8 ile koşuyor (bkz. before).
+ * ─────────────────────────────────────────────────────────────────────────────── */
+
+test("KRİTİK: toplu istek MESAJ BAŞINA jeton düşer (tek POST, N işlem değil)", async () => {
+  const k = await kullaniciEkle("toplu@ornek.com", "sub-toplu");
+  const dizi = Array.from({ length: 6 }, (_, i) => ({ jsonrpc: "2.0", id: i + 1, method: "tools/list" }));
+
+  const toplu = await mcp(k, dizi);
+  assert.notEqual(toplu.status, 429, "6 mesaj 8'lik tavana sığmalı");
+
+  // Kalan hak: 2. Üçüncü tekil istek 429 olmalı — jeton MESAJ başına düştüyse.
+  const bir = await mcp(k, INIT);
+  assert.notEqual(bir.status, 429);
+  const iki = await mcp(k, INIT);
+  assert.notEqual(iki.status, 429);
+  const uc = await mcp(k, INIT);
+  assert.equal(uc.status, 429, "6+2 jeton tükendi: dizi tek jetona sayılmış olamaz");
+  assert.match(JSON.stringify(await uc.json()), /rate_limited/);
+});
+
+test("KRİTİK: tavanı aşan toplu istek HİÇ koşturulmaz (kısmi uygulama yok)", async () => {
+  const k = await kullaniciEkle("buyuktoplu@ornek.com", "sub-buyuktoplu");
+  const dizi = Array.from({ length: 200 }, (_, i) => ({ jsonrpc: "2.0", id: i + 1, method: "tools/list" }));
+
+  const r = await mcp(k, dizi);
+  assert.equal(r.status, 429, "mesaj adedi tavanı aşıldığında istek reddedilmeli");
+  assert.match(JSON.stringify(await r.json()), /batch_too_large/);
+
+  // Reddedilen toplu istek kullanıcının kotasını da yakmamalı: sonraki istek geçer.
+  const sonra = await mcp(k, INIT);
+  assert.notEqual(sonra.status, 429, "reddedilen dizi jeton tüketmemeli");
+});
+
 test("OAuth: /connect imzalı state çerezi koyar ve önbelleklenmez", async () => {
   const r = await fetch(`${BASE}/connect`);
   assert.equal(r.status, 200);

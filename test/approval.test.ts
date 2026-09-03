@@ -1,10 +1,16 @@
-import { test } from "node:test";
+import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "../src/server.js";
-import { sahteContext } from "./helpers/harness.js";
+import { onayAl } from "../src/approval.js";
+import {
+  __setSimSwapKanalForTests,
+  __setErisimKanalForTests,
+  type AgAyar,
+} from "../src/networkTrust.js";
+import { sahteContext, baglanti } from "./helpers/harness.js";
 
 /**
  * Human-in-the-loop approval.
@@ -180,4 +186,238 @@ test("PAUSED kampanyada insana HİÇ sorulmaz (taslak akışı akıcı kalmalı)
   assert.match(out, /RSA oluşturuldu/);
   assert.equal(sorulanlar.length, 0, "taslağa reklam eklemek onay istememeli");
   assert.equal(rec.mutations.length, 1);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════
+ * KADEMELİ DOĞRULAMA × ZAYIF KANAL
+ *
+ * Yükseltme (step-up) bozuk bir ağ sinyalini düz retten çıkarıp İNSAN ONAYINA bağlar.
+ * Bu takasın tek dayanağı, insana daha güçlü bir soru sorabilmektir. Elicitation'sız
+ * bir istemcide sorulacak soru yoktur; geriye yalnız ajanın confirm iddiası kalır ve o
+ * iddia ağ kapısı hiç koşmadan ÖNCE üretilmiştir — yani bozuk sinyali hiç görmemiş,
+ * bayat bir rızadır.
+ *
+ * Aşağıdaki bekçiler yükseltmenin NEREDE durduğunu sabitler. Yoklukları ölçüldü:
+ * bugünkü kodda ADSPILOT_STEPUP=1 + elicitation'sız istemci + confirm=true, taşınmış
+ * bir SIM ile kampanyayı insana hiç sorulmadan yayına alıyordu.
+ * ══════════════════════════════════════════════════════════════════════════════ */
+
+const KADEME_AYARI: AgAyar = {
+  nacToken: "TEST-ONLY-token",
+  approverPhone: "+905551112277",
+  simSwapWindowHours: 137,
+  reachCheck: true,
+  devSwapCheck: false,
+  callFwdCheck: false,
+  stepUp: true,
+};
+
+/** SIM taşınmış, erişilebilirlik halkası GERÇEK kanaldan temiz → yükseltme koşulları tam. */
+function kademeKosullari(): void {
+  __setSimSwapKanalForTests({ verifySimSwap: async () => true });
+  __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
+}
+
+/** Zincirin tamamı temiz — sızıntı testleri için. */
+function temizKosullar(): void {
+  __setSimSwapKanalForTests({ verifySimSwap: async () => false });
+  __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
+}
+
+/**
+ * Onay kapısına verilen sahte MCP sunucusu. `yetenek` istemcinin bildirdiği elicitation
+ * yeteneğidir; `sorulanlar` gerçekten gösterilen istemleri toplar (0 olması "insana hiç
+ * sorulmadı"nın ölçüsüdür).
+ */
+function sahteSunucu(sorulanlar: string[], sorular: string[], yetenek: unknown): any {
+  return {
+    server: {
+      getClientCapabilities: () => (yetenek === undefined ? {} : { elicitation: yetenek }),
+      elicitInput: async (istek: any) => {
+        sorulanlar.push(String(istek.message));
+        sorular.push(String(istek.requestedSchema?.properties?.onay?.title ?? ""));
+        return { action: "accept", content: { onay: true } };
+      },
+    },
+  };
+}
+
+afterEach(() => {
+  __setSimSwapKanalForTests(undefined);
+  __setErisimKanalForTests(undefined);
+});
+
+test("KRİTİK: kademe açıkken elicitation'sız istemcide confirm=true GEÇİŞ ÜRETMEZ", async () => {
+  kademeKosullari();
+  const sorulanlar: string[] = [];
+  const sonuc = await onayAl(
+    sahteSunucu(sorulanlar, [], undefined),
+    {
+      eylem: "kampanya YAYINA ALINACAK",
+      satirlar: ["Günlük bütçe: 50"],
+      risk: "high",
+      agAyar: KADEME_AYARI,
+    },
+    true // ajan rızayı UYDURUYOR
+  );
+
+  assert.equal(sonuc.onaylandi, false, "yükseltme, ajanın confirm iddiasıyla geçemez");
+  assert.equal(sonuc.kanal, "ag");
+  assert.match(sonuc.mesaj!, /AĞ SİNYALİ BOZUK/, "bozuk sinyal ajana ADIYLA söylenmeli");
+  assert.match(sonuc.mesaj!, /SIM kartı yakın zamanda değişmiş/);
+  assert.match(sonuc.mesaj!, /YÜKSELTME YAPILAMAZ/, "neden geçilemediği açıkça yazılmalı");
+  assert.equal(sorulanlar.length, 0, "gösterilecek istem yoktu — ölçüt de bu");
+});
+
+test("KRİTİK: aynı durumda kademe KAPALIYKEN de geçmez (ret metni değişir, karar değişmez)", async () => {
+  kademeKosullari();
+  const sonuc = await onayAl(
+    sahteSunucu([], [], undefined),
+    {
+      eylem: "kampanya YAYINA ALINACAK",
+      satirlar: ["Günlük bütçe: 50"],
+      risk: "high",
+      agAyar: { ...KADEME_AYARI, stepUp: false },
+    },
+    true
+  );
+  assert.equal(sonuc.onaylandi, false);
+  assert.equal(sonuc.kanal, "ag");
+  assert.match(sonuc.mesaj!, /AĞ DOĞRULAMASI BAŞARISIZ/);
+});
+
+test("kademe, elicitation'LI istemcide İNSANA sorulur — istem bozuk sinyali adıyla taşır", async () => {
+  kademeKosullari();
+  const sorulanlar: string[] = [];
+  const sorular: string[] = [];
+  const sonuc = await onayAl(
+    sahteSunucu(sorulanlar, sorular, { form: {} }),
+    {
+      eylem: "kampanya YAYINA ALINACAK",
+      satirlar: ["Günlük bütçe: 50"],
+      risk: "high",
+      agAyar: KADEME_AYARI,
+    },
+    undefined
+  );
+
+  assert.equal(sonuc.onaylandi, true, "güçlü kanalda yükseltme yolu AÇIK kalmalı");
+  assert.equal(sonuc.kanal, "insan");
+  assert.equal(sorulanlar.length, 1, "insana gerçekten sorulmalı");
+  assert.match(sorulanlar[0], /AĞ SİNYALİ BOZUK/, "uyarı istemin BAŞINDA durmalı");
+  assert.match(sorulanlar[0], /SIM kartı yakın zamanda değişmiş/);
+  assert.match(sorulanlar[0], /KADEMELİ DOĞRULAMA/, "kanıt satırı insana gösterilmeli");
+  assert.match(sorular[0], /RAĞMEN/, "onay kutusunun sorusu da değişmeli");
+});
+
+test("SIZINTI: elicitation'sız ret metni ağ kapısının KANIT satırlarını ajana yazmaz", async () => {
+  temizKosullar();
+  const sonuc = await onayAl(
+    sahteSunucu([], [], undefined),
+    {
+      eylem: "kampanya YAYINA ALINACAK",
+      satirlar: ["Günlük bütçe: 50"],
+      insanSatirlari: ["Reklam hesabı: act_1234567890"],
+      risk: "high",
+      agAyar: KADEME_AYARI,
+    },
+    undefined // confirm yok → ret metni üretilir
+  );
+
+  assert.equal(sonuc.onaylandi, false);
+  const m = sonuc.mesaj!;
+  assert.match(m, /Günlük bütçe: 50/, "ajanın KENDİ isteğine ait özet gösterilmeye devam etmeli");
+  assert.doesNotMatch(m, /905\*/, "maskeli onaylayıcı numarası ajana sızmamalı");
+  assert.doesNotMatch(m, /137 saat/, "geriye bakış penceresi ajana sızmamalı");
+  assert.doesNotMatch(m, /GSMA Open Gateway/, "kapının kanıt satırları ajana sızmamalı");
+  assert.doesNotMatch(m, /act_1234567890/, "sunucu tarafı hesap kimliği ajana sızmamalı");
+});
+
+test("aynı özet, elicitation'lı istemcide İNSANA tam gösterilir (bilgi insandan saklanmaz)", async () => {
+  temizKosullar();
+  const sorulanlar: string[] = [];
+  await onayAl(
+    sahteSunucu(sorulanlar, [], { form: {} }),
+    {
+      eylem: "kampanya YAYINA ALINACAK",
+      satirlar: ["Günlük bütçe: 50"],
+      insanSatirlari: ["Reklam hesabı: act_1234567890"],
+      risk: "high",
+      agAyar: KADEME_AYARI,
+    },
+    undefined
+  );
+  assert.equal(sorulanlar.length, 1);
+  assert.match(sorulanlar[0], /act_1234567890/, "insan hangi hesabın parası olduğunu görmeli");
+  assert.match(sorulanlar[0], /905\*/, "insan ağ kanıtını görmeli");
+});
+
+test("UÇTAN UCA (Google): kademe + elicitation'sız istemci + confirm=true → 0 mutasyon", async () => {
+  const { ctx, rec } = sahteContext({
+    queries: YAYINA_HAZIR,
+  });
+  ctx.config.nacToken = "TEST-ONLY-token";
+  ctx.config.approverPhone = "+905551112277";
+  ctx.config.simSwapWindowHours = 137;
+  ctx.config.reachCheck = true;
+  ctx.config.stepUp = true;
+  kademeKosullari();
+
+  // baglanti() elicitation BİLDİRMEYEN bir istemci kurar — zayıf kanal tam olarak budur.
+  const client = await baglanti(ctx);
+  const out = await cagir(client, "set_campaign_status", {
+    customerId: MUSTERI,
+    campaignId: KAMPANYA,
+    status: "ENABLED",
+    confirm: true,
+  });
+
+  assert.equal(rec.mutations.length, 0, "KRİTİK: insana sorulmadan kampanya yayına alınamaz");
+  assert.match(out, /AĞ SİNYALİ BOZUK/, "ajan uyarıyı görmeli ki kullanıcıya aktarabilsin");
+  assert.match(out, /YÜKSELTME YAPILAMAZ/);
+  assert.doesNotMatch(out, /905\*/, "ret metni kapının kanıtını sızdırmamalı");
+});
+
+/* ── elicitation alt-yeteneği: url-modlu istemci ──────────────────────────────
+ *
+ * SDK'nın form çağrısı `elicitation.form` yeteneğini arar. Yalnız `url` bildiren bir
+ * istemcide güçlü dalı seçmek, HER onayı hataya düşürür ve kullanıcı hiçbir kampanyayı
+ * yayına ALAMAZ. Bu yüzden url-modlu istemci BİLEREK zayıf kanala düşürülür.
+ *
+ * Bilinçli bir düşüş, sabitlenmediği sürece bilinçli kalmaz: aşağıdaki iki bekçi
+ * kararın kendisini yazıya döker, böylece ters yönde bir "düzeltme" sessizce geçemez.
+ * ─────────────────────────────────────────────────────────────────────────────── */
+
+test("url-modlu istemci ZAYIF kanala düşer (bilinçli düşüş) — istem HİÇ açılmaz", async () => {
+  const sorulanlar: string[] = [];
+  const sonuc = await onayAl(
+    sahteSunucu(sorulanlar, [], { url: {} }),
+    { eylem: "kampanya YAYINA ALINACAK", satirlar: ["Günlük bütçe: 50"] },
+    true
+  );
+  assert.equal(sonuc.onaylandi, true);
+  assert.equal(sonuc.kanal, "ajan", "form desteklemeyen istemcide güçlü dal seçilirse her onay patlar");
+  assert.equal(sorulanlar.length, 0, "elicitInput hiç çağrılmamalı");
+});
+
+test("url-modlu istemcide confirm YOKSA yine de RET (düşüş, kapıyı açmak değildir)", async () => {
+  const sonuc = await onayAl(
+    sahteSunucu([], [], { url: {} }),
+    { eylem: "kampanya YAYINA ALINACAK", satirlar: ["Günlük bütçe: 50"] },
+    undefined
+  );
+  assert.equal(sonuc.onaylandi, false);
+  assert.match(sonuc.mesaj!, /açık onayını al/);
+});
+
+test("form bildiren istemci GÜÇLÜ kanalda kalır (düşüş yalnız url-moda özgü)", async () => {
+  const sorulanlar: string[] = [];
+  const sonuc = await onayAl(
+    sahteSunucu(sorulanlar, [], { form: {} }),
+    { eylem: "kampanya YAYINA ALINACAK", satirlar: ["Günlük bütçe: 50"] },
+    false
+  );
+  assert.equal(sonuc.onaylandi, true);
+  assert.equal(sonuc.kanal, "insan", "ajanın confirm=false'u insan onayını EZEMEZ");
+  assert.equal(sorulanlar.length, 1);
 });
