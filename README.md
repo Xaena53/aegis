@@ -204,6 +204,12 @@ The limits are the interesting part, and each is a deliberate line rather than a
 - **No corroborating real link, no escalation.** Escalation rests on a second piece of evidence;
   without one it would mean "the signal was broken and there was nobody to ask, so let it
   through" — opening the gate at precisely the moment it should close.
+- **A link can only vouch for a signal it could have contradicted.** Device reachability is a
+  liveness signal, not an identity one: the attacker holding a swapped SIM has a reachable phone
+  too, so "the device is online" does not disagree with "the SIM moved" and cannot stand as its
+  corroboration. It was doing exactly that — a real SIM swap escalated on reachability alone.
+  Which links can vouch for which degraded signal is now one visible table in `src/networkTrust.ts`
+  (`KEFIL_ESLEMESI`), pinned against the list of escalatable reasons so neither can drift.
 - **A second broken signal ends it.** One is an ordinary Tuesday. Two independent ones are a
   pattern, and the escalation only answers for the first.
 - **Configuration faults never escalate.** A contradictory setup is the operator's problem, not

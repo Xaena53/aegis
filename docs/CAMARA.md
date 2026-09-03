@@ -292,11 +292,14 @@ network silent — no longer ends the request: the remaining links are asked any
 every one answers clean **over a real channel**, the action reaches a human prompt that
 names the broken signal instead of a flat refusal. That is a loosening, so it ships off,
 and the audit trail records it as its own outcome (`"karar":"kademeli"`) rather than
-folding it into `gecti`. Two limits are worth knowing before you turn it on: an active
+folding it into `gecti`. Three limits are worth knowing before you turn it on: an active
 call-forwarding signal **never** escalates (the escalation would travel over the very
-channel the attacker holds), and neither do configuration faults. The full list, and the
-refusal reasons it covers, is in [docs/DEMO.md](DEMO.md) — kept in step with the code by a
-test that reads the reason set out of `KADEME_UYGUN`.
+channel the attacker holds), neither do configuration faults, and a clean link only counts
+as corroboration for a signal it could actually have contradicted. That last one is why
+device reachability vouches for nothing: a swapped SIM sits in a phone that is perfectly
+reachable, so the two never disagree. The pairing lives in `KEFIL_ESLEMESI`. The full list,
+and the refusal reasons it covers, is in [docs/DEMO.md](DEMO.md) — kept in step with the
+code by a test that reads the reason set out of `KADEME_UYGUN`.
 
 ### Step 3 — Remove the simulation channels
 

@@ -25,7 +25,11 @@ import {
   minorUnit,
   type MetaKampanya,
 } from "../src/meta/client.js";
-import { __setSimSwapKanalForTests, __setErisimKanalForTests } from "../src/networkTrust.js";
+import {
+  __setSimSwapKanalForTests,
+  __setErisimKanalForTests,
+  __setCihazDegisimKanalForTests,
+} from "../src/networkTrust.js";
 
 const HESAP = "act_555000111";
 const TOKEN = "meta-gizli-jeton-1234567890";
@@ -48,8 +52,9 @@ interface SahteSecenek {
   metaToken?: string;
   metaHesap?: string;
   /**
-   * Kademeli doğrulama (ADSPILOT_STEPUP) açık mı? Açıkken erişilebilirlik halkası da
-   * GERÇEK kanaldan koşar: yükseltmenin en az bir gerçek doğrulayana ihtiyacı vardır.
+   * Kademeli doğrulama (ADSPILOT_STEPUP) açık mı? Açıkken erişilebilirlik VE cihaz
+   * değişimi halkaları da gerçek kanaldan koşar: yükseltmenin, bozuk sinyale KEFİL
+   * OLABİLEN en az bir gerçek doğrulayana ihtiyacı vardır.
    */
   stepUp?: boolean;
   /**
@@ -74,6 +79,7 @@ afterEach(() => {
   __setMetaKanalForTests(undefined);
   __setSimSwapKanalForTests(undefined);
   __setErisimKanalForTests(undefined);
+  __setCihazDegisimKanalForTests(undefined);
   cagrilar = [];
   istemSayisi = 0;
   istemMetinleri = [];
@@ -117,8 +123,16 @@ async function kur(opts: SahteSecenek = {}) {
   __setSimSwapKanalForTests({
     verifySimSwap: async () => opts.simDegisti === true,
   });
-  // Yükseltmeyi TAŞIYACAK gerçek halka: temiz dönmezse kademe zaten düz rette biter.
-  if (opts.stepUp) __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
+  /**
+   * Yükseltmeyi TAŞIYACAK gerçek halka. Erişilebilirlik halkası temiz dönse de KEFİL
+   * SAYILMAZ (bkz. KEFIL_ESLEMESI): canlılık sinyali, ele geçirilmiş SIM'le de temiz
+   * döner, dolayısıyla o sinyalle çelişmez. Kefil olabilen halka cihaz değişimidir —
+   * "SIM değişti ama cihaz aynı" birlikte okunduğunda meşru hat yenileme anlamına gelir.
+   */
+  if (opts.stepUp) {
+    __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
+    __setCihazDegisimKanalForTests({ cihazDegistiMi: async () => false });
+  }
 
   const config: any = {
     developerToken: "x",
@@ -132,7 +146,7 @@ async function kur(opts: SahteSecenek = {}) {
     simSwapWindowHours: 72,
     reachCheck: opts.stepUp === true,
     stepUp: opts.stepUp === true,
-    devSwapCheck: false,
+    devSwapCheck: opts.stepUp === true,
     callFwdCheck: false,
     // agKapali: token yok → ağ katmanı "kapalı" dalına girer, kapı geçirir.
     nacToken: opts.agKapali ? undefined : "nac-token",

@@ -8,6 +8,7 @@ import { onayAl } from "../src/approval.js";
 import {
   __setSimSwapKanalForTests,
   __setErisimKanalForTests,
+  __setCihazDegisimKanalForTests,
   type AgAyar,
 } from "../src/networkTrust.js";
 import { sahteContext, baglanti } from "./helpers/harness.js";
@@ -207,21 +208,30 @@ const KADEME_AYARI: AgAyar = {
   approverPhone: "+905551112277",
   simSwapWindowHours: 137,
   reachCheck: true,
-  devSwapCheck: false,
+  /**
+   * Cihaz değişimi halkası AÇIK ve bu bilinçli: SIM değişimine kefil olabilen bir halka
+   * gerekiyor. Erişilebilirlik halkası temiz dönse de kefil sayılmaz (KEFIL_ESLEMESI) —
+   * canlılık sinyali kimlik sinyalini doğrulayamaz. Bu dosyanın konusu onay KANALI
+   * (elicitation var/yok), kefaletin kendisi değil; o kural
+   * test/kademeliDogrulama.test.ts'te ölçülür.
+   */
+  devSwapCheck: true,
   callFwdCheck: false,
   stepUp: true,
 };
 
-/** SIM taşınmış, erişilebilirlik halkası GERÇEK kanaldan temiz → yükseltme koşulları tam. */
+/** SIM taşınmış, cihaz AYNI (gerçek kanaldan temiz) → yükseltmeye kefil olabilen halka var. */
 function kademeKosullari(): void {
   __setSimSwapKanalForTests({ verifySimSwap: async () => true });
   __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
+  __setCihazDegisimKanalForTests({ cihazDegistiMi: async () => false });
 }
 
 /** Zincirin tamamı temiz — sızıntı testleri için. */
 function temizKosullar(): void {
   __setSimSwapKanalForTests({ verifySimSwap: async () => false });
   __setErisimKanalForTests({ cihazErisilebilirMi: async () => true });
+  __setCihazDegisimKanalForTests({ cihazDegistiMi: async () => false });
 }
 
 /**
@@ -245,6 +255,7 @@ function sahteSunucu(sorulanlar: string[], sorular: string[], yetenek: unknown):
 afterEach(() => {
   __setSimSwapKanalForTests(undefined);
   __setErisimKanalForTests(undefined);
+  __setCihazDegisimKanalForTests(undefined);
 });
 
 test("KRİTİK: kademe açıkken elicitation'sız istemcide confirm=true GEÇİŞ ÜRETMEZ", async () => {
@@ -361,6 +372,8 @@ test("UÇTAN UCA (Google): kademe + elicitation'sız istemci + confirm=true → 
   ctx.config.simSwapWindowHours = 137;
   ctx.config.reachCheck = true;
   ctx.config.stepUp = true;
+  // Kefil olabilen halka: canlılık sinyali SIM değişimini doğrulayamaz (KEFIL_ESLEMESI).
+  ctx.config.devSwapCheck = true;
   kademeKosullari();
 
   // baglanti() elicitation BİLDİRMEYEN bir istemci kurar — zayıf kanal tam olarak budur.

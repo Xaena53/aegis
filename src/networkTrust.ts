@@ -411,6 +411,38 @@ export const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
 ]);
 
 /**
+ * HANGİ TEMİZ HALKA HANGİ BOZUK SİNYALE KEFİL OLABİLİR — tek görünür tablo.
+ *
+ * NEDEN GEREKLİ: yükseltme "en az bir gerçek halka temiz döndü" koşuluyla veriliyordu ve
+ * bu koşul halkanın NE ÖLÇTÜĞÜNE bakmıyordu. Ölçülen sonuç: saptanmış GERÇEK bir SIM
+ * değişimine, tek başına erişilebilirlik halkası kefil olup yükseltmeyi taşıyabiliyordu.
+ *
+ * Oysa erişilebilirlik bir KİMLİK sinyali değil, bir CANLILIK sinyalidir: SIM'i ele
+ * geçiren saldırganın telefonu da şebekeden erişilebilirdir, cihazı değiştirenin de,
+ * çağrıları yönlendirenin de. "Cihaz açık" ifadesi bu sinyallerin hiçbiriyle ÇELİŞMEZ —
+ * ve bir sinyali çürütemeyen halka ona kefil de olamaz. Kapı olarak değerlidir
+ * (erişilemeyen cihaz şüphelidir), kefil olarak değersizdir; bu yüzden aşağıdaki hiçbir
+ * satırda geçmez. Aynı gerekçeyle `nv` de yoktur: o zaten yalnız simülasyondur.
+ *
+ * Tablo, listede OLMAYAN her neden için boş küme demektir (kapalı arıza: tanınmayan bir
+ * bozuk sinyale hiçbir halka kefil olamaz, yani yükseltme verilmez). KADEME_UYGUN'daki
+ * her nedenin burada bir satırı bulunmak zorundadır; test/kademeliDogrulama.test.ts iki
+ * listeyi karşılıklı sınar, böylece yeni bir neden kefilsiz eklenemez.
+ */
+export const KEFIL_ESLEMESI: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  // SIM değişti: cihaz aynı mı, hat beklenen ülkede mi, çağrı yönlendirmesi var mı?
+  "sim-degisti": Object.freeze(["devSwap", "loc", "callFwd"]),
+  // Cihaz değişti: SIM aynı mı, hat beklenen ülkede mi, yönlendirme var mı?
+  "cihaz-degisti": Object.freeze(["simSwap", "loc", "callFwd"]),
+  // Cihaza ulaşılamıyor: kimlik halkalarının hepsi konuşabilir.
+  "cihaz-erisilemez": Object.freeze(["simSwap", "devSwap", "loc", "callFwd"]),
+  // Konum beklenmedik: SIM ve cihaz aynıysa seyahat açıklaması makul; yönlendirme yoksa.
+  "konum-beklenmedik": Object.freeze(["simSwap", "devSwap", "callFwd"]),
+  // Bir kontrol okunabilir yanıt veremedi: kimlik halkalarının temiz cevabı anlamlıdır.
+  "ag-yanitsiz": Object.freeze(["simSwap", "devSwap", "loc", "callFwd"]),
+});
+
+/**
  * KADEMEYE ASLA UYGUN OLMAYANLAR — ve listede olmayan her neden zaten uygun değildir
  * (varsayılan RET tarafıdır). Burada yalnız GEREKÇELERİ yazılıdır:
  *
@@ -2136,11 +2168,29 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    * yani kapının kapandığı tek durumda kapıyı açmak. Simülasyon kanalları bilerek
    * sayılmaz: demo kipinde tek bir env değeri gerçek bir SIM değişimini örtemesin.
    */
-  if (!temizGercek.length) {
+  /**
+   * KEFİL SÜZGECİ. Temiz dönmüş olmak yetmez; halkanın bozuk sinyali ÇÜRÜTEBİLİYOR
+   * olması da gerekir (bkz. KEFIL_ESLEMESI). Süzgeçten önce "en az bir gerçek halka
+   * temiz" koşulu sağlanıyordu ve bu, erişilebilirlik halkasının tek başına gerçek bir
+   * SIM değişimine kefil olmasına izin veriyordu.
+   */
+  // Kapanışın içinde daraltma korunmaz: bozuk sinyali sabite alıyoruz.
+  const kefilKumesi = KEFIL_ESLEMESI[bekleyen.neden] ?? [];
+  const kefiller = temizGercek.filter((id) => kefilKumesi.includes(id));
+
+  if (!kefiller.length) {
+    /**
+     * İki ayrı durumu AYIRT EDEREK söylüyoruz: hiç gerçek halka koşmamış olmakla,
+     * koşmuş ama hiçbirinin bu sinyal hakkında söyleyecek sözü olmaması aynı şey
+     * değildir. İkincisini birincisiymiş gibi raporlamak, operatöre yapılandırma
+     * sorunu varmış gibi gösterirdi.
+     */
+    const aciklayici = temizGercek.length
+      ? " (kademeli doğrulama açık, ama temiz dönen ağ halkalarının hiçbiri bu sinyale kefil " +
+        "olabilecek türden değil — canlılık sinyali kimlik sinyalini doğrulayamaz)"
+      : " (kademeli doğrulama açık, ama sinyali doğrulayacak GERÇEK bir ağ halkası koşmadı)";
     return {
-      engel:
-        bekleyen.engel +
-        " (kademeli doğrulama açık, ama sinyali doğrulayacak GERÇEK bir ağ halkası koşmadı)",
+      engel: bekleyen.engel + aciklayici,
       kanit: [],
       iz: izle({ ...iz, retNedeni: bekleyen.neden }),
     };
@@ -2150,10 +2200,10 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
     kanit: [
       ...kanit,
       `KADEMELİ DOĞRULAMA: ${bekleyen.aciklama} — işlem reddedilmedi, daha güçlü ` +
-        `doğrulamaya bağlandı (${temizGercek.length} bağımsız ağ sinyali temiz).`,
+        `doğrulamaya bağlandı (${kefiller.length} bağımsız ağ sinyali bu sinyale kefil).`,
     ],
-    iz: izle({ ...iz, kademe: "yukseltildi", retNedeni: bekleyen.neden, kademeDogrulayan: temizGercek }),
-    kademe: { neden: bekleyen.neden, aciklama: bekleyen.aciklama, dogrulayan: temizGercek },
+    iz: izle({ ...iz, kademe: "yukseltildi", retNedeni: bekleyen.neden, kademeDogrulayan: kefiller }),
+    kademe: { neden: bekleyen.neden, aciklama: bekleyen.aciklama, dogrulayan: kefiller },
   };
 }
 

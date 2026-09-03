@@ -18,6 +18,8 @@ import {
   __setSimSwapKanalForTests,
   __setErisimKanalForTests,
   __setKonumKanalForTests,
+  KADEME_UYGUN,
+  KEFIL_ESLEMESI,
   type AgAyar,
 } from "../src/networkTrust.js";
 
@@ -158,17 +160,75 @@ test("temiz zincir yükseltme üretmez — kademe yalnız gerektiğinde görün�
 test("doğrulama sırası önemsiz: bozuk sinyalden ÖNCE koşan temiz halka da sayılır", async () => {
   /**
    * İlk yazımda doğrulayanlar yalnız bozuk sinyalden SONRA koşanlardan sayılıyordu ve
-   * bu, doğrulamayı zincirdeki sıraya bağlıyordu. Erişilebilirlik halkası konum
-   * halkasından önce koştuğu için temiz ve gerçek olmasına rağmen sayılmıyordu.
+   * bu, doğrulamayı zincirdeki sıraya bağlıyordu. simSwap halkası konum halkasından
+   * ÖNCE koşar; temiz ve gerçek olduğu sürece kefil sayılmalıdır.
+   *
+   * Aynı vaka ikinci bir kuralı da çiviliyor: erişilebilirlik halkası da konumdan önce
+   * koşar ve temiz döner, ama kefil sayılMAZ — bkz. KEFIL_ESLEMESI. Sıra bağımsızlığı
+   * ile ilgililik şartı birbirinden ayrı iki kuraldır ve ikisi de burada ölçülür.
    */
   kanallar({ yurtDisinda: true, ulkeler: ["DE"] }); // konum bozuk, diğerleri temiz
   const k = await agDogrula(TEMEL, "high");
 
   assert.equal(k.kademe?.neden, "konum-beklenmedik");
   assert.ok(
-    k.kademe!.dogrulayan.includes("simSwap") && k.kademe!.dogrulayan.includes("reach"),
-    `bozuk sinyalden önce koşan temiz halkalar da sayılmalı (gelen: ${k.kademe!.dogrulayan.join(",")})`
+    k.kademe!.dogrulayan.includes("simSwap"),
+    `bozuk sinyalden önce koşan temiz halka da sayılmalı (gelen: ${k.kademe!.dogrulayan.join(",")})`
   );
+  assert.ok(
+    !k.kademe!.dogrulayan.includes("reach"),
+    `canlılık sinyali konum sinyaline kefil olmamalı (gelen: ${k.kademe!.dogrulayan.join(",")})`
+  );
+});
+
+test("KRİTİK: erişilebilirlik halkası TEK BAŞINA gerçek SIM değişimine kefil OLAMAZ", async () => {
+  /**
+   * Ölçülen açık buydu: SIM son 72 saatte GERÇEKTEN değişmişken, temiz dönen tek gerçek
+   * halka erişilebilirlik olduğunda yükseltme veriliyor ve harcama insana daha güçlü bir
+   * soru sorularak geçiyordu. Oysa SIM'i ele geçiren saldırganın telefonu da şebekeden
+   * erişilebilirdir — bu halka o sinyalle ÇELİŞMEZ, dolayısıyla ona kefil de olamaz.
+   *
+   * Kefil olabilecek halkalar (devSwap, loc, callFwd) bilerek KAPALI bırakıldı; geriye
+   * yalnız erişilebilirlik kalıyor. Beklenen sonuç: yükseltme YOK, düz RET.
+   */
+  kanallar({ simDegisti: true });
+  /**
+   * Kefil olabilecek halkaların HEPSİ kapatıldı: devSwap ve callFwd zaten TEMEL'de
+   * kapalı, konum halkası da beklenen ülke verilmeyerek kapatıldı (halka "kapali"
+   * döner ve gerçek sayılmaz). Geriye temiz dönen tek gerçek halka erişilebilirlik
+   * kalıyor — tam da kefil olamayacak olan.
+   */
+  const k = await agDogrula({ ...TEMEL, expectedCountry: undefined }, "high");
+
+  assert.equal(k.kademe, undefined, "yükseltme verilmemeli");
+  assert.ok(k.engel, "işlem reddedilmeli");
+  assert.match(
+    k.engel!,
+    /kefil olabilecek türden değil/,
+    `ret sebebi ilgisiz kefaleti açıkça söylemeli (gelen: ${k.engel})`
+  );
+});
+
+test("KEFIL_ESLEMESI, KADEME_UYGUN ile birebir örtüşür", () => {
+  /**
+   * Yeni bir ret nedeni kademeye uygun ilan edilip kefil tablosuna yazılmazsa, o neden
+   * için kefil kümesi boş olur ve yükseltme SESSİZCE hiç verilmez — kapalı arıza doğru
+   * yönde ama sebebi görünmez. Bu gözcü, iki listeyi birbirine çiviler.
+   */
+  for (const neden of KADEME_UYGUN) {
+    assert.ok(
+      Array.isArray(KEFIL_ESLEMESI[neden]) && KEFIL_ESLEMESI[neden]!.length > 0,
+      `kademeye uygun '${neden}' için kefil tablosunda satır yok`
+    );
+  }
+  for (const neden of Object.keys(KEFIL_ESLEMESI)) {
+    assert.ok(KADEME_UYGUN.has(neden as any), `kefil tablosunda fazladan neden: '${neden}'`);
+  }
+  // Canlılık sinyali hiçbir satırda kefil olamaz.
+  for (const [neden, kefiller] of Object.entries(KEFIL_ESLEMESI)) {
+    assert.ok(!kefiller.includes("reach"), `'${neden}' satırında erişilebilirlik kefil görünüyor`);
+    assert.ok(!kefiller.includes("nv"), `'${neden}' satırında simüle NV kefil görünüyor`);
+  }
 });
 
 test("yapılandırma hatası yükseltilemez — kimlik doğrulaması onu düzeltmez", async () => {
