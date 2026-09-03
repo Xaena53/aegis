@@ -17,6 +17,7 @@ import {
   dagitimDogrula,
   dagitimOzeti,
   kullanilabilirKanallar,
+  uygulanacakPay,
 } from "../../scripts/brain/dagitim.mjs";
 
 /* ── Kanal keşfi ─────────────────────────────────────────────────────────── */
@@ -212,4 +213,41 @@ test("KRİTİK: çok kanallı onay ekranı, onaylananın bir PAY olduğunu söyl
         `bölündüğünü göremezse, toplamın bir parçasını tamamı sanarak onaylar.`
     );
   }
+});
+
+/* ── Kurulacak kanalın payı: sıraya değil ADA bakılır ─────────────────────────
+ *
+ * Kurma yolu yalnız Google'a yazar. Pay `dagitim[0]` ile alındığında sıralamayı model
+ * belirliyordu ve rapor yanlış platformu söylüyordu.
+ */
+
+test("KRİTİK: pay ADA göre seçilir — modelin sırası belirleyici değildir", () => {
+  const dagitim = [
+    { kanal: "meta", gunlukButce: 70, gerekce: "x" },
+    { kanal: "google", gunlukButce: 30, gerekce: "y" },
+  ];
+  const pay = uygulanacakPay(dagitim, "google");
+  assert.equal(pay?.kanal, "google", "model meta'yı öne yazsa da google payı seçilmeli");
+  assert.equal(pay?.gunlukButce, 30, "KRİTİK: kampanya kendi kanalının payıyla kurulmalı");
+});
+
+test("KRİTİK: kanala pay düşmediyse undefined döner (kapalı arıza)", () => {
+  const dagitim = [{ kanal: "meta", gunlukButce: 100, gerekce: "x" }];
+  assert.equal(
+    uygulanacakPay(dagitim, "google"),
+    undefined,
+    "yazılacak kanala pay yoksa sessizce başka paya düşülmemeli"
+  );
+});
+
+test("sıfır ya da geçersiz pay kabul edilmez", () => {
+  assert.equal(uygulanacakPay([{ kanal: "google", gunlukButce: 0 }], "google"), undefined);
+  assert.equal(uygulanacakPay([{ kanal: "google", gunlukButce: "30" }], "google"), undefined);
+  assert.equal(uygulanacakPay([{ kanal: "google" }], "google"), undefined);
+  assert.equal(uygulanacakPay(undefined, "google"), undefined);
+});
+
+test("tek kanallı dağıtımda pay normal seçilir", () => {
+  const pay = uygulanacakPay([{ kanal: "google", gunlukButce: 100, gerekce: "tek kanal" }], "google");
+  assert.equal(pay?.gunlukButce, 100);
 });

@@ -16,6 +16,8 @@
  * (otomatik kırpma YAPMAZ) ama bu akışta pratikte hiç tetiklenmemesi hedeflenir.
  */
 
+import { ayracNotrle } from "./ortak.mjs";
+
 /* ── Google RSA limitleri (Türkçe karakterler tek karakter sayılır: String.length) ── */
 export const BASLIK_EN_AZ = 3;
 export const BASLIK_EN_COK = 15;
@@ -141,9 +143,12 @@ const SISTEM_PROMPT = [
   "ya da başka gizli bilgi koyma. Türkçe yaz.",
 ].join("\n");
 
-/** Ayraç kaçışını temizle (site.ts'teki gevşek desenin aynısı, bizim etiketimiz için). */
+/**
+ * Ayraç kaçışını temizle. Uygulama ortak.mjs'te: eski desendeki `[^>]{0,200}` sınırı
+ * bir kapıydı ve 201 karakter dolguyla aşılabiliyordu.
+ */
 function ayracTemizle(metin) {
-  return metin.replace(/<\s*\/?\s*arastirma-verisi[^>]{0,200}>/gi, "[etiket-temizlendi]");
+  return ayracNotrle(metin, "arastirma-verisi");
 }
 
 /** Güvenilmez (LLM/site kaynaklı) veriyi ayraçlı bloğa hazırlar. */

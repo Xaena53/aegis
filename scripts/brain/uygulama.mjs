@@ -620,9 +620,25 @@ function maddesizGovde(metin) {
  *                          yok, kampanya bulunamadı, yazma kapalı…),
  *  'hata'                — boş/anlaşılmaz yanıt ya da araç hatası.
  */
-export function yayinSonucuSinifla(metin) {
+export function yayinSonucuSinifla(metin, kampanyaAdi) {
   const m = String(metin ?? "").trim();
   if (!m || m === "(boş yanıt)") return "hata";
+
+  /**
+   * MODELİN SEÇTİĞİ KAMPANYA ADI SINIFLANDIRMADAN ÇIKARILIR.
+   *
+   * Sunucu ret metinlerine kampanya adını koyar ("Reddedildi: \"X\" kampanyası…") ve o
+   * adı MODEL üretir. Yani aşağıdaki desenlerin eşleştiği metnin bir parçası, kapının
+   * kendi çıktısı değil, modelin yazdığı serbest metindir. Adına "AĞ DOĞRULAMASI
+   * BAŞARISIZ" ya da "ADSPILOT_NAC_SIMULATE" geçen bir kampanya kurulduğunda, sıradan
+   * bir sunucu reddi (bütçe tavanı, yayınlanabilir reklam yok) 'ag-retti' sınıflanıyor
+   * ve rapor HİÇ ÇALIŞMAMIŞ bir CAMARA kapısı için "GÜVENLİK KAPISI ÇALIŞTI" basıyordu.
+   * Demoda bu, kapının çalıştığını kanıtlaması gereken anın uydurulabilir olması demek.
+   *
+   * Ad, sınıflandırılan metinden silinir — rapora giden `sonucMetni` DEĞİŞMEZ, orada
+   * sunucunun cevabı aynen durur. Silinen yalnız desen aramasının gördüğü kopyadır.
+   */
+  const temiz = kampanyaAdi ? m.split(String(kampanyaAdi)).join(" ") : m;
 
   /**
    * BAŞARI İMZASI EN SONA BAKILIR — sıra bir üslup tercihi değil.
@@ -642,11 +658,11 @@ export function yayinSonucuSinifla(metin) {
    * kanıt satırları onay kapısının ret metnine ekleniyor. Bu düzeltme yalnız başarı
    * imzasını sona taşır; ret türlerinin birbirine göre sırasına dokunmaz.
    */
-  if (INSAN_KAPISI_IZLERI.some((d) => d.test(m))) return "insan-onayi-gerekli";
-  const govde = maddesizGovde(m);
+  if (INSAN_KAPISI_IZLERI.some((d) => d.test(temiz))) return "insan-onayi-gerekli";
+  const govde = maddesizGovde(temiz);
   if (AG_KAPISI_IZLERI.some((d) => d.test(govde))) return "ag-retti";
-  if (sonucBasarisizMi(m)) return "reddedildi";
-  if (YAYIN_BASARI_IZI.test(m)) return "basarili";
+  if (sonucBasarisizMi(temiz)) return "reddedildi";
+  if (YAYIN_BASARI_IZI.test(temiz)) return "basarili";
   return "hata";
 }
 
@@ -674,7 +690,7 @@ export function kanitSatirlariniAyikla(metin) {
  * Dönüş: { denendi, kampanyaId, durum, sonucMetni, kanitSatirlari }
  * Fırlatmaz — araç hatası da 'hata' durumu olarak sınıflanır (rapor yalan söylemesin).
  */
-export async function yayinaAl({ kampanyaId, musteriId }, { cagir }) {
+export async function yayinaAl({ kampanyaId, musteriId, kampanyaAdi }, { cagir }) {
   const yayinCagir = yayinCagirici(cagir);
 
   const kampanya = guvenliDize(kampanyaId, "kampanyaId", { max: 20 });
@@ -708,7 +724,7 @@ export async function yayinaAl({ kampanyaId, musteriId }, { cagir }) {
   return {
     denendi: true,
     kampanyaId: kampanya,
-    durum: yayinSonucuSinifla(metin),
+    durum: yayinSonucuSinifla(metin, kampanyaAdi),
     // Sunucunun cevabı AYNEN taşınır (yalnız ANSI/kontrol karakteri sökülür):
     // ret metni demonun vitrin anıdır, özetlenip yumuşatılmaz.
     sonucMetni: gorunurOzet(metin, 2000),

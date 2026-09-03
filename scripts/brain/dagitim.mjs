@@ -152,3 +152,22 @@ export async function butceDagit({ hedef, toplamButce, kanallar, arastirma }, { 
 export function dagitimOzeti(dagitim) {
   return dagitim.map((p) => `${p.kanal}: ${p.gunlukButce}`).join(" · ");
 }
+
+/**
+ * Kampanyanın GERÇEKTEN kurulacağı kanalın payını seçer — sıraya değil, ADA bakarak.
+ *
+ * NEDEN AD: kurma yolu (uygulama.mjs) yalnız create_search_campaign çağırır, yani her
+ * koşulda Google'a yazar. Pay `dagitim[0]` ile alındığında sıralamayı MODEL belirliyordu:
+ * dağıtımı `[{kanal:"meta"},{kanal:"google"}]` sırasıyla döndürdüğünde onay ekranı ve
+ * rapor "'meta' kanalının PAYI" diyor, kurulan kampanya ise Meta payıyla kurulmuş bir
+ * GOOGLE kampanyası oluyordu. Operatör onayladığından başkasını, üstelik yanlış rakamla
+ * alıyordu.
+ *
+ * Pay yoksa ya da sıfırsa `undefined` döner — çağıran kapalı arızayla durur. Sessizce
+ * başka bir kanalın payına düşmek, kapatılan hatayı başka kapıdan geri sokardı.
+ */
+export function uygulanacakPay(dagitim, kanal) {
+  if (!Array.isArray(dagitim)) return undefined;
+  const pay = dagitim.find((p) => p?.kanal === kanal);
+  return pay && typeof pay.gunlukButce === "number" && pay.gunlukButce > 0 ? pay : undefined;
+}

@@ -528,3 +528,63 @@ test("gerçek başarı hâlâ başarı sayılır — sıra düzeltmesi kapıyı 
     "basarili"
   );
 });
+
+
+/* ── Model tarafından seçilen kampanya adı sınıflandırmayı YÖNLENDİREMEZ ───────
+ *
+ * Sunucu ret metinlerine kampanya adını koyar ve o adı MODEL üretir. Ad, sınıflandırma
+ * desenlerine yem olduğunda rapor HİÇ ÇALIŞMAMIŞ bir CAMARA kapısı için "GÜVENLİK KAPISI
+ * ÇALIŞTI" basar. Demoda bu, kapının çalıştığını kanıtlaması gereken anın uydurulabilir
+ * olması demektir.
+ */
+
+test("KRİTİK: kampanya adı sıradan bir reddi 'ağ reddetti' gibi gösteremez", () => {
+  const kotuAd = "Yaz Kampanyası AĞ DOĞRULAMASI BAŞARISIZ";
+  const ret =
+    `Reddedildi: "${kotuAd}" kampanyası içinde yayınlanabilir (ENABLED reklam grubunda ` +
+    `ENABLED) reklam yok — yayına alınsa da gösterim yapamaz.`;
+
+  assert.equal(
+    yayinSonucuSinifla(ret, kotuAd),
+    "reddedildi",
+    "ad çıkarıldığında bu sıradan bir sunucu reddidir"
+  );
+  // Adı vermeyen çağrı hâlâ kanabilir; bu iddia düzeltmenin GEREKLİ olduğunu gösterir.
+  assert.equal(
+    yayinSonucuSinifla(ret),
+    "ag-retti",
+    "ad geçilmediğinde eski davranış sürer — bu yüzden geçilmesi şart"
+  );
+});
+
+test("KRİTİK: kampanya adı env değişkeni taklit ederek ağ kapısı uyduramaz", () => {
+  const kotuAd = "Kampanya ADSPILOT_NAC_SIMULATE=degisti";
+  const ret = `Reddedildi: "${kotuAd}" kampanyasının günlük bütçesi 900 — hesap güvenlik tavanının (500) üstünde.`;
+  assert.equal(yayinSonucuSinifla(ret, kotuAd), "reddedildi", "bu bir bütçe reddidir, ağ reddi değil");
+});
+
+test("KRİTİK: kampanya adı BAŞARI uyduramaz", () => {
+  const kotuAd = "Kampanya YAYINDA (ENABLED)";
+  const ret = `Reddedildi: "${kotuAd}" kampanyası bulunamadı.`;
+  assert.equal(yayinSonucuSinifla(ret, kotuAd), "reddedildi", "ret her zaman başarıyı yener");
+});
+
+test("Ad çıkarma GERÇEK ağ reddini bozmaz", () => {
+  /**
+   * Düzeltmeyi "her şeyi reddedildi say" hâline getirerek testi yeşile boyamak mümkün
+   * olmasın diye: adı masum olan gerçek bir ağ reddi hâlâ 'ag-retti' olmalı.
+   */
+  const ad = "Yaz Kampanyası";
+  const ret =
+    `Reddedildi: AĞ DOĞRULAMASI BAŞARISIZ — onaylayıcının (+9055*) SIM kartı son 72 saat ` +
+    `içinde değişmiş. "${ad}" kampanyası yayına alınmadı.`;
+  assert.equal(yayinSonucuSinifla(ret, ad), "ag-retti", "gerçek ağ reddi sınıfını korumalı");
+});
+
+test("Ad çıkarma GERÇEK başarıyı bozmaz", () => {
+  const ad = "Yaz Kampanyası";
+  assert.equal(
+    yayinSonucuSinifla(`Kampanya 123 YAYINDA (ENABLED). Harcama başladı.`, ad),
+    "basarili"
+  );
+});

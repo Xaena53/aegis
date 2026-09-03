@@ -277,3 +277,38 @@ export async function mcpBaglan() {
   await mcp.connect(transport);
   return cagirSarmala(mcp);
 }
+
+/**
+ * AYRAÇ ADINI NÖTRLER — güvenilmez içeriğin, kendisini saran bloğu kapatmasını engeller.
+ *
+ * NEDEN DESEN DEĞİL LİTERAL: eski hâli `<\s*\/?\s*<ad>[^>]{0,200}>` idi ve o 200 sınırı
+ * bir KAPIYDI. `</arastirma-verisi` + 201 karakter dolgu + `>` yükü desenin dışına düşer,
+ * temizlenmeden geçer ve blok erkenden kapanır: o noktadan sonrası model için "veri"
+ * değil, sistemin kendi talimatı gibi görünür. Sınırı büyütmek aynı yarışı bir tur daha
+ * oynamaktır; onun yerine ayracın ADI nötrleniyor, geriye onu yazmanın hiçbir varyantı
+ * kalmıyor — boşluklu, eğik çizgili, öznitelikli, hiçbiri.
+ *
+ * Aynı açık src/siteExtract.ts'te kapatılmıştı; buradaki iki .mjs ikizi (strateji ve
+ * kreatif istemleri) açık kalmıştı. Tek uygulama, üç çağrı yeri.
+ *
+ * toLowerCase() KULLANILMAZ: Türkçe 'İ' iki kod noktasına açılır, dize uzar ve indeksler
+ * ham metinle hizasını kaybeder. ASCII'ye özel küçültme hizayı korur. indexOf ile
+ * doğrusal tarama — geri izleme yok, dolayısıyla ReDoS da yok.
+ */
+export function ayracNotrle(metin, ayracAdi) {
+  const kaynak = String(metin ?? "");
+  const kucuk = kaynak.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+  const aranan = String(ayracAdi).toLowerCase();
+  let cikti = "";
+  let i = 0;
+  for (;;) {
+    const s = kucuk.indexOf(aranan, i);
+    if (s < 0) {
+      cikti += kaynak.slice(i);
+      break;
+    }
+    cikti += kaynak.slice(i, s) + "[etiket-temizlendi]";
+    i = s + aranan.length;
+  }
+  return cikti;
+}

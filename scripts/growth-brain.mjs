@@ -45,7 +45,16 @@ import { anthropicIstemci, jsonUret, mcpBaglan } from "./brain/ortak.mjs";
 import { arastir } from "./brain/arastirma.mjs";
 import { stratejiKur, planDogrula } from "./brain/strateji.mjs";
 import { kreatifUret } from "./brain/kreatif.mjs";
-import { butceDagit, dagitimOzeti, kullanilabilirKanallar } from "./brain/dagitim.mjs";
+import { butceDagit, dagitimOzeti, kullanilabilirKanallar, uygulanacakPay } from "./brain/dagitim.mjs";
+
+/**
+ * Kampanya kurma yolunun GERÇEKTEN yazdığı kanal.
+ *
+ * uygulama.mjs yalnız create_search_campaign / add_keywords / create_responsive_search_ad
+ * çağırır; hepsi Google Ads araçlarıdır. Bu sabit, dağıtımdan hangi payın alınacağını
+ * belirler ve kod ile raporun aynı kanalı söylemesini garanti eder.
+ */
+const UYGULANAN_KANAL = "google";
 import { raporOlustur } from "./brain/rapor.mjs";
 
 /** src/config.ts parseBudgetCap varsayılanı — sunucu tavanı okunamadığında güvenli alt sınır. */
@@ -409,13 +418,31 @@ async function ana() {
     }
 
     /**
-     * Strateji BİRİNCİ kanalın payıyla kurulur ve uygulama da o kanala yazar.
+     * Strateji, UYGULAMA YOLUNUN GERÇEKTEN YAZDIĞI kanalın payıyla kurulur.
      *
-     * Bugünkü dürüst sınır: dağıtım kanallara bölüyor, ama kampanya kurma yolu tek
-     * kanaldan gidiyor. Diğer kanalların payı rapora ÖNERİ olarak yazılıyor ve bunun
-     * öneri olduğu orada açıkça söyleniyor — otomatik uygulanıyormuş gibi gösterilmiyor.
+     * Eskiden `dagitim[0]` alınıyordu ve bu, sırayı MODELE bırakıyordu: kurma yolu
+     * (uygulama.mjs) yalnız create_search_campaign çağırır, yani her koşulda GOOGLE'a
+     * yazar. Model dağıtımı `[{kanal:"meta",...},{kanal:"google",...}]` sırasıyla
+     * döndürdüğünde onay ekranı ve rapor "'meta' kanalının PAYI" diyor, oluşturulan
+     * kampanya ise Meta payıyla kurulmuş bir GOOGLE kampanyası oluyordu. Operatör
+     * onayladığı şeyden başkasını alıyor — üstelik yanlış rakamla.
+     *
+     * Kanal artık adıyla seçilir. Bugünkü dürüst sınır aynı kalıyor: dağıtım birden çok
+     * kanala bölebilir, kurma yolu tek kanaldan gider; diğer kanalların payı rapora
+     * ÖNERİ olarak yazılır ve öneri olduğu orada açıkça söylenir.
      */
-    const birincilPay = dagitim[0];
+    const birincilPay = uygulanacakPay(dagitim, UYGULANAN_KANAL);
+    if (!birincilPay) {
+      /**
+       * Kapalı arıza: yazılacak kanala pay düşmediyse kampanya kurulmaz. Sessizce
+       * başka bir kanalın payıyla devam etmek, tam da yukarıda kapatılan hatayı
+       * başka bir kapıdan geri sokardı.
+       */
+      throw new Error(
+        `Bütçe dağıtımında '${UYGULANAN_KANAL}' kanalına pay düşmedi (${dagitimOzeti(dagitim)}). ` +
+          `Kampanya kurma yolu yalnız '${UYGULANAN_KANAL}' kanalına yazdığı için plan uygulanamaz.`
+      );
+    }
     const kanalButcesi = birincilPay.gunlukButce;
 
     console.log(`\n[2/${N}] Strateji… (${birincilPay.kanal}: ${kanalButcesi} TL)`);
@@ -504,7 +531,16 @@ async function ana() {
           console.log("Ağ kapısına gidiliyor (set_campaign_status → ENABLED, HIGH risk)…");
           const { yayinaAl } = await import("./brain/uygulama.mjs");
           yayinSonucu = await yayinaAl(
-            { kampanyaId: uygulamaSonucu.kampanyaId, musteriId: girdi.musteri },
+            {
+              kampanyaId: uygulamaSonucu.kampanyaId,
+              musteriId: girdi.musteri,
+              /**
+               * Ad, sonuç SINIFLANDIRMASINDAN çıkarılsın diye geçilir: sunucu ret
+               * metinlerine kampanya adını koyar ve o adı model yazar, dolayısıyla
+               * desen araması modelin serbest metnini kapının çıktısı sanabilir.
+               */
+              kampanyaAdi: plan.kampanyaAdi,
+            },
             { cagir: mcp.cagir }
           );
           yayinSonucuYazdir(yayinSonucu);

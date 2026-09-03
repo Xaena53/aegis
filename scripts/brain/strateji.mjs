@@ -14,6 +14,8 @@
  *    SESSİZ KIRPMA YOK, Türkçe Error fırlatılır.
  */
 
+import { ayracNotrle } from "./ortak.mjs";
+
 /** src/util.ts ISO_NUMERIC ile birebir aynı ülke listesi (sunucu whitelist'i). */
 export const DESTEKLENEN_ULKELER = Object.freeze([
   "TR", "US", "GB", "DE", "FR", "ES", "IT", "NL",
@@ -77,11 +79,11 @@ function guvenliOzet(deger, sinir = 60) {
 }
 
 /**
- * Ayraç kaçışı temizliği — site.ts:179 deseninin bu bloğa uyarlanmışı.
- * Gevşek desen bilinçli: "</arastirma-verisi >" gibi varyantlar da yakalanır.
+ * Ayraç kaçışı temizliği. Uygulama ortak.mjs'te: eski desen `[^>]{0,200}` sınırı
+ * taşıyordu ve 201 karakter dolgu o sınırın dışına düşüp bloğu erkenden kapatabiliyordu.
  */
 function veriBlogunaHazirla(metin) {
-  return String(metin).replace(/<\s*\/?\s*arastirma-verisi[^>]{0,200}>/gi, "[etiket-temizlendi]");
+  return ayracNotrle(metin, "arastirma-verisi");
 }
 
 function planHatasi(mesaj) {
