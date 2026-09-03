@@ -84,15 +84,37 @@ async function liveCampaignGuard(
    * Fail closed. Approval is skipped only when the campaign is provably paused.
    * An empty result, a missing status field or an unexpected type all count as
    * "unknown", and unknown means ask — a spend gate must not open on ambiguity.
+   *
+   * BEYAZ LİSTE, KARA LİSTE DEĞİL. Bu kapı bir kez kara listeyle yazılmıştı:
+   * "ENABLED/UNKNOWN/UNSPECIFIED dışındaki her ad kesin taslaktır". Google
+   * `campaign.status` alanını enum numarası (2), enum adı ("ENABLED") ya da JSON
+   * dönüşümüne göre sayısal METİN ("2") olarak verebilir; listede adı geçmeyen her
+   * değer — "2", "enabled", "SERVING" — yayındaki bir kampanyayı "taslak" sayıp
+   * kapıyı sessizce atlatıyordu: ne onay istemi, ne CAMARA zinciri, ne denetim satırı.
+   * Kara liste, kapıyı yazanın o gün aklına gelen adlarla sınırlıdır; beyaz liste ise
+   * yarın gelecek bilinmeyen adı da "bilinmiyor" tarafına koyar.
+   *
+   * Artık yalnız harcamadığı KANITLANMIŞ iki durum onaydan muaftır: PAUSED ve REMOVED.
+   * Sayı ↔ ad çevrimi enum'un kendi sözlüğüyle yapılır (sözlük çift yönlüdür:
+   * [2] → "ENABLED" ve ["ENABLED"] → 2), böylece sayısal metin de gerçek adına çözülür;
+   * çözülemeyen değer büyük harfe indirgenir ve beyaz listede yoksa "bilinmiyor" olur.
    */
   const ham = rows.length ? rows[0]?.campaign?.status : undefined;
+  const cozulen =
+    typeof ham === "number" || typeof ham === "string" ? (enums.CampaignStatus as any)[ham as any] : undefined;
   const durumAdi =
-    typeof ham === "number" ? String((enums.CampaignStatus as any)[ham] ?? "") : typeof ham === "string" ? ham : "";
-  const kesinTaslak = durumAdi !== "" && durumAdi !== "ENABLED" && durumAdi !== "UNKNOWN" && durumAdi !== "UNSPECIFIED";
+    typeof cozulen === "string" ? cozulen : typeof ham === "string" ? ham.trim().toUpperCase() : "";
+  const kesinTaslak = durumAdi === "PAUSED" || durumAdi === "REMOVED";
   if (kesinTaslak) return null; // draft flow: no approval needed
 
   const kampanyaAdi = rows.length ? String(rows[0]?.campaign?.name ?? "(adsız)") : "(bulunamadı)";
-  const belirsiz = durumAdi === "" ? " (kampanya durumu doğrulanamadı — güvenli tarafa geçildi)" : "";
+  /**
+   * "Yayında" diyebilmek için durumun ENABLED olduğunu GÖRMEK gerekir. Beyaz liste
+   * dışında kalan her şey (boş yanıt, tanınmayan ad, beklenmedik tip) kullanıcıya
+   * "doğrulanamadı" diye bildirilir — kapı kapalı tarafta olsa bile insana yanlış
+   * bir kesinlik sunmak, onayı bilgisiz bir tıklamaya çevirirdi.
+   */
+  const belirsiz = durumAdi === "ENABLED" ? "" : " (kampanya durumu doğrulanamadı — güvenli tarafa geçildi)";
 
   /**
    * Denetim izi için RİSKTEKİ TUTAR: kampanya yayında olduğuna göre bu bütçe, onay
@@ -168,8 +190,16 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         countryCodes: z
           .array(z.string().length(2))
           .min(1)
+          /**
+           * ÜST SINIR ŞEMA DÜZEYİNDE. Komşu diziler (keywords 50, headlines 15,
+           * add_keywords 100) hep kelepçeliydi, bu biri değildi: dünyada 200 kadar ülke
+           * kodu varken sınırsız dizi, tek bir mutasyona yüz binlerce `campaign_criterion`
+           * işlemi koyup Google'a gönderiyor ve çıktısıyla ajanın bağlamını dolduruyordu.
+           * Sınır şemada durur ki ret, tek bir yazma yolu çalışmadan önce düşsün.
+           */
+          .max(50)
           .describe(
-            "Hedef ülkeler, ISO alpha-2 (örn. ['TR']). ZORUNLU — verilmezse Google kampanyayı DÜNYA GENELİ yayınlar ve bütçe çöpe gider."
+            "Hedef ülkeler, ISO alpha-2 (örn. ['TR']). ZORUNLU — verilmezse Google kampanyayı DÜNYA GENELİ yayınlar ve bütçe çöpe gider. En fazla 50 ülke; tekrarlar ayıklanır."
           ),
         adGroupName: z.string().max(255).optional().describe("Reklam grubu adı (varsayılan: 'Reklam Grubu 1')"),
       },
@@ -179,14 +209,23 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       if (!ctx.config.writeEnabled) return writesDisabled();
       const guardMsg = budgetGuardFor(ctx, dailyBudget);
       if (guardMsg) return text(guardMsg);
+      /**
+       * TEKİLLEŞTİRME: aynı ülke iki kez gelirse Google'a iki aynı konum ölçütü gitmesi
+       * mutasyonu boşuna büyütür (ve ikincisi zaten hata olarak döner). Anahtar
+       * kelimelerde `dedupe` ile yapılan şey burada geo id üzerinden yapılır: 'tr' ile
+       * 'TR' aynı hedeftir, metin olarak değil ÇÖZÜMLENMİŞ id olarak karşılaştırılır.
+       */
       const geoIds: number[] = [];
+      const hedefUlkeler: string[] = [];
       for (const cc of countryCodes) {
         const id = geoTargetId(cc);
         if (!id)
           return text(
             `Reddedildi: '${cc}' ülke kodu dahili listede yok. Desteklenenler: ${Object.keys(ISO_NUMERIC).join(", ")}`
           );
+        if (geoIds.includes(id)) continue;
         geoIds.push(id);
+        hedefUlkeler.push(cc.toUpperCase());
       }
       const uniqueKeywords = dedupe(keywords);
       if (!uniqueKeywords.length) return text("Reddedildi: geçerli anahtar kelime kalmadı (hepsi boş/tekrar).");
@@ -269,7 +308,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             ?.map((v: any) => v?.resource_name)
             ?.filter(Boolean) ?? [];
         return text(
-          `Kampanya PAUSED olarak oluşturuldu (${uniqueKeywords.length} anahtar kelime, günlük bütçe ${dailyBudget}, hedef: ${countryCodes.join(", ").toUpperCase()}).\n` +
+          `Kampanya PAUSED olarak oluşturuldu (${uniqueKeywords.length} anahtar kelime, günlük bütçe ${dailyBudget}, hedef: ${hedefUlkeler.join(", ")}).\n` +
             `Oluşan kaynaklar:\n${created.join("\n")}\n\n` +
             `SONRAKİ ADIM: Reklam metni ekle (create_responsive_search_ad), kullanıcı onayını al, sonra set_campaign_status ile yayına al.`
         );
@@ -387,7 +426,27 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
            FROM campaign WHERE campaign.id = ${Number(campaignId)} AND campaign.status != 'REMOVED' LIMIT 1`
         );
         if (!row) return text(`Kampanya bulunamadı: ${campaignId}`);
-        if (row.campaign_budget?.explicitly_shared) {
+        /**
+         * KAPALI ARIZA — PAYLAŞIMLILIK OKUNAMAZSA DOKUNULMAZ.
+         *
+         * `explicitly_shared` proto'da `optional bool`: alan yanıtta hiç bulunmayabilir
+         * (eski API sürümü, kısmi yanıt, alanı düşüren bir ara katman). Burası düz
+         * truthiness ile yazılmıştı: undefined/null "paylaşımlı değil" sayılıyor,
+         * yani PAYLAŞIMLILIĞIN OKUNAMAMASI ile "kampanyaya özel" aynı kapıya
+         * çıkıyordu — aynı bütçeyi kullanan başka kampanyaların tavanı sessizce
+         * düşürülebilirdi (azaltma yolu onay bile istemez).
+         *
+         * İki satır aşağıdaki `amount_micros` okuması zaten bu disiplinle yazılmıştı;
+         * paylaşımlılık ondan daha az önemli değil: yalnız kesin `false` "kampanyaya
+         * özel" demektir, boolean olmayan her değer "bilinmiyor"dur ve reddedilir.
+         */
+        const paylasimli = row.campaign_budget?.explicitly_shared;
+        if (typeof paylasimli !== "boolean") {
+          return text(
+            `Reddedildi: "${row.campaign?.name ?? campaignId}" kampanyasının bütçesi PAYLAŞIMLI mi, kampanyaya özel mi OKUNAMADI (campaign_budget.explicitly_shared alanı yanıtta yok). Paylaşımlı bir bütçeyi değiştirmek onu kullanan TÜM kampanyaları etkileyeceği için, paylaşımlılık doğrulanmadan değişiklik yapılmaz. Kullanıcıya bildir; bütçe türü Google Ads arayüzünden doğrulansın.`
+          );
+        }
+        if (paylasimli) {
           return text(
             `Reddedildi: "${row.campaign.name}" PAYLAŞIMLI bir bütçe kullanıyor — değişiklik bu bütçeyi kullanan TÜM kampanyaları etkiler. Kullanıcıya durumu bildir; isterse Google Ads arayüzünden kampanyaya özel bütçe atansın.`
           );
@@ -452,7 +511,16 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         "KULLAN: tek reklam grubunu kapsayan eklemeler için. " +
         "KULLANMA: negatif kelimeyi TÜM kampanyaya uygulamak istiyorsan — o add_campaign_negative_keywords'tür ve genelde doğrusu odur. " +
         "GÜVENLİK: negatif kelime harcamayı AZALTTIĞI için onay istemez; pozitif kelime canlı kampanyada onay ister.",
-      annotations: WRITE_SAFE,
+      /**
+       * YIKICI İŞARET, İKİZLERİYLE TUTARLI. Bu araç canlı kampanyaya pozitif kelime
+       * eklerken liveCampaignGuard'ı "high" risk etiketiyle çağırıyor — yani kodun kendi
+       * risk modeli onu yayına almakla aynı kefeye koyuyor. İşaret WRITE_SAFE kaldığı
+       * sürece iki şey birden bozuktu: destructiveHint'e bakan istemci bu yazmayı
+       * sürtünmesiz geçiriyordu ve kapiKapsami gözcüsü aracı hiç görmüyordu (o gözcü
+       * yalnız yıkıcı işaretlileri tarıyor). Negatif kelime yolu onay istemez, ama
+       * işaret ARACIN tamamı içindir ve aracın en riskli yolu belirler.
+       */
+      annotations: WRITE_DESTRUCTIVE,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID"),
         adGroupId: z.string().describe("Reklam grubu ID"),

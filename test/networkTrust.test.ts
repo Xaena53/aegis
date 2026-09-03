@@ -322,7 +322,13 @@ test("ağ API'si çökerse yayına alma reddedilir (kapalı arıza, uçtan uca)"
 test("bütçe ARTIŞI medium katmandan geçer (24 saat penceresi) — SIM değişmişse reddedilir", async () => {
   try {
     const butce: Array<[RegExp, any[]]> = [
-      [/campaign_budget\.amount_micros/, [{ campaign: { name: "B" }, campaign_budget: { amount_micros: 10_000_000, resource_name: "customers/1/campaignBudgets/9" } }]],
+      /**
+       * `explicitly_shared: false` AÇIKÇA verilir. Alanın hiç verilmediği hâli bir
+       * dönem "paylaşımlı değil" sayılıyordu; bu fikstür de o fail-open'ı kazara
+       * çivilemişti. Artık paylaşımlılığı okunamayan bütçe reddedilir, dolayısıyla
+       * bu testin ÖLÇTÜĞÜ şey (ağ kapısı) için alanın bilinir olması gerekir.
+       */
+      [/campaign_budget\.amount_micros/, [{ campaign: { name: "B" }, campaign_budget: { amount_micros: 10_000_000, explicitly_shared: false, resource_name: "customers/1/campaignBudgets/9" } }]],
     ];
     const pencereler: number[] = [];
     const { ctx, rec } = sahteContext({ queries: butce, agDurumu: "degisti", agPencereKaydi: pencereler });
@@ -366,6 +372,40 @@ test("KRİTİK: CANLI kampanyaya kelime eklemek de ağ kapısından geçer — S
     assert.equal(rec.mutations.length, 0, "hiçbir yazma gitmemeli");
     assert.equal(sorulanlar.length, 0, "onay istemi hiç gösterilmemeli");
     assert.deepEqual(pencereler, [72], "canlı kampanya değişikliği HIGH katmandan (72s) geçmeli");
+  } finally {
+    agKanaliniSifirla();
+  }
+});
+
+test("KRİTİK: CANLI kampanyaya REKLAM eklemek de ağ kapısından geçer — SIM değişmişse reddedilir", async () => {
+  try {
+    /**
+     * NEDEN AYRI BİR TEST: create_responsive_search_ad, add_keywords ile aynı
+     * liveCampaignGuard yolunu paylaşır ama AYRI bir araçtır. KAPI_KAPSAMI kaydı onu
+     * "networkTrust.test.ts'te kanıtlanmış" diye sayıyordu, oysa aracın adı bu dosyada
+     * hiç geçmiyordu: kayıt kimseyi korumadığı hâlde koruyormuş gibi duruyordu. RSA
+     * sessizce zincirden çıksaydı paylaşılan add_keywords testi yeşil kalırdı.
+     */
+    const canli: Array<[RegExp, any[]]> = [
+      [/FROM ad_group/, [{ campaign: { id: 1, name: "Canlı", status: 2 }, ad_group: { status: 2 } }]],
+    ];
+    const pencereler: number[] = [];
+    const { ctx, rec } = sahteContext({ queries: canli, agDurumu: "degisti", agPencereKaydi: pencereler });
+    const { client, sorulanlar } = await elicitationliIstemci(ctx);
+
+    const out = await cagir(client, "create_responsive_search_ad", {
+      customerId: MUSTERI,
+      adGroupId: "555",
+      finalUrl: "https://ornek.com",
+      headlines: ["Bir", "Iki", "Uc"],
+      descriptions: ["Aciklama bir", "Aciklama iki"],
+      confirm: true,
+    });
+
+    assert.match(out, /AĞ DOĞRULAMASI BAŞARISIZ/);
+    assert.equal(rec.mutations.length, 0, "hiçbir yazma gitmemeli");
+    assert.equal(sorulanlar.length, 0, "onay istemi hiç gösterilmemeli");
+    assert.deepEqual(pencereler, [72], "canlı kampanyaya reklam HIGH katmandan (72s) geçmeli");
   } finally {
     agKanaliniSifirla();
   }

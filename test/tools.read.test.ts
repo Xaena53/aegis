@@ -386,6 +386,16 @@ test("okuma araçları readOnlyHint, yazma araçları destructiveHint bildirir",
   // Tools that write into a live campaign count as destructive: the code's own risk model
   // weighs them the same as enabling a campaign, and the annotation must agree.
   assert.equal(bul("create_responsive_search_ad").annotations.destructiveHint, true);
+  /**
+   * add_keywords da yıkıcıdır ve bu işaret bir dönem eksikti. Araç, canlı kampanyaya
+   * pozitif kelime eklerken ikizi create_responsive_search_ad ile AYNI liveCampaignGuard
+   * yolunu "high" risk etiketiyle çağırıyor; işaret WRITE_SAFE kaldığı sürece hem
+   * destructiveHint'e bakan istemci bu yazmayı sürtünmesiz geçiriyor hem de
+   * kapiKapsami gözcüsü aracı hiç görmüyordu.
+   */
+  assert.equal(bul("add_keywords").annotations.destructiveHint, true);
+  // Kampanya seviyesi negatif kelime YALNIZCA harcama azaltır: yıkıcı değildir.
+  assert.equal(bul("add_campaign_negative_keywords").annotations.destructiveHint, false);
   // Creating a draft campaign is not destructive, because it is born paused
   assert.equal(bul("create_search_campaign").annotations.destructiveHint, false);
   // Meta araçları da AYNI kapıdan geçer: sayı sözleşmesi 12 → 15 (Google 12 + Meta 3).

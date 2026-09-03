@@ -75,6 +75,22 @@ test("promise: 'Bütçe azaltma ve negatif kelime onay gerektirmez' (harcamayı 
   );
   assert.equal(b.rec.mutations.length, 1, "kampanya negatifi onaysız geçmeli");
 
+  /**
+   * MUAFİYETİN DAYANAĞI PAYLOAD'DIR, YANIT METİNİ DEĞİL.
+   *
+   * Bu araçlar onay istemiyorsa bunun tek gerekçesi "eklenen ölçüt NEGATİF, yani
+   * harcamayı azaltıyor"dur. Oysa iddiaların hepsi yanıt metnine bakıyordu ve o metin
+   * ARGÜMANDAN üretiliyor: `negative` bayrağı payload'dan düşse araç yayındaki
+   * kampanyaya POZİTİF kelime yazar, harcamayı ARTIRIR ve hâlâ "negatif eklendi" der.
+   * Bayrağın Google'a giden gövdede olduğu doğrudan çivilenir.
+   */
+  const kampanyaNegatifi = b.rec.mutations[0].payload as any[];
+  assert.equal(kampanyaNegatifi[0].negative, true, "kampanya ölçütü GERÇEKTEN negatif olarak yazılmalı");
+  assert.ok(
+    !("status" in kampanyaNegatifi[0]),
+    "negatif ölçüt status taşımamalı (Google reddeder; status'lü bir ölçüt pozitif ölçüttür)"
+  );
+
   const d = sahteContext({ queries: PAUSED });
   const cd = await baglanti(d.ctx);
   assert.match(
@@ -82,6 +98,27 @@ test("promise: 'Bütçe azaltma ve negatif kelime onay gerektirmez' (harcamayı 
     /negatif anahtar kelime eklendi/
   );
   assert.equal(d.rec.mutations.length, 1, "reklam grubu negatifi onaysız geçmeli");
+  const grupNegatifi = d.rec.mutations[0].payload as any[];
+  assert.equal(grupNegatifi[0].negative, true, "reklam grubu ölçütü GERÇEKTEN negatif olarak yazılmalı");
+  assert.ok(!("status" in grupNegatifi[0]), "negatif ölçüt status taşımamalı");
+});
+
+test("promise: POZİTİF kelime negatif bayrağını ASLA taşımaz (muafiyetin öteki yüzü)", async () => {
+  /**
+   * Üstteki testin ikizi. Negatif bayrağı payload'a KOŞULSUZ eklenirse (ör. bir
+   * refactor'da `negative: true` koşulun dışına taşınırsa) kullanıcının istediği pozitif
+   * kelime sessizce negatife döner: kampanya yayında kalır ama trafiği kesilir. Bu da
+   * en az tersi kadar sessiz bir arızadır, o yüzden iki yön de çivilenir.
+   */
+  const { ctx, rec } = sahteContext({ queries: PAUSED });
+  const c = await baglanti(ctx);
+  assert.match(
+    await cagir(c, "add_keywords", { customerId: M, adGroupId: AG, keywords: ["sigorta"] }),
+    /anahtar kelime eklendi/
+  );
+  const pozitif = (rec.mutations[0].payload as any[])[0];
+  assert.equal(pozitif.negative, undefined, "pozitif kelime negatif bayrağı taşımamalı");
+  assert.equal(pozitif.status, enums.AdGroupCriterionStatus.ENABLED, "pozitif ölçüt ENABLED status ile yazılır");
 });
 
 test("promise: 'Ülke hedefleme zorunlu — dünya-geneli kazara yayın engellenir'", async () => {

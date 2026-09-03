@@ -207,6 +207,43 @@ test("ülke hedefi ZORUNLU ve bilinmeyen kod reddedilir (dünya-geneli yayın ko
   assert.equal(rec.mutations.length, 0);
 });
 
+test("ülke listesi ŞEMA DÜZEYİNDE kelepçeli: 51 giriş reddedilir, tekrarlar ayıklanır", async () => {
+  /**
+   * Komşu diziler (keywords 50, headlines 15, add_keywords 100) hep üst sınırlıydı,
+   * countryCodes değildi. Sınırsız bir liste tek mutasyona yüz binlerce
+   * `campaign_criterion` işlemi koyup Google'a gönderiyor ve devasa çıktısıyla ajanın
+   * bağlamını dolduruyordu. Ret ŞEMADA olmalı ki tek bir yazma yolu koşmadan düşsün.
+   */
+  const { ctx, rec } = sahteContext();
+  const c = await baglanti(ctx);
+
+  const cok: any = await c.callTool({
+    name: "create_search_campaign",
+    arguments: {
+      customerId: MUSTERI,
+      name: "T",
+      dailyBudget: 10,
+      keywords: ["a"],
+      countryCodes: Array.from({ length: 51 }, () => "TR"),
+    },
+  });
+  assert.equal(cok.isError, true, "51 ülke kodu şemada reddedilmeli");
+  assert.equal(rec.mutations.length, 0, "reddedilen istek hiçbir işlem üretmemeli");
+
+  // Sınır içinde kalan tekrarlar ise ayrı bir sorundur: aynı hedef iki kez yazılmaz.
+  const out = await cagir(c, "create_search_campaign", {
+    customerId: MUSTERI,
+    name: "T",
+    dailyBudget: 10,
+    keywords: ["a"],
+    countryCodes: ["TR", "tr", "DE", "TR"],
+  });
+  const ops = rec.mutations.find((m) => m.kind === "mutateResources")!.payload as any[];
+  const geo = ops.filter((o) => o.entity === "campaign_criterion");
+  assert.equal(geo.length, 2, "aynı ülke tek konum ölçütü olmalı (TR/tr/TR → tek)");
+  assert.match(out, /hedef: TR, DE/, "özet tekilleştirilmiş listeyi göstermeli");
+});
+
 test("CANLI kampanyaya onaysız REKLAM eklenemez, onayla eklenir", async () => {
   const { ctx, rec } = sahteContext({ queries: CANLI_KAMPANYA });
   const c = await baglanti(ctx);

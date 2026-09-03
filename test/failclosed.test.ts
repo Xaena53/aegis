@@ -192,3 +192,119 @@ test("yayına alma: bütçe TAVANI aşıyorsa reddedilir — insana sorulmadan",
   assert.match(out, /900/, "ret, reddedilen büyüklüğü adıyla söylemeli");
   assert.equal(rec.mutations.length, 0);
 });
+
+/**
+ * DURUM ÇÖZÜMLEMESİ BEYAZ LİSTEYLE ÇALIŞIR — VE BUNUN BEKÇİSİ BURASIDIR.
+ *
+ * Kapı bir dönem kara listeydi: "ENABLED/UNKNOWN/UNSPECIFIED dışındaki her ad kesin
+ * taslaktır". Üstteki testler yalnız BOŞ yanıtı, EKSİK alanı ve tam yazılmış
+ * "ENABLED"/"PAUSED" adlarını çiviliyordu; aradaki tüm yazımlar bekçisizdi. Google
+ * `campaign.status` alanını enum numarası, enum adı ya da sayısal METİN ("2") olarak
+ * verebiliyor — kara listede adı geçmeyen her değer yayındaki kampanyayı "taslak"
+ * saydırıp onayı da, CAMARA zincirini de, denetim satırını da atlatıyordu.
+ *
+ * Aşağıdaki matris "bilinmiyor ile temiz aynı şey değildir" kuralını durum alanının
+ * üretebileceği her şekil için ayrı ayrı çiviler. Her satır için iki şey birden
+ * doğrulanır: onay istendi (yani kapı kapalı taraftaydı) VE hiçbir yazma gitmedi.
+ */
+const KAPIYI_ACMAYAN_DURUMLAR: Array<[string, unknown]> = [
+  // enums.CampaignStatus[2] === "ENABLED": sayısal metin de gerçek adına çözülmeli
+  ["sayısal metin '2' (= ENABLED)", "2"],
+  ["küçük harfli 'enabled'", "enabled"],
+  // Kara listede olmayan, uydurulmamış bir ad: Google'ın yarın ekleyeceği her ad böyledir
+  ["tanınmayan ad 'SERVING'", "SERVING"],
+  ["enum 0 (UNSPECIFIED)", 0],
+  ["enum 1 (UNKNOWN)", 1],
+  ["metin 'UNSPECIFIED'", "UNSPECIFIED"],
+  ["metin 'UNKNOWN'", "UNKNOWN"],
+  ["beklenmedik tip (boolean)", true],
+  ["enum'da karşılığı olmayan sayı (99)", 99],
+];
+
+for (const [ad, durum] of KAPIYI_ACMAYAN_DURUMLAR) {
+  test(`canlı-kampanya kapısı: durum ${ad} → onay İSTENİR (beyaz liste)`, async () => {
+    const { ctx, rec } = sahteContext({
+      queries: [[/FROM ad_group\b/, [{ campaign: { id: 1, name: "K", status: durum } }]]],
+    });
+    const c = await baglanti(ctx);
+    const out = await cagir(c, "create_responsive_search_ad", RSA);
+    assert.match(out, /Reddedildi|İşlem yapılmadı/, `'${ad}' kapıyı açmamalı`);
+    assert.equal(rec.mutations.length, 0, `KRİTİK: '${ad}' ile onaysız yazma gitti`);
+  });
+}
+
+/**
+ * Beyaz listenin ÖTEKİ yüzü: taslak akışı bozulmamalı. Kapalı arıza, "her şeyi reddet"
+ * demek değildir — harcamadığı kanıtlanmış durumlar onaysız akmaya devam eder,
+ * yoksa kullanıcı taslak kurmayı bırakır ve kapı ilk fırsatta kapatılır.
+ */
+const KAPIYI_ACAN_DURUMLAR: Array<[string, unknown]> = [
+  ["sayısal metin '3' (= PAUSED)", "3"],
+  ["küçük harfli 'paused'", "paused"],
+  ["metin 'REMOVED'", "REMOVED"],
+  ["enum 4 (REMOVED)", 4],
+];
+
+for (const [ad, durum] of KAPIYI_ACAN_DURUMLAR) {
+  test(`canlı-kampanya kapısı: durum ${ad} → taslak akışı onaysız sürer`, async () => {
+    const { ctx, rec } = sahteContext({
+      queries: [[/FROM ad_group\b/, [{ campaign: { id: 1, name: "K", status: durum } }]]],
+    });
+    const c = await baglanti(ctx);
+    assert.match(await cagir(c, "create_responsive_search_ad", RSA), /RSA oluşturuldu/, `'${ad}' taslak sayılmalı`);
+    assert.equal(rec.mutations.length, 1);
+  });
+}
+
+test("canlı-kampanya kapısı: TANINMAYAN durum, insana 'yayında' diye SUNULMAZ", async () => {
+  /**
+   * İki ayrı iddia: kapı kapalı kalmalı (üstteki matris) ve insana gösterilen özet
+   * durumun OKUNAMADIĞINI söylemeli. Kapalı ama yanlış gerekçeli bir istem, onayı
+   * bilgisiz bir tıklamaya çevirir: kullanıcı "yayındaymış, doğru" diye onaylar.
+   */
+  const { ctx, rec } = sahteContext({
+    queries: [[/FROM ad_group\b/, [{ campaign: { id: 1, name: "Garip", status: "SERVING" } }]]],
+  });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "create_responsive_search_ad", RSA);
+  assert.match(out, /doğrulanamadı/, "tanınmayan durum belirsiz olarak bildirilmeli");
+  assert.equal(rec.mutations.length, 0);
+});
+
+test("paylaşımlı bütçe: explicitly_shared alanı HİÇ YOKSA bütçeye dokunulmaz", async () => {
+  /**
+   * `explicitly_shared` proto'da optional — yanıtta hiç bulunmayabilir. Düz truthiness
+   * kontrolünde bu "paylaşımlı değil" demekti: paylaşımlılığı OKUNAMAYAN bir bütçe,
+   * azaltma yolu onay bile istemediği için sessizce düşürülebiliyordu — ve onu
+   * paylaşan diğer kampanyaların tavanı da onunla düşerdi.
+   */
+  const { ctx, rec } = sahteContext({
+    queries: [
+      [
+        /campaign_budget\.explicitly_shared/,
+        [{ campaign: { name: "Paylaşımlılığı bilinmeyen" }, campaign_budget: { resource_name: "r", amount_micros: 50_000_000 } }],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "update_campaign_budget", { customerId: M, campaignId: K, newDailyBudget: 20 });
+  assert.match(out, /Reddedildi/);
+  assert.match(out, /OKUNAMADI/, "ret, paylaşımlılığın bilinmediğini açıkça söylemeli");
+  assert.equal(rec.mutations.length, 0, "KRİTİK: paylaşımlılık doğrulanmadan bütçe yazması gitmemeli");
+});
+
+test("paylaşımlı bütçe: explicitly_shared null gelirse de reddedilir", async () => {
+  // null, "alan yok"un diğer telden hali: ikisi de boolean DEĞİLdır, ikisi de bilinmiyordur.
+  const { ctx, rec } = sahteContext({
+    queries: [
+      [
+        /campaign_budget\.explicitly_shared/,
+        [{ campaign: { name: "K" }, campaign_budget: { resource_name: "r", amount_micros: 50_000_000, explicitly_shared: null } }],
+      ],
+    ],
+  });
+  const c = await baglanti(ctx);
+  const out = await cagir(c, "update_campaign_budget", { customerId: M, campaignId: K, newDailyBudget: 20 });
+  assert.match(out, /Reddedildi/);
+  assert.equal(rec.mutations.length, 0);
+});
