@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-912-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-959-brightgreen.svg)](test/)
 [![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-89.95%25-brightgreen.svg)](#test-metrikleri)
 
 🇬🇧 [English README](README.md)
@@ -29,7 +29,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %89.95 satır kapsamıyla 912 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %89.95 satır kapsamıyla 959 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz — bekleyen bir iş değil, mimari bir hüküm) · CAMARA çağrılarının arkasında gerçek bir abone şebekesi (hesap Simulator kipinde) |
 
 ## İçindekiler
@@ -434,7 +434,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 912 çevrimdışı test
+npm test           # 959 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 npm run agtest     # güven zincirinin Nokia NaC platformuna karşı canlı kontrolü
 npm run metatest   # Meta yolunun canlı kontrolü (--write ile duraklatılmış kampanya kurar)
@@ -448,7 +448,7 @@ kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var
 ### Test metrikleri
 
 ```
-912 test · 0 hata          satır %89.95  ·  dal %90.74  ·  fonksiyon %89.23
+959 test · 0 hata          satır %89.95  ·  dal %90.43  ·  fonksiyon %89.76
 ```
 
 Bu üç rakam, test koşucusunun kendi **all files** satırıdır
