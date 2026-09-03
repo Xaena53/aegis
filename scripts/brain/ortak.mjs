@@ -23,8 +23,34 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const KOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/**
+ * MODELİ SAĞLAYAN SERVİS — `ADSPILOT_BRAIN_PROVIDER` ile seçilir.
+ *
+ * NEDEN SEÇİLEBİLİR: MENA Ignite'ın Resource & Tooling Guide'ında ajanın MODELİ, 3.
+ * bölümde ("LLMs and Model APIs — Agents need a brain") listelenen sağlayıcılardan
+ * gelmelidir; o listede Google AI Studio var, Anthropic yok (Anthropic 6. bölümde,
+ * kodlama asistanı olarak geçiyor). Varsayılan bu yüzden Gemini: teslim edilen ürün,
+ * hiçbir ayar yapılmadan listedeki bir sağlayıcıyla koşar.
+ *
+ * Anthropic yolu SİLİNMEDİ, tek ortam değişkeni uzakta duruyor: kural yorumu netleşirse
+ * ya da karşılaştırma gerekirse geri dönmek bir satır.
+ *
+ * DEĞİŞMEZ: sağlayıcı yalnız BAYTLARI getirir. Fallback sınırı, `stop_reason` kapalı
+ * arızası, şema doğrulaması ve ayraç nötrlemesi sağlayıcıdan BAĞIMSIZDIR ve her ikisinde
+ * de aynı kodla koşar — uyarlayıcı, Anthropic'in yanıt ŞEKLİNİ taklit ettiği için
+ * (bkz. geminiIstemcisi). Böylece sağlayıcı değiştirmek hiçbir kapıyı zayıflatmaz.
+ */
+export const BRAIN_SAGLAYICI = (process.env.ADSPILOT_BRAIN_PROVIDER || "gemini").trim().toLowerCase();
+
+/** Sağlayıcı başına varsayılan model. `ADSPILOT_BRAIN_MODEL` ikisini de geçersiz kılar. */
+const VARSAYILAN_MODELLER = Object.freeze({
+  gemini: "gemini-2.5-flash",
+  anthropic: "claude-sonnet-5",
+});
+
 /** Kullanılacak model — ortam değişkeniyle geçersiz kılınabilir. */
-export const BRAIN_MODEL = process.env.ADSPILOT_BRAIN_MODEL || "claude-sonnet-5";
+export const BRAIN_MODEL =
+  process.env.ADSPILOT_BRAIN_MODEL || VARSAYILAN_MODELLER[BRAIN_SAGLAYICI] || VARSAYILAN_MODELLER.gemini;
 
 /** Araç sonucu başına karakter tavanı (demo-agent.mjs SONUC_TAVANI deseni). */
 export const SONUC_TAVANI = 30_000;
@@ -50,6 +76,120 @@ export function anthropicIstemci() {
     );
   }
   return new Anthropic({ apiKey: anahtar });
+}
+
+/* ── Gemini (Google AI Studio) ──────────────────────────────────────────────── */
+
+/**
+ * Gemini'nin `finishReason`'ını Anthropic'in `stop_reason`'ına çevirir.
+ *
+ * KRİTİK EŞLEME: yalnız `STOP` "end_turn" olur. `MAX_TOKENS` "max_tokens"a düşer ve
+ * jsonUret onu zaten reddeder. Geri kalan her şey (SAFETY, RECITATION, OTHER, boş,
+ * tanınmayan) OLDUĞU GİBİ geçirilir — "end_turn" olmadığı için kapalı arızaya düşer.
+ * Tanınmayan bir sebebi "end_turn" saymak, kesilmiş bir yanıtı tam sayardı.
+ */
+function bitisSebebiCevir(sebep) {
+  if (sebep === "STOP") return "end_turn";
+  if (sebep === "MAX_TOKENS") return "max_tokens";
+  return typeof sebep === "string" && sebep !== "" ? sebep.toLowerCase() : "bilinmiyor";
+}
+
+/**
+ * Google AI Studio (Gemini) için Anthropic ŞEKLİNDE bir istemci.
+ *
+ * Uyarlayıcı bilerek ince: yalnız `messages.create` sunar ve `{content:[{type,text}],
+ * stop_reason}` döndürür. Böylece metinUret/jsonUret ve içindeki bütün kapılar TEK
+ * kod yolundan koşar; sağlayıcıya özel bir dal yoktur, dolayısıyla bir sağlayıcıda
+ * unutulmuş bir kontrol de olamaz.
+ */
+export function geminiIstemcisi() {
+  const anahtar = (process.env.ADSPILOT_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "").trim();
+  if (!anahtar) {
+    throw new Error(
+      "ADSPILOT_GEMINI_API_KEY ortam değişkeni tanımlı değil. aistudio.google.com üzerinden " +
+        "ücretsiz bir API anahtarı oluştur ve onu kabuk profilinde ya da projenin .env dosyasında " +
+        "ADSPILOT_GEMINI_API_KEY olarak tanımla. Anahtarı komut satırı argümanı olarak verme — " +
+        "kabuk geçmişine sızar. (Anthropic ile koşmak için: ADSPILOT_BRAIN_PROVIDER=anthropic)"
+    );
+  }
+  return {
+    messages: {
+      async create({ model, max_tokens, system, messages }) {
+        const url =
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+        const kontrol = new AbortController();
+        // Beyin çağrıları kullanıcıyı bekletir; süresiz asılı kalmamalı.
+        const zamanlayici = setTimeout(() => kontrol.abort(), 120_000);
+        let cevap;
+        try {
+          cevap = await fetch(url, {
+            method: "POST",
+            signal: kontrol.signal,
+            /**
+             * Anahtar BAŞLIKTA taşınır, sorgu dizesinde değil: URL'ler günlüklere,
+             * proxy kayıtlarına ve hata izlerine düşer.
+             */
+            headers: { "Content-Type": "application/json", "x-goog-api-key": anahtar },
+            body: JSON.stringify({
+              systemInstruction: system ? { parts: [{ text: String(system) }] } : undefined,
+              contents: (messages ?? []).map((m) => ({
+                role: m.role === "assistant" ? "model" : "user",
+                parts: [{ text: String(m.content ?? "") }],
+              })),
+              generationConfig: { maxOutputTokens: max_tokens ?? 4096, temperature: 0.7 },
+            }),
+          });
+        } finally {
+          clearTimeout(zamanlayici);
+        }
+        const metin = await cevap.text();
+        if (!cevap.ok) {
+          /**
+           * Gövde ajana/kullanıcıya AYNEN verilmez: Google'ın hata gövdesi isteği
+           * yankılayabilir. İlk 200 karakter, dosyanın geri kalanıyla aynı kural.
+           */
+          throw new Error(`Gemini API ${cevap.status}: ${metin.slice(0, 200)}`);
+        }
+        let govde;
+        try {
+          govde = JSON.parse(metin);
+        } catch {
+          throw new Error(`Gemini yanıtı JSON değil: ${metin.slice(0, 200)}`);
+        }
+        const aday = govde?.candidates?.[0];
+        const parcalar = Array.isArray(aday?.content?.parts) ? aday.content.parts : [];
+        /**
+         * `promptFeedback.blockReason` istem düzeyinde engellemedir: aday HİÇ üretilmez.
+         * Bunu boş metin + "bilinmiyor" olarak geçirmek, çağıranın kapalı arızasına
+         * doğru düşer ama sebebi kaybederdi.
+         */
+        const engel = govde?.promptFeedback?.blockReason;
+        return {
+          content: parcalar
+            .filter((p) => typeof p?.text === "string")
+            .map((p) => ({ type: "text", text: p.text })),
+          stop_reason: engel ? `engellendi:${String(engel).toLowerCase()}` : bitisSebebiCevir(aday?.finishReason),
+        };
+      },
+    },
+  };
+}
+
+/* ── Sağlayıcı seçimi ───────────────────────────────────────────────────────── */
+
+/**
+ * Yapılandırılan sağlayıcının istemcisini döndürür.
+ *
+ * Tanınmayan bir sağlayıcı adı SESSİZCE varsayılana düşmez: yazım hatası yapan operatör,
+ * kullandığını sandığından başka bir modelle koşmamalı.
+ */
+export function beyinIstemcisi() {
+  if (BRAIN_SAGLAYICI === "anthropic") return anthropicIstemci();
+  if (BRAIN_SAGLAYICI === "gemini") return geminiIstemcisi();
+  throw new Error(
+    `ADSPILOT_BRAIN_PROVIDER değeri tanınmadı: '${BRAIN_SAGLAYICI}'. ` +
+      `Geçerli değerler: gemini (varsayılan) | anthropic.`
+  );
 }
 
 /**

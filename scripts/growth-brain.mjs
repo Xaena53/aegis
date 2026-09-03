@@ -37,11 +37,11 @@
  * Sır hijyeni: tüm catch'lerde yalnız e?.message yazdırılır; env değerleri hiçbir
  * çıktıya ve isteme taşınmaz.
  */
-import "dotenv/config"; // ANTHROPIC_API_KEY projenin .env dosyasından da okunabilsin (hata metni bunu tarif eder)
+import "dotenv/config"; // model sağlayıcısının anahtarı projenin .env dosyasından da okunabilsin (hata metni bunu tarif eder)
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { anthropicIstemci, jsonUret, mcpBaglan } from "./brain/ortak.mjs";
+import { BRAIN_MODEL, BRAIN_SAGLAYICI, beyinIstemcisi, jsonUret, mcpBaglan } from "./brain/ortak.mjs";
 import { arastir } from "./brain/arastirma.mjs";
 import { stratejiKur, planDogrula } from "./brain/strateji.mjs";
 import { kreatifUret } from "./brain/kreatif.mjs";
@@ -368,8 +368,13 @@ async function ana() {
   const girdi = girdileriDogrula(ham);
   const kuruMod = !girdi.uygula;
 
-  // ANTHROPIC_API_KEY yoksa buradaki Türkçe hata üst katmanda aynen gösterilir.
-  const anthropic = anthropicIstemci();
+  /**
+   * Sağlayıcı `ADSPILOT_BRAIN_PROVIDER` ile seçilir (varsayılan: gemini). Anahtar yoksa
+   * buradaki Türkçe hata üst katmanda aynen gösterilir ve hangi anahtarın gerektiğini
+   * söyler.
+   */
+  const anthropic = beyinIstemcisi();
+  console.log(`Model: ${BRAIN_MODEL} (${BRAIN_SAGLAYICI})`);
   const jsonUret2 = (sistem, kullanici) => jsonUret(anthropic, { sistem, kullanici });
 
   let mcp = null;

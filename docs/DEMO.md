@@ -646,10 +646,24 @@ npm run brain -- \
   --uygula --yayinla
 ```
 
-**Prerequisites:** `ANTHROPIC_API_KEY` (the brain is a real model run — no key, no run),
-a built server (`npm run build`), and write tools enabled for the account. Without the key
-the run stops with a Turkish error naming the environment variable; the key is never
-accepted as a CLI argument, because that leaks it into shell history.
+**Prerequisites:** a model key (the brain is a real model run — no key, no run), a built
+server (`npm run build`), and write tools enabled for the account. Without the key the run
+stops with a Turkish error naming the environment variable; the key is never accepted as a
+CLI argument, because that leaks it into shell history.
+
+**Which model.** The provider is chosen by `ADSPILOT_BRAIN_PROVIDER`, and the default is
+`gemini` — Google AI Studio, which is on the MENA Ignite tooling guide's section 3 list of
+model APIs for agents. It needs `ADSPILOT_GEMINI_API_KEY` (free tier available at
+aistudio.google.com). Setting `ADSPILOT_BRAIN_PROVIDER=anthropic` switches to Claude with
+`ANTHROPIC_API_KEY`; `ADSPILOT_BRAIN_MODEL` overrides the model name on either path, and an
+unrecognised provider name is refused rather than silently defaulted.
+
+The provider only fetches bytes. The fallback boundary, the `stop_reason` fail-closed rule,
+the schema validation and the delimiter neutralisation all run on one code path for both,
+because the Gemini adapter mirrors the Anthropic response shape — so switching providers
+cannot leave a check behind on one of them. Guards in `test/brain/saglayici.test.mjs` pin
+that: truncated-but-parseable JSON, a safety block and a schema violation are each measured
+through the Gemini path.
 
 **What you will see, in order:**
 

@@ -62,8 +62,13 @@ function sahteMcp(yanit, { closeHata } = {}) {
 
 /* ── sabitler ──────────────────────────────────────────────────────────────── */
 
-test("BRAIN_MODEL: env yokken varsayılan claude-sonnet-5", () => {
-  assert.equal(BRAIN_MODEL, "claude-sonnet-5");
+test("BRAIN_MODEL: env yokken sağlayıcının varsayılanı kullanılır", () => {
+  /**
+   * Varsayılan sağlayıcı Gemini olduğu için varsayılan model de ona ait. Sağlayıcı
+   * başına varsayılanlar ve geçersiz kılma kuralları test/brain/saglayici.test.mjs'te
+   * ayrıntılı ölçülür; buradaki iddia yalnız "sabit yükleme anında hesaplanıyor".
+   */
+  assert.match(BRAIN_MODEL, /^gemini-/, "varsayılan model sağlayıcıyla uyumlu olmalı");
 });
 
 test("SONUC_TAVANI 30000'dir", () => {
