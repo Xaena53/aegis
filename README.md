@@ -1,15 +1,17 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Aegis
 
-**A Google Ads MCP server that lets an AI agent manage real campaigns — without letting it spend your money unsupervised.**
+**Network-verified trust for AI agents that spend money.**
 
-*Aegis, its trust gate, asks the mobile network (GSMA Open Gateway / CAMARA) whether the approver's line was taken over — before any human is prompted, and before any money moves.*
+*An MCP server that runs real Google Ads and Meta campaigns — and asks the mobile network
+(GSMA Open Gateway / CAMARA) whether the approver's line has been taken over before any
+human is prompted, and before any money moves.*
 
 [![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-978-brightgreen.svg)](test/)
-[![Coverage](https://img.shields.io/badge/line%20coverage-90.24%25-brightgreen.svg)](#test-metrics)
+[![Tests](https://img.shields.io/badge/tests-983-brightgreen.svg)](test/)
+[![Coverage](https://img.shields.io/badge/line%20coverage-90.26%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -29,7 +31,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 978 automated tests at 90.24% line coverage; Docker deployment |
+| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 983 automated tests at 90.26% line coverage; Docker deployment |
 | **Not yet** | Number Verification (device-side OIDC, uncallable from a server — an architectural verdict, not a pending task) · a real subscriber network behind the CAMARA calls (the account is in Simulator mode) |
 
 ## Contents
@@ -461,7 +463,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 978 offline tests
+npm test           # 983 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
 npm run metatest   # live checks of the Meta path (add --write to create a paused campaign)
@@ -479,7 +481,7 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-978 tests · 0 failures        line 90.24%  ·  branch 90.34%  ·  function 89.98%
+983 tests · 0 failures        line 90.26%  ·  branch 90.31%  ·  function 89.98%
 ```
 
 Those three figures are the test runner's own **all files** row
