@@ -23,11 +23,12 @@ export interface AegisConfig {
   refreshToken: string;
   loginCustomerId?: string;
   /**
-   * Meta (Facebook/Instagram) Marketing API erişim jetonu; yoksa Meta araçları hiçbir
-   * işlem yapmaz ve bunu AÇIKÇA söyler (sessizce "yapacak bir şey yok" demez).
+   * The Meta (Facebook/Instagram) Marketing API access token. Without it the Meta tools do
+   * nothing and say so EXPLICITLY — they do not fall silent as if there were nothing to
+   * do.
    */
   metaToken?: string;
-  /** Meta reklam hesabı: "act_123456" ya da çıplak rakam — istemci normalize eder. */
+  /** The Meta ad account: "act_123456" or bare digits — the client normalises it. */
   metaAdAccountId?: string;
   writeEnabled: boolean;
   maxDailyBudget: number;
@@ -38,72 +39,78 @@ export interface AegisConfig {
   /** SIM-swap lookback window for high-risk actions (hours). */
   simSwapWindowHours: number;
   /**
-   * KADEMELİ DOĞRULAMA (AEGIS_STEPUP) — varsayılan KAPALI.
+   * STEP-UP VERIFICATION (AEGIS_STEPUP) — OFF by default.
    *
-   * Açıkken, olağan bir kullanıcı durumundan doğan bozuk ağ sinyali (SIM/cihaz
-   * değişimi, seyahat, kapalı telefon, cevapsız ağ) düz retle bitmez: kalan halkalar
-   * gerçek kanaldan temiz dönerse işlem, bozulan sinyali adıyla söyleyen daha güçlü
-   * bir insan doğrulamasına bağlanır. Kapalı varsayılan bilinçlidir — yükseltme bir
-   * gevşemedir ve operatör onu açıkça seçmelidir.
+   * When it is on, a degraded network signal that comes from an ordinary human situation —
+   * a changed SIM or handset, travel, a phone that is switched off, a silent network — no
+   * longer ends in a flat refusal: if the remaining links come back clean over a real
+   * channel, the action is bound to a stronger human verification that names the degraded
+   * signal. The default is off on purpose: an escalation is a loosening, and the operator
+   * has to choose it explicitly.
    */
   stepUp: boolean;
   /**
-   * SİMÜLASYON kanalı ("temiz" | "degisti"): tanımlıysa gerçek NaC SDK'sı yerine simüle
-   * kanal kullanılır (jüri demosu token'sız çalışır). Değer burada DOĞRULANMAZ: bozuk
-   * bir env değeri sunucuyu başlangıçta düşürmemeli, doğrulama anında Türkçe hatayla
+   * The SIMULATION channel ("temiz" | "degisti"): when it is set, a simulated channel is
+   * used instead of the real NaC SDK, so a demo runs without a token. The value is NOT
+   * validated here: a malformed environment value must not bring the server down at
+   * startup, and is refused at decision time with a
    * reddedilmelidir (bkz. networkTrust.ts, fail-closed).
    */
   nacSimulate?: string;
   /**
-   * Number Verification SİMÜLASYON kanalı ("dogrulandi" | "uyusmadi"): güven zincirinin
-   * 2. halkası, YALNIZ high risk katmanında koşar. Gerçek CAMARA Number Verification
-   * cihaz-taraflı OIDC akışı ister ve sunucudan tek başına çağrılamaz; bu yüzden şimdilik
-   * yalnız simülasyon vardır (bkz. networkTrust.ts dosya başı). Değer burada DOĞRULANMAZ —
-   * nacSimulate ile aynı gerekçe: karar anında Türkçe hatayla reddedilir.
+   * The Number Verification SIMULATION channel ("dogrulandi" | "uyusmadi"): link 2 of the
+   * trust chain, which runs ONLY on the high risk tier. Real CAMARA Number Verification
+   * requires a device-side OIDC flow and cannot be called from a server on its own, so for
+   * now only the simulation exists (see the header of networkTrust.ts). The value is NOT
+   * validated here — same reasoning as nacSimulate: it is refused at decision time.
    */
   nvSimulate?: string;
   /**
-   * Device Reachability SİMÜLASYON kanalı ("erisilebilir" | "anormal"): güven zincirinin
-   * 3. halkası, YALNIZ high risk katmanında koşar. Değer burada DOĞRULANMAZ — karar anında
-   * Türkçe hatayla reddedilir (bkz. networkTrust.ts, kapalı arıza).
+   * The Device Reachability SIMULATION channel ("erisilebilir" | "anormal"): link 3 of the
+   * trust chain, which runs ONLY on the high risk tier. The value is NOT validated here —
+   * it is refused at decision time (see networkTrust.ts, fail closed).
    */
   reachSimulate?: string;
   /**
-   * 3. halkanın GERÇEK CAMARA sorgusunun açma/kapama anahtarı. Bilerek varsayılan KAPALI:
-   * erişilebilirlik meşru olarak dalgalanır (uçak modu, kapsama boşluğu), bu yüzden
-   * yalnızca NaC token'ının varlığına bakıp sorguyu açmak, SIM-Swap için token tanımlamış
-   * bir operatöre istemediği yanlış-pozitif retleri dayatırdı.
+   * The on/off switch for link 3's REAL CAMARA query. Deliberately OFF by default:
+   * reachability fluctuates legitimately (flight mode, a coverage gap), so switching the
+   * query on merely because a NaC token exists would impose unwanted false-positive
+   * refusals on an operator who configured that token for SIM Swap.
    */
   reachCheck: boolean;
   /**
-   * Location SİMÜLASYON kanalı ("beklenen" | "beklenmedik"): güven zincirinin 4. halkası,
-   * YALNIZ high risk katmanında koşar. Aynı gerekçeyle değer burada DOĞRULANMAZ.
+   * The Location SIMULATION channel ("beklenen" | "beklenmedik"): link 4 of the trust
+   * chain, which runs ONLY on the high risk tier. For the same reason, the value is NOT
+   * validated here.
    */
   locSimulate?: string;
   /**
-   * 4. halkanın beklentisi: onaylayıcının hattının bulunmasını beklediğimiz ülke
-   * (ISO 3166-1 alpha-2). TANIMSIZSA HALKA HİÇ KOŞMAZ — beklenen ülke uydurulmaz.
-   * Biçim doğrulaması (iki harf) karar anında yapılır; geçersiz değer kapalı arızadır.
+   * Link 4's expectation: the country where we expect the approver's line to be
+   * (ISO 3166-1 alpha-2). IF IT IS UNSET THE LINK DOES NOT RUN AT ALL — an expected country
+   * is never invented. The format check (two letters) happens at decision time; an invalid
+   * value fails closed.
    */
   expectedCountry?: string;
   /**
-   * Device Swap SİMÜLASYON kanalı ("temiz" | "degisti"): güven zincirinin 5. halkası,
-   * YALNIZ high risk katmanında koşar. Değer burada DOĞRULANMAZ — karar anında Türkçe
-   * hatayla reddedilir (bkz. networkTrust.ts, kapalı arıza).
+   * The Device Swap SIMULATION channel ("temiz" | "degisti"): link 5 of the trust chain,
+   * which runs ONLY on the high risk tier. The value is NOT validated here — it is refused
+   * at decision time (see networkTrust.ts, fail closed).
    */
   devSwapSimulate?: string;
   /**
-   * 5. halkanın GERÇEK CAMARA sorgusunun açma/kapama anahtarı. Varsayılan KAPALI:
-   * her açık halka HIGH katmandaki onaya bir CAMARA gidiş-dönüşü daha ekler, bu yüzden
-   * hiçbir halka token'ın varlığıyla kendiliğinden açılmaz.
+   * The on/off switch for link 5's REAL CAMARA query. OFF by default: every enabled link
+   * adds another CAMARA round trip to an approval on the high tier, so no link switches
+   * itself on merely because a token exists.
    */
   devSwapCheck: boolean;
   /**
-   * Call Forwarding SİMÜLASYON kanalı ("kapali" | "acik"): güven zincirinin 6. halkası,
-   * YALNIZ high risk katmanında koşar. Aynı gerekçeyle değer burada DOĞRULANMAZ.
+   * The Call Forwarding SIMULATION channel ("kapali" | "acik"): link 6 of the trust chain,
+   * which runs ONLY on the high risk tier. For the same reason, the value is NOT validated
+   * here.
    */
   callFwdSimulate?: string;
-  /** 6. halkanın GERÇEK sorgu anahtarı. Varsayılan KAPALI (devSwapCheck ile aynı gerekçe). */
+  /** The switch for link 6's REAL query. OFF by default, for the same reason as
+   * devSwapCheck. */
   callFwdCheck: boolean;
 }
 
@@ -144,33 +151,36 @@ export function nacConfigFromEnv(): Pick<
     stepUp: parseBool(process.env.AEGIS_STEPUP, false, "AEGIS_STEPUP"),
     nacToken: process.env.AEGIS_NAC_TOKEN?.trim() || undefined,
     approverPhone: process.env.AEGIS_APPROVER_PHONE?.trim() || undefined,
-    // Bilerek ham geçirilir; "temiz"/"degisti" doğrulaması karar anında yapılır.
+    // Passed through raw on purpose; "temiz"/"degisti" is validated at decision time.
     nacSimulate: process.env.AEGIS_NAC_SIMULATE?.trim() || undefined,
-    // Aynı gerekçe: "dogrulandi"/"uyusmadi" doğrulaması karar anında yapılır.
+    // Same reasoning: "dogrulandi"/"uyusmadi" is validated at decision time.
     nvSimulate: process.env.AEGIS_NV_SIMULATE?.trim() || undefined,
-    // Aynı gerekçe: "erisilebilir"/"anormal" doğrulaması karar anında yapılır.
+    // Same reasoning: "erisilebilir"/"anormal" is validated at decision time.
     reachSimulate: process.env.AEGIS_REACH_SIMULATE?.trim() || undefined,
     /**
-     * Varsayılan KAPALI. parseBool anlaşılamayan değeri de güvenli tarafa (kapalı)
-     * aldığı için bozuk bir değer halkayı açık bırakmaz — açmak açık bir niyet ister.
+     * OFF by default. Because parseBool also takes an unintelligible value to the safe side
+     * (off), a malformed value cannot leave the link enabled — switching it on requires an
+     * explicit intent.
      */
     reachCheck: parseBool(process.env.AEGIS_REACH_CHECK, false, "AEGIS_REACH_CHECK"),
-    // Aynı gerekçe: "beklenen"/"beklenmedik" doğrulaması karar anında yapılır.
+    // Same reasoning: "beklenen"/"beklenmedik" is validated at decision time.
     locSimulate: process.env.AEGIS_LOC_SIMULATE?.trim() || undefined,
     /**
-     * Ham geçirilir: iki-harf (ISO 3166-1 alpha-2) doğrulaması karar anındadır. Boş/eksik
-     * değer burada undefined olur ve konum halkası HİÇ KOŞMAZ (beklenti uydurulmaz).
+     * Passed through raw: the two-letter (ISO 3166-1 alpha-2) check happens at decision
+     * time. An empty or missing value becomes undefined here and the location link DOES NOT
+     * RUN AT ALL — the expectation is never invented.
      */
     expectedCountry: process.env.AEGIS_EXPECTED_COUNTRY?.trim() || undefined,
-    // Aynı gerekçe: "temiz"/"degisti" doğrulaması karar anında yapılır.
+    // Same reasoning: "temiz"/"degisti" is validated at decision time.
     devSwapSimulate: process.env.AEGIS_DEVICESWAP_SIMULATE?.trim() || undefined,
     /**
-     * Varsayılan KAPALI — reachCheck ile aynı gerekçe, artı gecikme: açık her gerçek
-     * halka HIGH katmandaki onaya bir CAMARA gidiş-dönüşü ekler. parseBool anlaşılamayan
-     * değeri de güvenli tarafa (kapalı) aldığı için bozuk bir değer halkayı açmaz.
+     * OFF by default — the same reasoning as reachCheck, plus latency: every enabled real
+     * link adds a CAMARA round trip to an approval on the high tier. Because parseBool takes
+     * an unintelligible value to the safe side (off), a malformed value cannot enable the
+     * link.
      */
     devSwapCheck: parseBool(process.env.AEGIS_DEVICESWAP_CHECK, false, "AEGIS_DEVICESWAP_CHECK"),
-    // Aynı gerekçe: "kapali"/"acik" doğrulaması karar anında yapılır.
+    // Same reasoning: "kapali"/"acik" is validated at decision time.
     callFwdSimulate: process.env.AEGIS_CALLFWD_SIMULATE?.trim() || undefined,
     callFwdCheck: parseBool(process.env.AEGIS_CALLFWD_CHECK, false, "AEGIS_CALLFWD_CHECK"),
     simSwapWindowHours: parseNumEnv(
@@ -181,23 +191,23 @@ export function nacConfigFromEnv(): Pick<
   };
 }
 
-/** nacConfigFromEnv()'in döndürdüğü dilimin tipi — anahtar üreticisi bunu alır. */
+/** The type of the slice nacConfigFromEnv() returns — the key builder takes this. */
 export type NacDilimi = ReturnType<typeof nacConfigFromEnv>;
 
 /**
- * Ağ-doğrulama ayarlarının bağlam önbelleği anahtarına giren parçası.
+ * The part of the network-verification settings that goes into the context cache key.
  *
- * Burada durmasının sebebi sınanabilirlik: http.ts başlangıçta hosted ortamı doğrulayıp
- * eksik yapılandırmada process.exit çağırdığı için testten import EDİLEMEZ. Anahtar orada
- * kaldığı sürece ancak kaynak METNİ taranarak sınanabiliyordu — ve metin taraması, bir
- * alanı yorum satırına almayı fark etmiyordu (mutasyonla kanıtlandı: satırı `//` ile
- * kapatınca 6. halkanın iki ayarı anahtardan düşüyor, hiçbir test kızarmıyordu).
- * Saf fonksiyon olarak burada, "şu alan değişince anahtar gerçekten değişiyor mu" diye
- * DAVRANIŞSAL olarak sınanır.
+ * It lives here for testability: http.ts validates the hosted environment at startup and
+ * calls process.exit on missing configuration, so it CANNOT be imported from a test. While
+ * the key stayed there, it could only be checked by scanning the source TEXT — and a text
+ * scan does not notice a field being commented out (proven with a mutation: commenting the
+ * line with `//` dropped two of link 6's settings from the key, and no test went red). As a
+ * pure function here it can be checked BEHAVIOURALLY: does changing this field really change
+ * the key?
  *
- * Zincire halka eklemek, alanlarını buraya eklemek demektir. Eksiklik sessiz ve tek
- * yönlüdür: halkayı AÇAN operatör, halka KAPALIYKEN üretilmiş bağlamı önbellekten almaya
- * devam eder ve hiç koşmayan bir korumanın koştuğuna inanır.
+ * Adding a link to the chain means adding its fields here. The omission is silent and
+ * one-directional: the operator who ENABLES a link keeps being served a context built while
+ * it was DISABLED, and believes a protection is running that never runs.
  */
 export function nacAnahtarDilimi(nac: NacDilimi): string[] {
   return [
@@ -214,28 +224,32 @@ export function nacAnahtarDilimi(nac: NacDilimi): string[] {
     nac.devSwapSimulate ?? "",
     String(nac.callFwdCheck ?? ""),
     nac.callFwdSimulate ?? "",
-    // Kademe bir GEVŞEMEDİR: anahtara girmezse, yükseltmeyi açan operatör kapalıyken
-    // üretilmiş bağlamı almaya devam eder ve açtığını sandığı yol hiç koşmaz.
+    // Step-up is a LOOSENING: if it is not in the key, the operator who enables the
+    // escalation keeps receiving a context built while it was off, and the path they believe
+    // they enabled never runs.
     String(nac.stepUp ?? ""),
   ];
 }
 
 /**
- * KİRACI DİLİMİ — bağlam önbelleği anahtarının kimlik ve kelepçe yarısı.
+ * THE TENANT SLICE — the identity and clamp half of the context cache key.
  *
- * `nacAnahtarDilimi` ile aynı gerekçeyle burada: http.ts test edilemediği için anahtarın
- * bu yarısı da bekçisizdi ve eksikliği ölçüldü — `user.writeEnabled` ya da
- * `user.maxDailyBudget` anahtardan tek tek veya topluca silindiğinde takım YEŞİL kalıyordu.
+ * It is here for the same reason as `nacAnahtarDilimi`: because http.ts cannot be tested,
+ * this half of the key had no guard either, and the gap was measured — deleting
+ * `user.writeEnabled` or `user.maxDailyBudget` from the key, one at a time or together, left
+ * the suite GREEN.
  *
- * Her alanın anahtarda olmasının ayrı bir sebebi var ve hiçbiri süs değil:
- *   id / refreshToken / loginCustomerId → KİRACI KİMLİĞİ. Düşerse iki kiracı aynı
- *     AdsContext'i paylaşır: birinin jetonuyla ötekinin hesabına yazılır.
- *   writeEnabled → yazma kelepçesi. Düşerse, yazmayı KAPATAN operatör açıkken üretilmiş
- *     bağlamı almaya devam eder; ayarlar sayfasının "anında geçerli" sözü sessizce ölür.
- *   maxDailyBudget → harcama tavanı. Düşerse tavanı İNDİREN operatör eski, yüksek tavanla
- *     hizmet görmeye devam eder.
+ * Every field is in the key for its own reason, and none of them is decoration:
+ *   id / refreshToken / loginCustomerId -> TENANT IDENTITY. Drop one and two tenants share
+ *     the same AdsContext: one tenant's token writes into the other's account.
+ *   writeEnabled -> the write clamp. Drop it and the operator who switches writes OFF keeps
+ *     being served the context built while they were on; the settings page's promise of
+ *     "takes effect immediately" dies quietly.
+ *   maxDailyBudget -> the spending ceiling. Drop it and the operator who LOWERS the ceiling
+ *     keeps being served under the old, higher one.
  *
- * Not: eksiklik hep GEVŞEME yönünde ısırır — sıkılaştırma uygulanmaz, gevşeklik kalır.
+ * Note that the gap always bites towards LOOSENING: a tightening is not applied, while
+ * slack persists.
  */
 export function kiraciAnahtarDilimi(user: {
   id: number;
@@ -287,15 +301,16 @@ export function parseBool(raw: string | undefined, varsayilan: boolean, ad = "ba
   if (["1", "true", "yes", "on", "evet", "acik", "açık"].includes(v)) return true;
   if (["0", "false", "no", "off", "hayir", "hayır", "kapali", "kapalı"].includes(v)) return false;
   /**
-   * DEĞER YAZILMAZ, DEĞİŞKEN ADI YAZILIR.
+   * THE NAME OF THE VARIABLE IS LOGGED, NOT ITS VALUE.
    *
-   * Bu uyarı stderr'e gider; stderr ise MCP günlük dosyasına, `docker logs`a ve
-   * prova/smoke terminal çıktısına akar. Yanlış slota yapıştırılmış bir jeton ya da
-   * onaylayıcı telefon numarası — ki bunlar tam da yazım hatasıyla yanlış değişkene
-   * düşen şeylerdir — eskiden buradan tamamıyla loglanırdı. networkTrust.ts yedi ayrı
-   * yerde "değer sır ihtimaline karşı gösterilmez" diyor; burası aynı kuralın tersini
-   * yapıyordu. Operatörün neyi düzelteceğini bilmesi için değişken adı + beklenen biçim
-   * yeter; hangi yanlış değeri yazdığını zaten kendisi biliyor.
+   * This warning goes to stderr, and stderr flows into the MCP log file, into `docker logs`
+   * and into the terminal output of the rehearsal and smoke runs. A token pasted into the
+   * wrong slot, or an approver's phone number — precisely the things that end up in the
+   * wrong variable through a typo — used to be logged here in full. networkTrust.ts says in
+   * seven different places that "the value is not shown, in case it is a secret"; this was
+   * doing the opposite of that same rule. The variable's name and the expected format are
+   * enough for the operator to know what to fix; they already know which wrong value they
+   * typed.
    */
   console.error(
     `[aegis] Uyarı: ${ad} değeri anlaşılamadı (beklenen: 1/0, true/false, evet/hayır) — ` +
@@ -312,7 +327,8 @@ export function parseNumEnv(name: string, raw: string | undefined, varsayilan: n
   if (raw === undefined || raw.trim() === "") return varsayilan;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    // parseBool ile aynı gerekçe: ham değer loga akmaz, yalnız değişken adı + beklenen biçim.
+    // Same reasoning as parseBool: the raw value never reaches the log, only the variable's
+    // name and the expected format.
     console.error(
       `[aegis] Uyarı: ${name} geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
         `varsayılan ${varsayilan} kullanılıyor. Değer sır ihtimaline karşı gösterilmiyor.`
@@ -331,7 +347,7 @@ function parseBudgetCap(raw: string | undefined): number {
   if (!raw?.trim()) return DEFAULT;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    // parseBool ile aynı gerekçe: ham değer loga akmaz.
+    // Same reasoning as parseBool: the raw value never reaches the log.
     console.error(
       `[aegis] Uyarı: AEGIS_MAX_DAILY_BUDGET geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
         `bütçe tavanı ${DEFAULT} olarak zorlandı. Değer sır ihtimaline karşı gösterilmiyor.`
@@ -342,28 +358,28 @@ function parseBudgetCap(raw: string | undefined): number {
 }
 
 /**
- * DÜZ METİN (TLS'siz) DİNLEME KARARI — yayın biçiminden BAĞIMSIZ.
+ * THE DECISION TO LISTEN IN PLAINTEXT (WITHOUT TLS) — INDEPENDENT of how it is published.
  *
- * NEDEN VAR: hosted sunucu her zaman düz HTTP konuşur; şifrelemeyi önündeki nginx/Caddy
- * sonlandırır. Eski uyarı yalnız AEGIS_PUBLIC_URL'e bakıyordu, dolayısıyla TLS'in
- * gerçekten atlanabildiği iki durumda SUSUYORDU:
- *   1) PUBLIC_URL https:// ama süreç 0.0.0.0'a bağlı — 443'ün yanında şifresiz bir port
- *      açık kalır; /connect ve /settings düz HTTP yanıtlar, /mcp için doğru Host başlığı
- *      yeter. Ters vekil, saldırgan için isteğe bağlı hâle gelir.
- *   2) PUBLIC_URL http:// ama makine "localhost" değil bir iç ad — kimlik bilgileri
- *      açık metin taşınır.
- * Karar bu yüzden İKİ girdiye birden bakar: nereye bağlandık ve kullanıcılar bize hangi
- * şemayla ulaşıyor. Düz metin bir genel adres artık sessiz bir uyarı değil, AÇIK ONAY
- * (AEGIS_ALLOW_PLAINTEXT) isteyen bir engeldir — "bilinmiyor" ile "güvenli" aynı şey
- * değildir ve varsayılan RET olmalıdır.
+ * WHY IT EXISTS: the hosted server always speaks plain HTTP; the nginx or Caddy in front of
+ * it terminates the encryption. The old warning looked only at AEGIS_PUBLIC_URL, and so
+ * FELL SILENT in the two cases where TLS can genuinely be bypassed:
+ *   1) PUBLIC_URL is https:// but the process is bound to 0.0.0.0 — an unencrypted port
+ *      stays open beside 443; /connect and /settings answer over plain HTTP, and /mcp needs
+ *      only the right Host header. The reverse proxy becomes optional for an attacker.
+ *   2) PUBLIC_URL is http:// but the machine is an internal name rather than "localhost" —
+ *      credentials travel in the clear.
+ * The decision therefore looks at BOTH inputs: where we bound, and which scheme users reach
+ * us through. A plaintext public address is no longer a silent warning but a block that
+ * requires EXPLICIT approval (AEGIS_ALLOW_PLAINTEXT) — "unknown" and "safe" are not the same
+ * thing, and the default has to be refusal.
  */
 const YEREL_ADLAR = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0:0:0:0:0:0:0:1"]);
 
-/** Yalnız bu makineden erişilebilen bir bağlanma adresi mi? */
+/** Is this a bind address reachable only from this machine? */
 export function yerelAdres(host: string): boolean {
   const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
   if (YEREL_ADLAR.has(h) || YEREL_ADLAR.has(`[${h}]`)) return true;
-  // 127.0.0.0/8'in tamamı loopback'tir (127.0.0.1 dışındaki adresler de dahil).
+  // The whole of 127.0.0.0/8 is loopback, not just 127.0.0.1.
   return /^127\./.test(h);
 }
 
@@ -379,7 +395,8 @@ export function duzMetinKarari(girdi: {
     sema = u.protocol;
     konak = u.hostname;
   } catch {
-    // Okunamayan URL "temiz" sayılmaz: doğrulanamayan yapılandırma uyarıyı hak eder.
+    // An unparseable URL does not count as "clean": configuration that cannot be verified
+    // deserves the warning.
     return { uyari: `AEGIS_PUBLIC_URL çözümlenemedi ('${girdi.publicUrl}') — TLS durumu DOĞRULANAMADI.` };
   }
 
@@ -393,8 +410,9 @@ export function duzMetinKarari(girdi: {
     };
   }
 
-  // Dinleyicinin kendisi her hâlükârda düz HTTP: loopback dışına bağlıysa bunu SÖYLE.
-  // https bir PUBLIC_URL bu portu kapatmaz; yalnız vekilin önerilen yolunu anlatır.
+  // The listener itself is plain HTTP in every case: if it is bound outside loopback, SAY
+  // so. An https PUBLIC_URL does not close this port; it only describes the intended path
+  // through the proxy.
   if (!yerelAdres(girdi.bind)) {
     return {
       uyari:

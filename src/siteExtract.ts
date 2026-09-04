@@ -24,7 +24,7 @@ export interface PageFacts {
   visibleText: string;
 }
 
-/** Adlandırılmış varlıklar. Listede olmayan bir ad OLDUĞU GİBİ bırakılır. */
+/** Named entities. A name that is not in the list is left AS IS. */
 const VARLIKLAR: Record<string, string> = {
   amp: "&",
   lt: "<",
@@ -35,15 +35,15 @@ const VARLIKLAR: Record<string, string> = {
 };
 
 /**
- * HTML varlıklarını TEK GEÇİŞTE çözer.
+ * Decodes HTML entities in a SINGLE PASS.
  *
- * NEDEN tek geçiş: eski hâli zincirlenmiş replace'lerdi ve `&amp;` en başta duruyordu —
- * onun ürettiği `&` sonraki halkaların girdisi oluyordu. Ölçüldü: `Fiyat &amp;lt;b&amp;gt;`
- * → `Fiyat <b>`. Sayfada böyle bir etiket YOKTU; çözücü onu kendisi uydurdu. Aynı zincir,
- * `&amp;lt;/site-verisi&amp;gt;` yazan bir sayfaya metin olarak GERÇEK bir ayraç kapanışı
- * ürettiriyordu: savunma tek katmana (ayracTemizle) iniyor, çıkarımın kendisi saldırganın
- * tarafına geçiyordu. Tarayıcı da tek geçiş yapar — bir varlığın çözümünden çıkan `&`
- * yeni bir varlık başlatmaz.
+ * WHY one pass: it used to be a chain of replaces with `&amp;` first — and the `&` that
+ * produced became the input of the links after it. Measured: `Fiyat &amp;lt;b&amp;gt;`
+ * turned into `Fiyat <b>`. There was NO such tag on the page; the decoder invented it. The
+ * same chain let a page that wrote `&amp;lt;/site-verisi&amp;gt;` as text produce a REAL
+ * closing delimiter: the defence collapsed to a single layer (ayracTemizle) and the
+ * extraction itself changed sides. A browser makes one pass too — an `&` that comes out of
+ * decoding an entity does not start a new one.
  */
 function decodeEntities(s: string): string {
   return s.replace(/&(?:#x([0-9a-f]+)|#(\d+)|([a-z]+));/gi, (tam, hex, ondalik, ad) => {
@@ -65,44 +65,47 @@ function clean(s: string | undefined): string | undefined {
 }
 
 /**
- * CDATA sarmalayıcısını ve JS yorum önekini bir JSON-LD gövdesinden DOĞRUSAL sıyırır.
+ * Strips a CDATA wrapper and a JS comment prefix from a JSON-LD body, LINEARLY.
  *
- * NEDEN regex değil: eski hâli `/^\s*(?:\/\/)?\s*<!\[CDATA\[/i` idi ve baştaki `\s*`
- * her geri adımında ikinci `\s*` aynı boşluğu baştan tarıyordu → O(n²). Ölçüldü:
- * 25KB boşluk + geçerli JSON-LD = 178ms, 100KB = 2,9sn, 200KB = 11,6sn; 1,5MB'lık gövde
- * tavanında dakikalar. Hiçbir kapıya takılmayan, tamamen geçerli bir sayfa tek başına
- * tek iş parçacığını kilitliyordu. startsWith/endsWith + slice doğrusaldır.
+ * WHY not a regex: it used to be `/^\s*(?:\/\/)?\s*<!\[CDATA\[/i`, and on every backtrack of
+ * the leading `\s*` the second `\s*` rescanned the same whitespace from the start -> O(n²).
+ * Measured: 25KB of whitespace plus valid JSON-LD took 178ms, 100KB took 2.9s, 200KB took
+ * 11.6s; at the 1.5MB body ceiling, minutes. A perfectly valid page that tripped no gate at
+ * all could lock the single thread on its own. startsWith/endsWith plus slice is linear.
  *
- * Semantik birebir korunur: `//` öneki yalnız `<![CDATA[`'dan ÖNCE, `//` eki yalnız
- * `]]>`'den SONRA kabul edilir; desen tam eşleşmezse hiçbir şey kırpılmaz.
+ * The semantics are preserved exactly: a `//` prefix is accepted only BEFORE `<![CDATA[`,
+ * and a `//` suffix only AFTER `]]>`; if the pattern does not match in full, nothing is
+ * trimmed.
  */
 function cdataSiyir(inner: string): string {
   let s = inner.trim();
-  // `//` öneki YALNIZ ardından `<![CDATA[` geliyorsa sıyrılır; tek başına bir JS yorumu
-  // kırpılmaz. Aksi hâlde `//{"@type":…}` gibi bir gövde eskiden atlanırken şimdi
-  // ayrıştırılırdı — doğrusallaştırma bir davranış genişlemesi olmamalı.
+  // The `//` prefix is stripped ONLY when `<![CDATA[` follows it; a bare JS comment is not
+  // trimmed. Otherwise a body like `//{"@type":…}`, which used to be skipped, would now be
+  // parsed — making a linearisation into a behavioural expansion, which it must not be.
   const onektenSonra = s.startsWith("//") ? s.slice(2).trimStart() : s;
   if (onektenSonra.startsWith("<![CDATA[")) s = onektenSonra.slice("<![CDATA[".length);
   let e = s.trimEnd();
   if (e.endsWith("//")) e = e.slice(0, -2).trimEnd();
-  // Yalnız TAM desen (`]]>` + boşluk + isteğe bağlı `//` + boşluk + son) eşleşirse kırp
+  // Trim only when the FULL pattern matches: `]]>` + whitespace + an optional `//` +
+  // whitespace + end of input.
   if (e.endsWith("]]>")) s = e.slice(0, -3);
   return s.trim();
 }
 
 /**
- * Ayraç kaçışı temizliği: sayfadan gelen metinde "site-verisi" dizisini nötrler.
+ * Delimiter-escape cleaning: neutralises the sequence "site-verisi" in text coming from a
+ * page.
  *
- * NEDEN literal arama, desen değil: eski hâli ayraç adını arayıp ardından en fazla 200
- * karakter (`[^>]{0,200}`) tolere eden bir regex'ti ve o sınır bir kapıydı — 201 dolgu
- * karakteri taşıyan `</site-verisi …>` yükü desenin
- * DIŞINA düşüyor, temizlenmeden çıktıya giriyordu. Sayfa bloğu sunucudan ÖNCE kapatınca
- * o noktadan sonraki her satır ajanın gözünde sunucunun kendi sözü oluyor. Sınırı
- * büyütmek aynı yarışı bir tur daha oynamaktır; onun yerine ayracın ADI nötrleniyor —
- * geriye ayracı yazmanın hiçbir varyantı kalmıyor.
+ * WHY a literal search rather than a pattern: it used to be a regex that looked for the
+ * delimiter name and then tolerated up to 200 characters (`[^>]{0,200}`), and that bound was
+ * a gate — a `</site-verisi …>` payload carrying 201 characters of padding fell OUTSIDE the
+ * pattern and reached the output uncleaned. Once the page closes the block BEFORE the server
+ * does, every line after that point reads to the agent as the server's own words. Raising
+ * the bound is playing the same race one more round; instead, the delimiter's NAME is
+ * neutralised — leaving no variant of writing it at all.
  *
- * asciiLower kullanılır, toLowerCase() DEĞİL: Türkçe 'İ' iki kod noktasına açılır,
- * dize uzar ve indeksler ham metinle hizasını kaybeder.
+ * asciiLower is used, NOT toLowerCase(): Turkish 'İ' expands into two code points, the string
+ * grows, and the indices lose their alignment with the raw text.
  */
 const AYRAC_ADI = "site-verisi";
 export function ayracTemizle(metin: string): string {
@@ -196,13 +199,14 @@ function findElements(html: string, tag: string, max: number): Array<{ openTag: 
     const e = lower.indexOf(close, gt + 1);
     if (e < 0) {
       /**
-       * Kapanış etiketi HİÇ yok — ve gt her turda ilerlediği için bundan SONRAKİ hiçbir
-       * açılış da kapanış bulamaz. Eskiden burada `i = gt + 1; continue` vardı: her açılış
-       * için dizinin sonuna kadar yeni bir tarama başlıyordu, yani O(n²).
-       * Ölçüldü: kapanışsız "<a>" tekrarı 16KB=43ms, 64KB=644ms, 128KB=2,6sn, 256KB=10,4sn
-       * → 1,5MB'lık gövde tavanında ~6 dakika. Node tek iş parçacıklı olduğu için TEK
-       * istek /health dâhil bütün kiracıları dondurur. Aramayı burada bitirmek, sonucu
-       * değiştirmeden taramayı doğrusal tutar.
+       * There is NO closing tag at all — and because gt advances on every turn, no opening
+       * tag AFTER this one will find a closing tag either. This used to be
+       * `i = gt + 1; continue`, which started a fresh scan to the end of the string for
+       * every opening tag: O(n²).
+       * Measured on repeated unclosed "<a>": 16KB took 43ms, 64KB 644ms, 128KB 2.6s, 256KB
+       * 10.4s -> roughly 6 minutes at the 1.5MB body ceiling. Since Node is single
+       * threaded, ONE request freezes every tenant, /health included. Ending the search
+       * here keeps the scan linear without changing the result.
        */
       break;
     }
@@ -279,16 +283,18 @@ export function extractPageFacts(rawHtml: string, opts: { textChars?: number } =
   const yorumsuz = removeBetween(rawHtml, "<!--", "-->");
 
   /**
-   * script/style/noscript gövdeleri TÜM alanlardan silinir, yalnız görünür metinden değil.
+   * script, style and noscript bodies are removed from ALL fields, not just from the
+   * visible text.
    *
-   * NEDEN: temizlik eskiden sadece visibleText hattındaydı; title, H1-H3 ve menü ham
-   * html'den okunuyordu. Sayfa `<script>var x="<title>ELE GEÇİRİLDİ</title>"</script>`
-   * yazarak — ya da script gövdesine `<h1>`/`<a>` gömerek — ajanın en itibarlı saydığı
-   * alanları doldurabiliyordu. O metin tarayıcıda GÖRÜNMEDİĞİ için insan denetimi de
-   * yakalamıyordu: kullanıcı sayfayı açıp bakar, öyle bir başlık yoktur.
+   * WHY: the cleaning used to sit only on the visibleText path, while the title, H1-H3 and
+   * the menu were read from the raw HTML. A page could fill the fields the agent treats as
+   * most authoritative by writing
+   * `<script>var x="<title>ELE GEÇİRİLDİ</title>"</script>` — or by burying `<h1>` and `<a>`
+   * inside a script body. Because that text is INVISIBLE in a browser, human review did not
+   * catch it either: the user opens the page and finds no such heading.
    *
-   * JSON-LD bilerek `yorumsuz` üzerinden okunur: verisi zaten bir <script> gövdesidir,
-   * temizlenmiş kopyada hiç kalmaz.
+   * JSON-LD is deliberately read from `yorumsuz`: its data is a <script> body by definition
+   * and would not survive in the cleaned copy at all.
    */
   const html = removeBetween(
     removeBetween(removeBetween(yorumsuz, "<script", "</script>"), "<style", "</style>"),
@@ -379,19 +385,21 @@ export function sniffCharset(contentTypeHeader: string | null, bodyPrefix: strin
 }
 
 /**
- * Köşeli parantezleri soyulmuş IPv6 metnini 8 hextet'e AÇAR — ya da IPv6 değilse undefined.
+ * EXPANDS an IPv6 string with its brackets already stripped into 8 hextets — or undefined
+ * when it is not IPv6.
  *
- * Açmak şart, çünkü aşağıdaki gömülü-IPv4 tanıları sıkıştırılmış yazımda ("::ffff:7f00:1")
- * karakter karşılaştırmasıyla bulunamaz. `::` en fazla bir kez geçebilir; iki kez geçen
- * metin geçerli IPv6 değildir ve tanınmamış sayılır (kapalı arıza: tanınmayan adres
- * "genel" diye geçmez, çağıran onu DNS'e sorar ve orada çözülemezse istek reddedilir).
+ * Expanding is required because the embedded-IPv4 recognitions below cannot be found by
+ * character comparison in compressed notation ("::ffff:7f00:1"). `::` may appear at most
+ * once; a string containing it twice is not valid IPv6 and counts as unrecognised (fail
+ * closed: an unrecognised address is not passed as "public" — the caller sends it to DNS,
+ * and if it does not resolve there the request is refused).
  */
 function hextetleriAc(ham: string): number[] | undefined {
   /**
-   * Noktalı KUYRUK önce iki hextet'e normalleştirilir: `::ffff:192.168.1.1` ile
-   * `::ffff:c0a8:101` aynı adrestir ve ikisi de aynı yoldan geçmelidir. Bu adım
-   * atlandığında noktalı biçim "hextet değil" diye tanınmaz olur — ölçüldü: mevcut
-   * `::ffff:192.168.1.1` bekçisi tam olarak bu yüzden kızardı.
+   * A dotted TAIL is normalised into two hextets first: `::ffff:192.168.1.1` and
+   * `::ffff:c0a8:101` are the same address and both have to travel the same path. Skip this
+   * step and the dotted form becomes unrecognisable as "not a hextet" — measured: the
+   * existing `::ffff:192.168.1.1` guard went red for exactly this reason.
    */
   let v6 = ham;
   const nokta = /:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v6);
@@ -416,15 +424,18 @@ function hextetleriAc(ham: string): number[] | undefined {
 }
 
 /**
- * Bir IPv6 adresinin İÇİNE GÖMÜLÜ IPv4 adresini noktalı yazıma çevirir — yoksa undefined.
+ * Converts an IPv4 address EMBEDDED INSIDE an IPv6 address into dotted notation — or
+ * undefined when there is none.
  *
- * NEDEN: IPv6, bir IPv4 adresini üç ayrı standart biçimde taşıyabilir ve üçü de aynı
- * yere gider. Eski kod yalnız `::ffff:` önekini, üstelik yalnız NOKTALI kuyrukla
- * (`::ffff:192.168.1.1`) tanıyordu. Aynı adresin HEX yazımı (`::ffff:c0a8:101`) o daldan
- * kaçıyor, ardından "iki nokta var → IPv6" dalında fc/fe8 kalıplarına uymadığı için
- * GENEL sayılıyordu. Yani 127.0.0.1'e `::ffff:7f00:1` yazarak ulaşılabiliyordu.
+ * WHY: IPv6 can carry an IPv4 address in three distinct standard shapes, and all three go to
+ * the same place. The old code recognised only the `::ffff:` prefix, and even then only with
+ * a DOTTED tail (`::ffff:192.168.1.1`). The HEX spelling of the same address
+ * (`::ffff:c0a8:101`) escaped that branch and was then treated as PUBLIC in the "it has
+ * colons, therefore IPv6" branch, because it matched neither the fc nor the fe8 pattern. So
+ * 127.0.0.1 was reachable by writing `::ffff:7f00:1`.
  *
- * Üç biçim de burada tek yerde çözülür ve sonuç IPv4 kurallarına geri verilir:
+ * All three shapes are decoded here in one place and the result is handed back to the IPv4
+ * rules:
  *   ::ffff:a.b.c.d / ::ffff:XXXX:XXXX  → IPv4-mapped (RFC 4291)
  *   2002:XXXX:XXXX::/16                → 6to4 (RFC 3056) — 2002:7f00:1:: = 127.0.0.1
  *   64:ff9b::XXXX:XXXX                 → NAT64 (RFC 6052) — 64:ff9b::7f00:1 = 127.0.0.1
@@ -442,15 +453,16 @@ function gomuluIPv4(v6: string): string | undefined {
 }
 
 /**
- * SSRF kapısı: localhost, özel/ayrılmış IP'ler ve iç ağ adları reddedilir.
+ * The SSRF gate: localhost, private and reserved IPs, and internal network names are
+ * refused.
  *
- * Kapsam RFC 1918'in ötesine BİLEREK taşırıldı. "Özel" yalnız 10/172.16/192.168 değildir;
- * bulut sağlayıcılarının üstveri uçları ayrılmış ama RFC1918 DIŞI bloklarda oturur ve
- * kimlik istemeden kalıcı erişim jetonu dağıtırlar. Somut örnek: Oracle Cloud'un IMDS'i
- * 192.0.0.192'dedir — 192.0.0.0/24 (IETF protokol atamaları) içinde, eski listede yok.
- * Çokluyayın (224/4) ve ayrılmış (240/4, 255.255.255.255 dâhil) bloklar da dışarıdan
- * hiçbir meşru sayfa barındırmaz; onları geçirmek kapıyı bedavaya genişletmekten başka
- * bir şey yapmaz.
+ * The scope reaches DELIBERATELY beyond RFC 1918. "Private" is not only 10/172.16/192.168;
+ * cloud providers' metadata endpoints sit in reserved blocks OUTSIDE RFC1918 and hand out
+ * durable access tokens without asking for credentials. A concrete example: Oracle Cloud's
+ * IMDS lives at 192.0.0.192 — inside 192.0.0.0/24 (IETF protocol assignments), which was not
+ * on the old list. Multicast (224/4) and reserved space (240/4, including 255.255.255.255)
+ * host no legitimate page from outside either; letting them through widens the gate for
+ * nothing in return.
  */
 export function isPrivateHostname(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, "");
