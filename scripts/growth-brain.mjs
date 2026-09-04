@@ -1,41 +1,45 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Growth Brain CLI — araştırma → strateji → kreatif → (yalnız --uygula ile) uygulama
- * → (yalnız --yayinla ile) yayına alma denemesi → rapor.
+ * The Growth Brain CLI — research → strategy → creative → application (only with --uygula)
+ * → the go-live attempt (only with --yayinla) → the report.
  *
- * Kullanım:
- *   node scripts/growth-brain.mjs --hedef "..." --url <finalUrl> --butce <günlük TL tavanı> \
+ * Usage:
+ *   node scripts/growth-brain.mjs --hedef "..." --url <finalUrl> --butce <daily ceiling> \
  *     --musteri <id> [--sektor "..."] [--uygula [--yayinla]]
  *
- * VARSAYILAN KURU MOD:
- *   - MCP'ye HİÇ bağlanılmaz, uygulama modülü import bile edilmez.
- *   - Google Ads hesabına hiçbir yazma yapılmaz; yalnız plan + kreatif + rapor üretilir.
- *   - Rapor "KURU MOD — HİÇBİR YAZMA YAPILMADI" damgası taşır.
+ * DRY RUN IS THE DEFAULT:
+ *   - MCP is NOT connected at all, and the application module is not even imported.
+ *   - Nothing is written to the Google Ads account; only the plan, the creative and the
+ *     report are produced.
+ *   - The report carries the "KURU MOD — HİÇBİR YAZMA YAPILMADI" stamp.
  *
- * --uygula MODU (istemci-tarafı ikinci kemer):
- *   - aegis://accounts/{id}/limits kaynağı okunur, efektif tavan =
- *     min(CLI tavanı, sunucu tavanı) olarak TEKLEŞTİRİLİR ve planDogrula'ya bu değer gider.
- *   - İlk yazmadan önce planın tam özeti terminalde gösterilir ve Türkçe onay istenir:
- *     'Evet' yazılmadıkça hiçbir yazma çağrısı yapılmaz.
- *   - mcpBaglan elicitation İLAN ETMEZ ve hiçbir araca confirm gönderilmez: yayına alma /
- *     bütçe artışı gibi onay isteyen işlemler sunucu tarafında tasarım gereği reddedilir.
- *     Kampanya PAUSED doğar.
+ * THE --uygula MODE, the second belt on the client side:
+ *   - The aegis://accounts/{id}/limits resource is read, the effective ceiling is COLLAPSED
+ *     to min(the CLI ceiling, the server's ceiling), and that value is what reaches
+ *     planDogrula.
+ *   - Before the first write, the full summary of the plan is shown in the terminal and
+ *     approval is asked for: unless 'Evet' is typed, no write call happens.
+ *   - mcpBaglan DOES NOT ADVERTISE elicitation, and no tool is sent confirm: operations that
+ *     want approval — going live, raising a budget — are refused on the server side by
+ *     design. The campaign is born PAUSED.
  *
- * --yayinla MODU (yalnız --uygula ile birlikte; ayrı ve açık İKİNCİ onay):
- *   - Kampanya kurulduktan SONRA set_campaign_status → ENABLED DENENİR. Bu çağrı
- *     sunucuda HIGH risk etiketlidir: ağ kapısı (CAMARA SIM-swap zinciri) insan onayı
- *     isteminden ÖNCE çalışır — "LLM planlar, her para hareketi ağ kapısından geçer"
- *     iddiası tek koşuda uçtan uca GÖSTERİLİR.
- *   - Güvenlik değişmezleri GEVŞETİLMEZ: elicitation yine ilan edilmez, confirm yine
- *     gönderilmez. Yani ağ sinyali temiz olsa bile sunucu doğrulanmış insan onayı
- *     olmadığı için reddedebilir; CLI bu sonucu da dürüstçe raporlar. Yayına alma
- *     kararını her koşulda SUNUCU verir, bu istemci onay uyduramaz.
- *   - ENABLED çağrısı YALNIZ brain/uygulama.mjs'teki yayinaAl() fonksiyonundan çıkar;
+ * THE --yayinla MODE, only alongside --uygula, and behind a separate, explicit SECOND
+ * approval:
+ *   - AFTER the campaign has been created, set_campaign_status → ENABLED is ATTEMPTED. That
+ *     call is labelled HIGH risk on the server: the network gate, the CAMARA SIM-swap chain,
+ *     runs BEFORE the human-approval prompt — so the claim "the LLM plans, every movement of
+ *     money passes the network gate" is DEMONSTRATED end to end in a single run.
+ *   - The security invariants are NOT RELAXED: elicitation is still not advertised, confirm
+ *     is still not sent. So even with a clean network signal the server may refuse for want
+ *     of verified human approval, and the CLI reports that outcome honestly too. The decision
+ *     to go live is the SERVER's under every condition; this client cannot fabricate an
+ *     approval.
+ *   - The ENABLED call leaves ONLY through the yayinaAl() function in brain/uygulama.mjs;
  *     kurulum yolunun kara listesi (set_campaign_status/update_campaign_budget) aynen durur.
  *
- * Sır hijyeni: tüm catch'lerde yalnız e?.message yazdırılır; env değerleri hiçbir
- * çıktıya ve isteme taşınmaz.
+ * Secret hygiene: every catch prints e?.message only, and environment values reach neither
+ * the output nor a prompt.
  */
 import "dotenv/config"; // model sağlayıcısının anahtarı projenin .env dosyasından da okunabilsin (hata metni bunu tarif eder)
 import { writeFileSync } from "node:fs";
@@ -48,16 +52,18 @@ import { kreatifUret } from "./brain/kreatif.mjs";
 import { butceDagit, dagitimOzeti, kullanilabilirKanallar, uygulanacakPay } from "./brain/dagitim.mjs";
 
 /**
- * Kampanya kurma yolunun GERÇEKTEN yazdığı kanal.
+ * The channel the campaign-creation path ACTUALLY writes to.
  *
- * uygulama.mjs yalnız create_search_campaign / add_keywords / create_responsive_search_ad
- * çağırır; hepsi Google Ads araçlarıdır. Bu sabit, dağıtımdan hangi payın alınacağını
- * belirler ve kod ile raporun aynı kanalı söylemesini garanti eder.
+ * uygulama.mjs calls only create_search_campaign, add_keywords and
+ * create_responsive_search_ad, all of them Google Ads tools. This constant decides which
+ * share is taken from the allocation, and guarantees that the code and the report name the
+ * same channel.
  */
 const UYGULANAN_KANAL = "google";
 import { raporOlustur } from "./brain/rapor.mjs";
 
-/** src/config.ts parseBudgetCap varsayılanı — sunucu tavanı okunamadığında güvenli alt sınır. */
+/** The default from parseBudgetCap in src/config.ts — the safe floor when the server's
+ * ceiling cannot be read. */
 const SUNUCU_VARSAYILAN_TAVAN = 500;
 
 const KULLANIM = [
@@ -78,7 +84,7 @@ const KULLANIM = [
   "             --uygula OLMADAN kullanılamaz.",
 ].join("\n");
 
-/* ── Argüman ayrıştırma ─────────────────────────────────────────────────────── */
+/* ── Argument parsing ───────────────────────────────────────────────────────── */
 
 export function argumanlariAyristir(argv) {
   const DEGERLI = new Map([
@@ -116,14 +122,13 @@ export function argumanlariAyristir(argv) {
 }
 
 /**
- * Bayrak/argüman doğrulaması. ANTHROPIC_API_KEY kontrolünden ÖNCE çalışır (ana()
- * istemciyi bundan sonra kurar): bozuk bir komut satırı hiçbir API anahtarıyla
- * düzelmez, dolayısıyla en somut hatayı önce vermek doğrudur — aksi hâlde
- * "--yayinla tek başına kullanılamaz" hatası "anahtar yok" hatasının arkasında
- * kalır ve kullanıcı yanlış şeyi düzeltmeye çalışır.
+ * Flag and argument validation. It runs BEFORE the API-key check, since ana() builds the
+ * client afterwards: a malformed command line is not fixed by any API key, so giving the most
+ * concrete error first is the right order — otherwise "--yayinla cannot be used on its own"
+ * hides behind "no key", and the user goes off to fix the wrong thing.
  */
 export function girdileriDogrula(args) {
-  // Bayrak birleşimi EN ÖNCE: en spesifik ve en ucuz kontrol.
+  // The flag combination FIRST OF ALL: the most specific and the cheapest check.
   if (args.yayinla === true && args.uygula !== true) {
     throw new Error(
       "--yayinla yalnız --uygula ile birlikte kullanılabilir: yayına alınacak kampanyanın " +
@@ -160,9 +165,10 @@ export function girdileriDogrula(args) {
   };
 }
 
-/* ── Yardımcılar ────────────────────────────────────────────────────────────── */
+/* ── Helpers ────────────────────────────────────────────────────────────────── */
 
-/** Terminale gidecek (çoğu zaten doğrulanmış) metinden kontrol/ANSI karakterlerini söker. */
+/** Strips control and ANSI characters from text bound for the terminal, most of which is
+ * already validated. */
 function terminalTemiz(metin, tavan = 160) {
   // Ham kontrol bayti tasimamak icin regex literal yerine kod noktasi kontrolu (strateji.mjs deseni).
   let temiz = "";
@@ -174,7 +180,7 @@ function terminalTemiz(metin, tavan = 160) {
   return temiz.length > tavan ? temiz.slice(0, tavan) + "..." : temiz;
 }
 
-/** Kampanya adından dosya-güvenli slug üretir (Türkçe harfler çevrilir). */
+/** Builds a filename-safe slug from a campaign name, transliterating Turkish letters. */
 export function slugUret(ad) {
   const cevrim = { ç: "c", ğ: "g", ı: "i", i: "i", ö: "o", ş: "s", ü: "u" };
   const slug = String(ad ?? "")
@@ -187,7 +193,8 @@ export function slugUret(ad) {
   return slug || "kampanya";
 }
 
-/** Onay öncesi terminalde gösterilecek tam plan özeti (yalnız doğrulanmış alanlar). */
+/** The full plan summary shown in the terminal before approval — validated fields
+ * only. */
 function planOzetiSatirlari({ plan, kreatif, efektifTavan, tavanKaynagi, musteri, url, yayinla, dagitim }) {
   const gruplar = Array.isArray(plan.adGruplari) ? plan.adGruplari : [];
   const kelimeSayisi = gruplar.reduce(
@@ -196,12 +203,13 @@ function planOzetiSatirlari({ plan, kreatif, efektifTavan, tavanKaynagi, musteri
   );
   const negatifSayisi = Array.isArray(plan.negatifKelimeler) ? plan.negatifKelimeler.length : 0;
   /**
-   * BÜTÇE BÖLÜNDÜYSE ONAY EKRANI BUNU SÖYLEMEK ZORUNDA.
+   * IF THE BUDGET WAS SPLIT, THE APPROVAL SCREEN IS OBLIGED TO SAY SO.
    *
-   * Aksi hâlde satır "45 TL (bağlayıcı tavan: 100 TL)" diye okunur ve operatör bunu
-   * "100'lük tavanın altında 45 harcıyorum" sanır. Oysa 100 bir tavan değil, BÖLÜNEN
-   * TOPLAMDIR ve kalanı başka bir kanala önerilmiştir. Yazmayı onaylayan kişi, onayladığı
-   * şeyin toplamın bir PARÇASI olduğunu görmeden onaylamamalı.
+   * Otherwise the line reads as "45 (binding ceiling: 100)" and the operator takes it to
+   * mean "I am spending 45 under a ceiling of 100". But 100 is not a ceiling, it is the
+   * TOTAL BEING SPLIT, and the remainder has been recommended to another channel. Whoever
+   * approves the write must not approve without seeing that what they are approving is a
+   * PART of the total.
    */
   const coklu = Array.isArray(dagitim) && dagitim.length > 1;
   const kanalAdi = Array.isArray(dagitim) && dagitim.length ? dagitim[0].kanal : null;
@@ -231,7 +239,8 @@ function planOzetiSatirlari({ plan, kreatif, efektifTavan, tavanKaynagi, musteri
   ];
 }
 
-/** Yayına alma öncesi ikinci onay ekranı — para hareketi bu adımda başlar. */
+/** The second approval screen, before going live — this is the step where money starts
+ * moving. */
 function yayinOzetiSatirlari({ plan, kampanyaId, musteri }) {
   return [
     "┌─ YAYINA ALMA — GERÇEK PARA HAREKETİ ────────────────────",
@@ -247,7 +256,8 @@ function yayinOzetiSatirlari({ plan, kampanyaId, musteri }) {
   ];
 }
 
-/** Yayın denemesinin sonucunu terminale dürüstçe basar (ret metni AYNEN gösterilir). */
+/** Prints the outcome of the go-live attempt honestly to the terminal; refusal text is
+ * shown VERBATIM. */
 function yayinSonucuYazdir(yayinSonucu) {
   const basliklar = {
     basarili: "SONUÇ: KAMPANYA YAYINDA (ENABLED) — gerçek harcama başladı.",
@@ -266,8 +276,9 @@ function yayinSonucuYazdir(yayinSonucu) {
 }
 
 /**
- * Efektif bütçe tavanı: min(CLI tavanı, sunucu maxDailyBudget).
- * Sunucu tavanı okunamazsa fail-closed: min(CLI, sunucu varsayılanı 500).
+ * The effective budget ceiling: min(the CLI ceiling, the server's maxDailyBudget).
+ * If the server's ceiling cannot be read it fails closed to min(the CLI ceiling, the server
+ * default of 500).
  */
 async function efektifTavanBelirle(mcp, musteri, cliTavan) {
   try {
@@ -300,43 +311,47 @@ async function efektifTavanBelirle(mcp, musteri, cliTavan) {
   };
 }
 
-/* ── Ana akış ───────────────────────────────────────────────────────────────── */
+/* ── The main flow ──────────────────────────────────────────────────────────── */
 
 /**
- * Operatör onayını klavyeden okur — ve stdin KAPANIRSA cevap beklemez.
+ * Reads the operator's approval from the keyboard — and waits for no answer once stdin
+ * CLOSES.
  *
- * NEDEN: `rl.question` girdi tükendiğinde (boru sonu, `< /dev/null`, kopmuş oturum)
- * HİÇBİR ZAMAN çözülmez. Node bunu "unsettled top-level await" diye bildirip süreci
- * ÇIKIŞ KODU 0 ile sonlandırır — yani çağıran taraf, onay hiç alınmamışken koşuyu
- * başarılı sanır. Bu yaşandı: borulanmış bir koşuda yayına alma sorusu asılı kaldı ve
- * betik sessizce "başarıyla" bitti.
+ * WHY: `rl.question` NEVER resolves when the input runs out — the end of a pipe,
+ * `< /dev/null`, a dropped session. Node reports that as an "unsettled top-level await" and
+ * ends the process with EXIT CODE 0 — so the caller believes the run succeeded when no
+ * approval was ever given. This actually happened: in a piped run the go-live question hung
+ * and the script finished quietly "successfully".
  *
- * EOF bir cevap DEĞİLDİR: boş dize döner, çağıran onu 'Evet' saymadığı için sonuç
- * RET olur. Susan bir kanal onay yerine geçmez (kapalı arıza) — demo betiğindeki
- * operatoreSor ile aynı sözleşme.
+ * EOF is NOT an answer: an empty string is returned, and since the caller does not count that
+ * as 'Evet', the outcome is a REFUSAL. A silent channel does not stand in for approval — it
+ * fails closed, the same contract as operatoreSor in the demo script.
  *
- * BUNUN İKİNCİ BİR SONUCU VAR VE O DA BİLEREKTİR: her çağrı kendi arayüzünü kurduğu
- * için, borulanmış girdide ilk soru stdin'i tüketir ve İKİNCİ soru anında EOF görür.
- * Yani `printf 'Evet
-Evet
-' | npm run brain -- --uygula --yayinla` ile yayına alma
- * ADIMI OTOMATİKLEŞTİRİLEMEZ; ikinci onay reddedilir ve kampanya PAUSED kalır.
+ * THERE IS A SECOND CONSEQUENCE, AND IT IS DELIBERATE TOO: because each call builds its own
+ * interface, on piped input the first question consumes stdin and the SECOND question sees
+ * EOF immediately.
+ * So `printf 'Evet\nEvet\n' | npm run brain -- --uygula --yayinla`
+ * CANNOT AUTOMATE the go-live STEP; the second approval is refused and the campaign stays
+ * PAUSED.
  *
- * Bu bir eksiklik değil, kapının varlık sebebinin ta kendisi: insan onayı borudan
- * beslenebiliyorsa insan onayı değildir. Betikle sürülen gösterim için `npm run demo`
- * vardır ve o, onayı kendisinin verdiğini ekranda açıkça söyler.
+ * That is not a shortcoming, it is the very reason the gate exists: human approval that can
+ * be fed down a pipe is not human approval. For a script-driven demonstration there is
+ * `npm run demo`, and it says plainly on screen that it is giving the approval itself.
  */
 /**
- * İNSAN KAPISI. Boş dize DAİMA rettir ve bu, sessiz bir varsayılan değil kuraldır.
+ * THE HUMAN GATE. An empty string is ALWAYS a refusal, and that is a rule, not a quiet
+ * default.
  *
- * Soru, akışın kapanmasıyla YARIŞTIRILIR. Yarış olmadan, girdisi kapalı bir ortamda
- * (boru hattı, CI, arka plan işi) `rl.question` hiç çözülmez: süreç asılı kalır ve
- * dışarıdan "çalışıyor" gibi görünür. Kapanma "" döndürdüğü ve çağıran YALNIZ "evet"
- * kabul ettiği için, cevaplanamayan bir soru ret olur — ve borudan onay geçirmek
- * bilerek imkânsızdır: `echo evet | ...` da kapanma yarışına takılır.
+ * The question is RACED against the stream closing. Without that race, in an environment
+ * whose input is closed — a pipeline, CI, a background job — `rl.question` never resolves:
+ * the process hangs and looks from outside like it is working. Because the close returns ""
+ * and the caller accepts ONLY "evet", a question that cannot be answered becomes a refusal —
+ * and passing approval down a pipe is deliberately impossible: `echo evet | ...` gets caught
+ * by the same close race.
  *
- * Akışlar parametre olarak alınır; üretimde varsayılanları kullanılır. Bu dikiş
- * yalnız test içindir — kapının davranışı, gerçek bir terminal olmadan sınanabilsin.
+ * The streams are taken as parameters and default to the real ones in production. That seam
+ * is for the tests alone, so the gate's behaviour can be exercised without a real
+ * terminal.
  */
 export async function operatorOnayi(soru, { girdi = process.stdin, cikti = process.stdout } = {}) {
   const { createInterface } = await import("node:readline/promises");
@@ -352,8 +367,9 @@ export async function operatorOnayi(soru, { girdi = process.stdin, cikti = proce
 }
 
 /**
- * Onay cümlesinin TEK kabul kuralı. Çağrı yerlerinde tekrarlanmak yerine burada
- * durur ki iki kapı (taslak yazma ve yayına alma) birbirinden ayrışmasın.
+ * The SINGLE acceptance rule for the approval phrase. It lives here rather than being
+ * repeated at the call sites, so the two gates — writing the draft and going live — cannot
+ * drift apart.
  */
 export function onayVerildiMi(cevap) {
   return String(cevap ?? "").trim().toLocaleLowerCase("tr-TR") === "evet";
@@ -369,9 +385,9 @@ async function ana() {
   const kuruMod = !girdi.uygula;
 
   /**
-   * Sağlayıcı `AEGIS_BRAIN_PROVIDER` ile seçilir (varsayılan: gemini). Anahtar yoksa
-   * buradaki Türkçe hata üst katmanda aynen gösterilir ve hangi anahtarın gerektiğini
-   * söyler.
+   * The provider is selected with `AEGIS_BRAIN_PROVIDER`, defaulting to gemini. With no
+   * key, the error raised here is shown verbatim by the layer above and names the key that
+   * is required.
    */
   const anthropic = beyinIstemcisi();
   console.log(`Model: ${BRAIN_MODEL} (${BRAIN_SAGLAYICI})`);
@@ -392,7 +408,7 @@ async function ana() {
     }
     console.log(`Bağlayıcı günlük bütçe tavanı: ${efektifTavan} TL (${tavanKaynagi})`);
 
-    // --yayinla bir adım daha ekler; sayaç buna göre yazılır.
+    // --yayinla adds one more step, and the counter is written accordingly.
     const N = girdi.yayinla ? 5 : 4;
 
     console.log(`\n[1/${N}] Araştırma…`);
@@ -403,11 +419,12 @@ async function ana() {
     console.log(`Araştırma tamam: ${arastirma.anahtarKelimeAdaylari.length} anahtar kelime adayı.`);
 
     /**
-     * KANAL DAĞITIMI — strateji hangi bütçeyle çalışacağını buradan öğrenir.
+     * CHANNEL ALLOCATION — this is where the strategy learns which budget it works with.
      *
-     * Kullanılabilir kanal kümesi ORTAMDAN okunur, modele sorulmaz: yapılandırılmamış
-     * bir kanala pay ayırmak, çalışmayacak bir planı öneri diye sunmak olurdu. Tek kanal
-     * varsa model hiç çağrılmaz — cevabı belli bir soruya LLM harcamayız.
+     * The set of usable channels is read FROM THE ENVIRONMENT, not asked of the model:
+     * allocating a share to an unconfigured channel would mean presenting a plan that
+     * cannot run as a recommendation. With only one channel the model is never called — we
+     * do not spend an LLM on a question whose answer is already known.
      */
     const kanallar = kullanilabilirKanallar();
     const dagitim = await butceDagit(
@@ -423,25 +440,28 @@ async function ana() {
     }
 
     /**
-     * Strateji, UYGULAMA YOLUNUN GERÇEKTEN YAZDIĞI kanalın payıyla kurulur.
+     * The strategy is built with the share of the channel THE APPLICATION PATH ACTUALLY
+     * WRITES TO.
      *
-     * Eskiden `dagitim[0]` alınıyordu ve bu, sırayı MODELE bırakıyordu: kurma yolu
-     * (uygulama.mjs) yalnız create_search_campaign çağırır, yani her koşulda GOOGLE'a
-     * yazar. Model dağıtımı `[{kanal:"meta",...},{kanal:"google",...}]` sırasıyla
-     * döndürdüğünde onay ekranı ve rapor "'meta' kanalının PAYI" diyor, oluşturulan
-     * kampanya ise Meta payıyla kurulmuş bir GOOGLE kampanyası oluyordu. Operatör
-     * onayladığı şeyden başkasını alıyor — üstelik yanlış rakamla.
+     * It used to take `dagitim[0]`, which left the ordering to the MODEL: the creation path
+     * in uygulama.mjs calls only create_search_campaign, so it writes to GOOGLE under every
+     * condition. When the model returned the allocation in the order
+     * `[{kanal:"meta",...},{kanal:"google",...}]`, the approval screen and the report both
+     * said "the SHARE of the 'meta' channel", while what got created was a GOOGLE campaign
+     * built with Meta's share. The operator was getting something other than what they
+     * approved — and at the wrong figure too.
      *
-     * Kanal artık adıyla seçilir. Bugünkü dürüst sınır aynı kalıyor: dağıtım birden çok
-     * kanala bölebilir, kurma yolu tek kanaldan gider; diğer kanalların payı rapora
-     * ÖNERİ olarak yazılır ve öneri olduğu orada açıkça söylenir.
+     * The channel is now selected by name. Today's honest limit stays as it is: the
+     * allocation may split across several channels while the creation path goes through
+     * one; the other channels' shares are written into the report as RECOMMENDATIONS, and
+     * said there plainly to be recommendations.
      */
     const birincilPay = uygulanacakPay(dagitim, UYGULANAN_KANAL);
     if (!birincilPay) {
       /**
-       * Kapalı arıza: yazılacak kanala pay düşmediyse kampanya kurulmaz. Sessizce
-       * başka bir kanalın payıyla devam etmek, tam da yukarıda kapatılan hatayı
-       * başka bir kapıdan geri sokardı.
+       * Fail closed: if no share fell to the channel we write to, no campaign is created.
+       * Quietly carrying on with another channel's share would let the very bug closed
+       * above back in through a different door.
        */
       throw new Error(
         `Bütçe dağıtımında '${UYGULANAN_KANAL}' kanalına pay düşmedi (${dagitimOzeti(dagitim)}). ` +
@@ -487,7 +507,8 @@ async function ana() {
         console.log("Onay verilmedi — hiçbir yazma yapılmadı. Kuru mod raporu üretiliyor.");
         uygulamaSonucu = undefined;
       } else {
-        // uygulama modülü YALNIZ bu noktada yüklenir (kuru modda import bile edilmez).
+        // The application module is loaded ONLY at this point; on a dry run it is not even
+        // imported.
         const { uygula } = await import("./brain/uygulama.mjs");
         uygulamaSonucu = await uygula(
           { plan, kreatif, musteriId: girdi.musteri, finalUrl: girdi.url },
@@ -499,9 +520,9 @@ async function ana() {
     }
 
     /*
-     * [5/5] Yayına alma denemesi — YALNIZ --yayinla yolundan ve YALNIZ bu koşuda
-     * kurulmuş, tamamlanmış bir kampanya varsa. yayinaAl() başka hiçbir yerden
-     * çağrılmaz; ENABLED çağrısının tek çıkış noktası burasıdır.
+     * [5/5] The go-live attempt — ONLY on the --yayinla path, and ONLY when this run
+     * created a complete campaign. yayinaAl() is called from nowhere else; this is the sole
+     * exit point of the ENABLED call.
      */
     let yayinSonucu;
     if (girdi.yayinla) {
@@ -540,9 +561,10 @@ async function ana() {
               kampanyaId: uygulamaSonucu.kampanyaId,
               musteriId: girdi.musteri,
               /**
-               * Ad, sonuç SINIFLANDIRMASINDAN çıkarılsın diye geçilir: sunucu ret
-               * metinlerine kampanya adını koyar ve o adı model yazar, dolayısıyla
-               * desen araması modelin serbest metnini kapının çıktısı sanabilir.
+               * The name is passed in so it can be removed from the CLASSIFICATION of the
+               * result: the server puts the campaign name into its refusal text, and that
+               * name was written by the model, so a pattern search could mistake the
+               * model's free text for the gate's own output.
                */
               kampanyaAdi: plan.kampanyaAdi,
             },
@@ -578,9 +600,10 @@ async function ana() {
       return 1;
     }
     /*
-     * Kapı kararları (ağ reddi, doğrulanmış onay istenmesi, sunucu reddi) BAŞARISIZLIK
-     * DEĞİLDİR — sistemin amacı budur, çıkış kodu 0 kalır. Yalnız 'hata' (anlaşılmaz
-     * yanıt / araç hatası) sonuç belirsiz bıraktığı için 1 döner.
+     * A gate's decisions — a network refusal, a demand for verified approval, a refusal by
+     * the server — are NOT FAILURES: this is what the system is for, and the exit code stays
+     * 0. Only 'hata', an unintelligible response or a tool error, returns 1, because it
+     * leaves the outcome uncertain.
      */
     if (yayinSonucu && yayinSonucu.durum === "hata") {
       console.error(
@@ -595,14 +618,15 @@ async function ana() {
 }
 
 /**
- * Yalnız doğrudan çalıştırıldığında koş: import eden bir test/araç, ana()'yı ve
- * argv ayrıştırmasını istem dışı tetiklememeli.
+ * Run only when invoked directly: a test or tool that imports this file must not trigger
+ * ana() and the argv parsing by accident.
  */
 const dogrudanCalisti = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (dogrudanCalisti) try {
   process.exitCode = await ana();
 } catch (e) {
-  // Sır hijyeni: yalnız mesaj — hata nesnesi (istek/başlık taşıyabilir) asla komple dökülmez.
+  // Secret hygiene: the message only — the error object, which can carry the request and
+  // its headers, is never dumped whole.
   console.error(`\nHata: ${e?.message ?? e}`);
   process.exitCode = 1;
 }

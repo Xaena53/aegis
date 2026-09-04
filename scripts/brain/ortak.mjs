@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Growth Brain — ortak altyapı.
+ * Growth Brain — the shared infrastructure.
  *
- * Anthropic istemcisi, LLM yardımcıları (metinUret/jsonUret) ve Aegis MCP
- * sunucusuna stdio bağlantısı (mcpBaglan). Desenler scripts/demo-agent.mjs'ten
- * uyarlanmıştır (fallback sınırı filtresi ve 30000 karakter sonuç kırpma dahil).
+ * The model client, the LLM helpers metinUret and jsonUret, and the stdio connection to the
+ * Aegis MCP server in mcpBaglan. The patterns are adapted from scripts/demo-agent.mjs,
+ * including the fallback-boundary filter and the 30,000-character result truncation.
  *
- * GÜVENLİK DEĞİŞMEZLERİ (bu dosyada protokol seviyesinde kilitlenir):
- *  - mcpBaglan elicitation yeteneği İLAN ETMEZ: onay isteyen her sunucu işlemi
- *    (yayına alma, bütçe artışı) confirm'siz istekte tasarım gereği REDDEDİLİR.
- *  - cagir() sarmalayıcısı 'confirm' anahtarını argümanlardan KOŞULSUZ siler —
- *    insan onayı bayrağı bu istemciden asla gönderilemez.
- *  - Hata metinleri hiçbir zaman API anahtarı / env değeri içermez; model
- *    çıktısından en fazla ilk 200 karakter alıntılanır.
+ * SECURITY INVARIANTS, locked in at the protocol level by this file:
+ *  - mcpBaglan DOES NOT ADVERTISE the elicitation capability: every server operation that
+ *    wants approval — going live, raising a budget — is REFUSED by design when the request
+ *    carries no confirm.
+ *  - The cagir() wrapper deletes the 'confirm' key from the arguments UNCONDITIONALLY: the
+ *    human-approval flag can never be sent from this client.
+ *  - Error text never contains an API key or an environment value; at most the first 200
+ *    characters of the model's output are quoted.
  */
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -24,36 +25,37 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const KOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
- * MODELİ SAĞLAYAN SERVİS — `AEGIS_BRAIN_PROVIDER` ile seçilir.
+ * THE SERVICE THAT SUPPLIES THE MODEL — selected with `AEGIS_BRAIN_PROVIDER`.
  *
- * NEDEN SEÇİLEBİLİR: MENA Ignite'ın Resource & Tooling Guide'ında ajanın MODELİ, 3.
- * bölümde ("LLMs and Model APIs — Agents need a brain") listelenen sağlayıcılardan
- * gelmelidir; o listede Google AI Studio var, Anthropic yok (Anthropic 6. bölümde,
- * kodlama asistanı olarak geçiyor). Varsayılan bu yüzden Gemini: teslim edilen ürün,
- * hiçbir ayar yapılmadan listedeki bir sağlayıcıyla koşar.
+ * WHY IT IS SELECTABLE: in the MENA Ignite Resource & Tooling Guide, the agent's MODEL has to
+ * come from a provider listed in section 3, "LLMs and Model APIs — Agents need a brain". That
+ * list has Google AI Studio and not Anthropic, which appears in section 6 as a coding
+ * assistant. Hence the default is Gemini: the product as delivered runs on a provider from
+ * the list with no configuration at all.
  *
- * Anthropic yolu SİLİNMEDİ, tek ortam değişkeni uzakta duruyor: kural yorumu netleşirse
- * ya da karşılaştırma gerekirse geri dönmek bir satır.
+ * The Anthropic path was NOT DELETED, and sits one environment variable away: if the reading
+ * of the rule becomes clearer, or a comparison is needed, coming back is a single line.
  *
- * DEĞİŞMEZ: sağlayıcı yalnız BAYTLARI getirir. Fallback sınırı, `stop_reason` kapalı
- * arızası, şema doğrulaması ve ayraç nötrlemesi sağlayıcıdan BAĞIMSIZDIR ve her ikisinde
- * de aynı kodla koşar — uyarlayıcı, Anthropic'in yanıt ŞEKLİNİ taklit ettiği için
- * (bkz. geminiIstemcisi). Böylece sağlayıcı değiştirmek hiçbir kapıyı zayıflatmaz.
+ * INVARIANT: the provider only fetches the BYTES. The fallback boundary, the `stop_reason`
+ * fail-closed check, schema validation and delimiter neutralisation are INDEPENDENT of the
+ * provider and run through the same code for both — because the adapter imitates Anthropic's
+ * response SHAPE (see geminiIstemcisi). Switching provider therefore weakens no gate.
  */
-/** Sağlayıcı başına varsayılan model. `AEGIS_BRAIN_MODEL` ikisini de geçersiz kılar. */
+/** The default model per provider. `AEGIS_BRAIN_MODEL` overrides both. */
 const VARSAYILAN_MODELLER = Object.freeze({
   gemini: "gemini-2.5-flash",
   anthropic: "claude-sonnet-5",
 });
 
 /**
- * Seçim ORTAMDAN SAF FONKSİYONLARLA türetilir, modül gövdesinde değil.
+ * The selection is derived FROM THE ENVIRONMENT BY PURE FUNCTIONS, not in the module body.
  *
- * Sabitler doğrudan `process.env`'den hesaplanınca tek sınanma yolu modülü her vaka için
- * TAZE yüklemekti (`import("...?v=" + rastgele)`). Bu, ölçüm aracına her kopyayı ayrı bir
- * dosya gibi gösteriyordu: ortak.mjs kapsamı %54'e, depo geneli %89.95'ten %77'ye düştü —
- * kod değişmeden, yalnız ölçüm bozularak. Saf fonksiyon hem bu yapaylığı kaldırır hem de
- * asıl kuralı (hangi env hangi sonucu verir) doğrudan sınanabilir yapar.
+ * When the constants were computed straight from `process.env`, the only way to exercise them
+ * was to load the module FRESH for each case with `import("...?v=" + random)`. That made the
+ * coverage tool treat every copy as a separate file: coverage of ortak.mjs fell to 54%, and
+ * the repository as a whole from 89.95% to 77% — with no change to the code, purely by
+ * breaking the measurement. A pure function removes that artifice and makes the actual rule —
+ * which environment produces which result — directly testable.
  */
 export function saglayiciSec(env = process.env) {
   return (env.AEGIS_BRAIN_PROVIDER || "gemini").trim().toLowerCase();
@@ -65,21 +67,23 @@ export function modelSec(env = process.env) {
 
 export const BRAIN_SAGLAYICI = saglayiciSec();
 
-/** Kullanılacak model — ortam değişkeniyle geçersiz kılınabilir. */
+/** The model to use — overridable through the environment variable. */
 export const BRAIN_MODEL = modelSec();
 
-/** Araç sonucu başına karakter tavanı (demo-agent.mjs SONUC_TAVANI deseni). */
+/** The character cap per tool result, following the SONUC_TAVANI pattern from
+ * demo-agent.mjs. */
 export const SONUC_TAVANI = 30_000;
 
-/** Kırpılmış araç sonucunun makine-okur işareti — uygulama.mjs bunu arar. */
+/** The machine-readable marker for a truncated tool result — uygulama.mjs looks for
+ * it. */
 export const KIRPMA_ISARETI = "[... sonuç kırpıldı ...]";
 
 /* ── Anthropic ──────────────────────────────────────────────────────────────── */
 
 /**
- * Anthropic istemcisi. ANTHROPIC_API_KEY yoksa Türkçe açıklayıcı hata fırlatır.
- * Sır hijyeni: hata metni anahtarın hiçbir parçasını içermez ve düzeltmeyi
- * YALNIZ ortam değişkeni olarak tarif eder (CLI argümanı önerilmez).
+ * The Anthropic client. Without ANTHROPIC_API_KEY it throws an explanatory error.
+ * Secret hygiene: the error text contains no part of the key, and it describes the fix ONLY
+ * as an environment variable — a CLI argument is never suggested.
  */
 export function anthropicIstemci(env = process.env) {
   const anahtar = env.ANTHROPIC_API_KEY?.trim();
@@ -97,12 +101,13 @@ export function anthropicIstemci(env = process.env) {
 /* ── Gemini (Google AI Studio) ──────────────────────────────────────────────── */
 
 /**
- * Gemini'nin `finishReason`'ını Anthropic'in `stop_reason`'ına çevirir.
+ * Translates Gemini's `finishReason` into Anthropic's `stop_reason`.
  *
- * KRİTİK EŞLEME: yalnız `STOP` "end_turn" olur. `MAX_TOKENS` "max_tokens"a düşer ve
- * jsonUret onu zaten reddeder. Geri kalan her şey (SAFETY, RECITATION, OTHER, boş,
- * tanınmayan) OLDUĞU GİBİ geçirilir — "end_turn" olmadığı için kapalı arızaya düşer.
- * Tanınmayan bir sebebi "end_turn" saymak, kesilmiş bir yanıtı tam sayardı.
+ * THE CRITICAL MAPPING: only `STOP` becomes "end_turn". `MAX_TOKENS` maps to "max_tokens",
+ * which jsonUret already refuses. Everything else — SAFETY, RECITATION, OTHER, empty,
+ * unrecognised — is passed through AS IS, and because it is not "end_turn" it falls closed.
+ * Counting an unrecognised reason as "end_turn" would treat a cut-off response as
+ * complete.
  */
 function bitisSebebiCevir(sebep) {
   if (sebep === "STOP") return "end_turn";
@@ -111,12 +116,12 @@ function bitisSebebiCevir(sebep) {
 }
 
 /**
- * Google AI Studio (Gemini) için Anthropic ŞEKLİNDE bir istemci.
+ * A client for Google AI Studio (Gemini) in Anthropic's SHAPE.
  *
- * Uyarlayıcı bilerek ince: yalnız `messages.create` sunar ve `{content:[{type,text}],
- * stop_reason}` döndürür. Böylece metinUret/jsonUret ve içindeki bütün kapılar TEK
- * kod yolundan koşar; sağlayıcıya özel bir dal yoktur, dolayısıyla bir sağlayıcıda
- * unutulmuş bir kontrol de olamaz.
+ * The adapter is deliberately thin: it exposes only `messages.create` and returns
+ * `{content:[{type,text}], stop_reason}`. That way metinUret, jsonUret and every gate inside
+ * them run through a SINGLE code path; there is no provider-specific branch, and therefore no
+ * way for a check to be forgotten on one provider.
  */
 export function geminiIstemcisi(env = process.env) {
   const anahtar = (env.AEGIS_GEMINI_API_KEY || env.GEMINI_API_KEY || "").trim();
@@ -134,7 +139,7 @@ export function geminiIstemcisi(env = process.env) {
         const url =
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
         const kontrol = new AbortController();
-        // Beyin çağrıları kullanıcıyı bekletir; süresiz asılı kalmamalı.
+        // Brain calls keep the user waiting, so they must not hang indefinitely.
         const zamanlayici = setTimeout(() => kontrol.abort(), 120_000);
         let cevap;
         try {
@@ -142,8 +147,8 @@ export function geminiIstemcisi(env = process.env) {
             method: "POST",
             signal: kontrol.signal,
             /**
-             * Anahtar BAŞLIKTA taşınır, sorgu dizesinde değil: URL'ler günlüklere,
-             * proxy kayıtlarına ve hata izlerine düşer.
+             * The key travels in a HEADER, not in the query string: URLs end up in logs,
+             * proxy records and stack traces.
              */
             headers: { "Content-Type": "application/json", "x-goog-api-key": anahtar },
             body: JSON.stringify({
@@ -161,8 +166,9 @@ export function geminiIstemcisi(env = process.env) {
         const metin = await cevap.text();
         if (!cevap.ok) {
           /**
-           * Gövde ajana/kullanıcıya AYNEN verilmez: Google'ın hata gövdesi isteği
-           * yankılayabilir. İlk 200 karakter, dosyanın geri kalanıyla aynı kural.
+           * The body is not handed to the agent or the user VERBATIM: Google's error body
+           * can echo the request back. The first 200 characters, the same rule as the rest
+           * of this file.
            */
           throw new Error(`Gemini API ${cevap.status}: ${metin.slice(0, 200)}`);
         }
@@ -175,9 +181,9 @@ export function geminiIstemcisi(env = process.env) {
         const aday = govde?.candidates?.[0];
         const parcalar = Array.isArray(aday?.content?.parts) ? aday.content.parts : [];
         /**
-         * `promptFeedback.blockReason` istem düzeyinde engellemedir: aday HİÇ üretilmez.
-         * Bunu boş metin + "bilinmiyor" olarak geçirmek, çağıranın kapalı arızasına
-         * doğru düşer ama sebebi kaybederdi.
+         * `promptFeedback.blockReason` is a block at the prompt level: NO candidate is
+         * produced at all. Passing that through as empty text plus "bilinmiyor" would fall
+         * correctly into the caller's fail-closed path, but would lose the reason.
          */
         const engel = govde?.promptFeedback?.blockReason;
         return {
@@ -191,13 +197,13 @@ export function geminiIstemcisi(env = process.env) {
   };
 }
 
-/* ── Sağlayıcı seçimi ───────────────────────────────────────────────────────── */
+/* ── Provider selection ─────────────────────────────────────────────────────── */
 
 /**
- * Yapılandırılan sağlayıcının istemcisini döndürür.
+ * Returns the client for the configured provider.
  *
- * Tanınmayan bir sağlayıcı adı SESSİZCE varsayılana düşmez: yazım hatası yapan operatör,
- * kullandığını sandığından başka bir modelle koşmamalı.
+ * An unrecognised provider name does NOT fall back to the default SILENTLY: an operator who
+ * made a typo must not end up running on a model other than the one they think they chose.
  */
 export function beyinIstemcisi(env = process.env) {
   const saglayici = saglayiciSec(env);
@@ -210,11 +216,11 @@ export function beyinIstemcisi(env = process.env) {
 }
 
 /**
- * ORTA-ÇIKTI sunucu-tarafı fallback'ten sonra, son `fallback` işaretinden önceki
- * thinking/redacted_thinking/tool_use blokları atılmış sayılmalıdır: reddedilen
- * denemenin araç çağrılarını çalıştırmak, servis eden modelin hiç yapmadığı
- * çağrılara sonuç döndürmek olur. Ön-çıktı fallback (işaret ilk blok) etkilenmez.
- * (scripts/demo-agent.mjs'ten uyarlandı.)
+ * After a MID-OUTPUT server-side fallback, the thinking, redacted_thinking and tool_use
+ * blocks before the last `fallback` marker must be treated as discarded: running the tool
+ * calls of the rejected attempt would mean returning results for calls the serving model
+ * never made. A pre-output fallback — the marker as the first block — is unaffected.
+ * (Adapted from scripts/demo-agent.mjs.)
  */
 export function fallbackSiniriUygula(content) {
   const sinir = content.map((b) => b.type).lastIndexOf("fallback");
@@ -224,7 +230,7 @@ export function fallbackSiniriUygula(content) {
   );
 }
 
-/** İçerik bloklarından metin bloklarını tek dizeye birleştirir. */
+/** Joins the text blocks out of the content blocks into a single string. */
 function metinBirlestir(icerik) {
   return (icerik ?? [])
     .filter((b) => b?.type === "text")
@@ -233,11 +239,11 @@ function metinBirlestir(icerik) {
 }
 
 /**
- * Tek atımlık metin üretimi (basit sarmalayıcı — araç döngüsü YOK).
- * string döner. stop_reason 'max_tokens' ise stderr'e uyarı loglar VE dönen
- * değere makine-okur bir işaret ekler: bu durumda dönüş `new String(metin)`
- * olup `.kirpik === true` taşır — rapor katmanı 'YARIM OLABİLİR' damgası
- * basabilsin diye. Normal durumda ilkel string döner.
+ * Single-shot text generation — a plain wrapper, with NO tool loop.
+ * It returns a string. When stop_reason is 'max_tokens' it logs a warning to stderr AND adds
+ * a machine-readable marker to the returned value: in that case the return is
+ * `new String(metin)` carrying `.kirpik === true`, so the reporting layer can stamp the run
+ * as possibly incomplete. In the normal case a primitive string is returned.
  */
 export async function metinUret(anthropic, { sistem, kullanici, maxTokens }) {
   const yanit = await anthropic.messages.create({
@@ -257,10 +263,10 @@ export async function metinUret(anthropic, { sistem, kullanici, maxTokens }) {
 }
 
 /**
- * Kaba şema doğrulaması (~15 satır — genel şema motoru DEĞİL).
- * sema: { alanAdi: 'string'|'number'|'boolean'|'array'|'object' } — tür adının
- * sonuna '?' eklenirse alan isteğe bağlıdır. Hata varsa Türkçe açıklama dizesi,
- * yoksa null döner. Sayılar için Number.isFinite de aranır (NaN/Infinity düşer).
+ * Coarse schema validation — about 15 lines, and NOT a general schema engine.
+ * sema: { fieldName: 'string'|'number'|'boolean'|'array'|'object' } — a '?' appended to the
+ * type name makes the field optional. It returns an explanatory string on a violation and
+ * null otherwise. Numbers are also checked with Number.isFinite, so NaN and Infinity fall.
  */
 export function semaDogrula(nesne, sema) {
   if (typeof nesne !== "object" || nesne === null || Array.isArray(nesne)) {
@@ -283,16 +289,16 @@ export function semaDogrula(nesne, sema) {
 }
 
 /**
- * Tek atımlık JSON üretimi — FAIL-CLOSED:
- *  - stop_reason 'end_turn' değilse (özellikle max_tokens) çıktı parse bile
- *    edilmeden geçersiz sayılır: kırpılmış-ama-parse-olabilen JSON (son öğeleri
- *    düşmüş dizi) sessizce geçemez.
- *  - Çit sıyırma: ilk '{' ile son '}' arası alınır (```json çiti / açıklama
- *    cümlesi en yaygın kırılmadır).
- *  - Geçersiz çıktıda 1 yeniden deneme yapılır; deneme istemine parse hatası ve
- *    bozuk çıktının kısaltılmış hâli eklenir. Yine olmazsa Türkçe hata fırlatır.
- *  - Hata mesajı model çıktısının en fazla ilk 200 karakterini içerir; istek
- *    nesnesi, başlıklar ya da env değerleri ASLA dökülmez.
+ * Single-shot JSON generation — FAIL-CLOSED:
+ *  - If stop_reason is not 'end_turn', and max_tokens in particular, the output is treated as
+ *    invalid without even being parsed: JSON that was truncated but still parses — an array
+ *    that lost its last elements — cannot slip through silently.
+ *  - Fence stripping: everything between the first '{' and the last '}' is taken, since a
+ *    ```json fence or an explanatory sentence is the most common breakage.
+ *  - Invalid output gets one retry, with the parse error and a shortened form of the bad
+ *    output appended to the retry prompt. If that fails too, it throws.
+ *  - The error message contains at most the first 200 characters of the model's output; the
+ *    request object, the headers and environment values are NEVER dumped.
  */
 export async function jsonUret(anthropic, { sistem, kullanici, sema, maxTokens }) {
   let sonHata = "";
@@ -346,7 +352,7 @@ export async function jsonUret(anthropic, { sistem, kullanici, sema, maxTokens }
 
 /* ── MCP ────────────────────────────────────────────────────────────────────── */
 
-/** Araç sonucunu SONUC_TAVANI karakterde kırpar ve kırpmayı işaretler. */
+/** Truncates a tool result at SONUC_TAVANI characters and marks the truncation. */
 export function sonucKirp(metin) {
   if (typeof metin !== "string") return "";
   if (metin.length <= SONUC_TAVANI) return metin;
@@ -354,15 +360,16 @@ export function sonucKirp(metin) {
 }
 
 /**
- * Bir MCP istemcisini {cagir, kaynakOku, kapat} arayüzüne sarar. mcpBaglan bunu
- * gerçek bağlantıyla kullanır; testler sahte istemci enjekte eder (ağsız).
+ * Wraps an MCP client in the {cagir, kaynakOku, kapat} interface. mcpBaglan uses it with a
+ * real connection; the tests inject a fake client and touch no network.
  *
- *  - 'confirm' anahtarı argümanlardan KOŞULSUZ silinir (girdi nesnesi mutasyona
- *    uğratılmaz, sığ kopya alınır) — insan onayı bayrağı buradan geçemez.
- *  - Sonuç SONUC_TAVANI'nda kırpılır; kırpma KIRPMA_ISARETI ile işaretlenir ki
- *    uygulama.mjs kırpılmış yazma sonucundan ID ayrıştırmayı reddedebilsin.
- *  - isError'lu yanıt HATA olarak fırlatılır (metniyle birlikte): çağıranlar
- *    başarısız aracı asla başarılı adım sanmaz.
+ *  - The 'confirm' key is deleted from the arguments UNCONDITIONALLY — the input object is
+ *    not mutated, a shallow copy is taken — so the human-approval flag cannot pass here.
+ *  - The result is truncated at SONUC_TAVANI and the truncation is marked with
+ *    KIRPMA_ISARETI, so uygulama.mjs can refuse to parse an ID out of a truncated write
+ *    result.
+ *  - A response with isError is thrown as an ERROR, along with its text: callers never
+ *    mistake a failed tool for a successful step.
  */
 export function cagirSarmala(mcp) {
   return {
@@ -371,7 +378,7 @@ export function cagirSarmala(mcp) {
         throw new Error("Geçersiz araç adı: boş olmayan bir dize gerekir.");
       }
       const guvenliArgs = { ...(args ?? {}) };
-      delete guvenliArgs.confirm; // güvenlik değişmezi: onay bayrağı asla gönderilmez
+      delete guvenliArgs.confirm; // security invariant: the approval flag is never sent
       const out = await mcp.callTool({ name: aracAdi, arguments: guvenliArgs });
       const metin = sonucKirp(
         (out?.content ?? [])
@@ -385,10 +392,11 @@ export function cagirSarmala(mcp) {
       return metin || "(boş yanıt)";
     },
     /**
-     * Salt-okunur MCP kaynağı okur (ör. aegis://accounts/{id}/limits).
-     * Orkestratör bununla sunucu bütçe tavanını öğrenip efektif tavanı
-     * min(CLI tavanı, sunucu tavanı) olarak tekleştirir. Sonuç SONUC_TAVANI'nda
-     * kırpılır; içerik güvenilmez veri sayılır (çağıran doğrulamak zorundadır).
+     * Reads a read-only MCP resource, such as aegis://accounts/{id}/limits.
+     * The orchestrator uses it to learn the server's budget ceiling and to collapse the
+     * effective ceiling to min(the CLI ceiling, the server's ceiling). The result is
+     * truncated at SONUC_TAVANI, and its content counts as untrusted data that the caller
+     * is obliged to validate.
      */
     async kaynakOku(uri) {
       if (typeof uri !== "string" || !uri.trim()) {
@@ -409,13 +417,14 @@ export function cagirSarmala(mcp) {
 }
 
 /**
- * Aegis MCP sunucusuna stdio üzerinden bağlanır (dist/index.js).
- * Elicitation yeteneği BİLEREK İLAN EDİLMEZ: sunucunun onay kapıları (approval.ts)
- * elicitation'sız istemcide ajanın confirm bayrağına düşer; cagir() confirm'i
- * her koşulda sildiği için onay gerektiren her işlem tasarım gereği REDDEDİLİR —
- * 'Growth Brain kendiliğinden yayına almaz' değişmezi protokol seviyesinde
- * garanti olur. (Açık onay akışı isteyen 'onaylı mod' demo-agent.mjs'in terminal
- * elicitation handler'ını AYRI kurar; bu fonksiyon o modu içermez.)
+ * Connects to the Aegis MCP server over stdio, at dist/index.js.
+ * The elicitation capability is DELIBERATELY NOT ADVERTISED: on a client without elicitation,
+ * the server's approval gates in approval.ts fall back to the agent's confirm flag, and since
+ * cagir() deletes confirm under every condition, every operation requiring approval is
+ * REFUSED by design — which turns "the Growth Brain never goes live on its own" into a
+ * guarantee at the protocol level. (The "approved mode" that wants an explicit approval flow
+ * sets up demo-agent.mjs's terminal elicitation handler SEPARATELY; this function does not
+ * include that mode.)
  */
 export async function mcpBaglan() {
   const distYolu = join(KOK, "dist", "index.js");
@@ -424,7 +433,7 @@ export async function mcpBaglan() {
   }
   const mcp = new Client(
     { name: "aegis-growth-brain", version: "1.0.0" },
-    { capabilities: {} } // elicitation YOK — yukarıdaki nota bak
+    { capabilities: {} } // NO elicitation — see the note above
   );
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -436,21 +445,23 @@ export async function mcpBaglan() {
 }
 
 /**
- * AYRAÇ ADINI NÖTRLER — güvenilmez içeriğin, kendisini saran bloğu kapatmasını engeller.
+ * NEUTRALISES THE DELIMITER'S NAME — it stops untrusted content from closing the block that
+ * wraps it.
  *
- * NEDEN DESEN DEĞİL LİTERAL: eski hâli `<\s*\/?\s*<ad>[^>]{0,200}>` idi ve o 200 sınırı
- * bir KAPIYDI. `</arastirma-verisi` + 201 karakter dolgu + `>` yükü desenin dışına düşer,
- * temizlenmeden geçer ve blok erkenden kapanır: o noktadan sonrası model için "veri"
- * değil, sistemin kendi talimatı gibi görünür. Sınırı büyütmek aynı yarışı bir tur daha
- * oynamaktır; onun yerine ayracın ADI nötrleniyor, geriye onu yazmanın hiçbir varyantı
- * kalmıyor — boşluklu, eğik çizgili, öznitelikli, hiçbiri.
+ * WHY A LITERAL RATHER THAN A PATTERN: it used to be `<\s*\/?\s*<name>[^>]{0,200}>`, and that
+ * bound of 200 was a GATE. A payload of `</arastirma-verisi` plus 201 characters of padding
+ * plus `>` falls outside the pattern, passes uncleaned, and closes the block early: from that
+ * point on, what follows looks to the model not like "data" but like the system's own
+ * instructions. Raising the bound is playing the same race one more round; instead the
+ * delimiter's NAME is neutralised, leaving no variant of writing it — not with spaces, not
+ * with a slash, not with attributes, none.
  *
- * Aynı açık src/siteExtract.ts'te kapatılmıştı; buradaki iki .mjs ikizi (strateji ve
- * kreatif istemleri) açık kalmıştı. Tek uygulama, üç çağrı yeri.
+ * The same hole had been closed in src/siteExtract.ts; the two .mjs twins here, the strategy
+ * and creative prompts, had been left open. One implementation, three call sites.
  *
- * toLowerCase() KULLANILMAZ: Türkçe 'İ' iki kod noktasına açılır, dize uzar ve indeksler
- * ham metinle hizasını kaybeder. ASCII'ye özel küçültme hizayı korur. indexOf ile
- * doğrusal tarama — geri izleme yok, dolayısıyla ReDoS da yok.
+ * toLowerCase() is NOT used: Turkish 'İ' expands into two code points, the string grows, and
+ * the indices lose their alignment with the raw text. An ASCII-only lowering preserves that
+ * alignment. The scan is linear via indexOf — no backtracking, and therefore no ReDoS.
  */
 export function ayracNotrle(metin, ayracAdi) {
   const kaynak = String(metin ?? "");
