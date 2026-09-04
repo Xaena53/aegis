@@ -12,9 +12,9 @@
  *  - SİMÜLASYON YOK. AEGIS_NAC_SIMULATE bilerek TEMİZLENİR; her çağrı Nokia
  *    Network-as-Code'a gerçekten gider. Bir demo videosunda "simüle" etiketi, izleyicinin
  *    aklına gelen ilk soruyu cevapsız bırakır.
- *  - Anlatım İngilizcedir (jüri uluslararası), ama kapının ÜRETTİĞİ metin Türkçe olduğu
- *    gibi gösterilir ve altına çevirisi yazılır. Ret metnini İngilizceye çevirip göstermek,
- *    ekranda ürünün değil pazarlamanın görünmesi olurdu.
+ *  - ÖNCE İNGİLİZCE, SONRA HAM ÇIKTI. Jüri uluslararası; anlaşılmayan bir kanıt kanıt
+ *    değildir. Ama ürünün kendi Türkçe metni SİLİNMEZ — "raw output" etiketiyle hemen
+ *    altında durur. Anlaşılırlığı çeviri, gerçekliği ham çıktı taşır.
  *  - Tempo `--hiz` ile ayarlanır; kayıt sırasında satırların okunacak zamanı olsun diye.
  *
  * KULLANIM:
@@ -28,6 +28,7 @@ import "dotenv/config";
 import readline from "node:readline";
 import { agDogrula } from "../src/networkTrust.js";
 import { nacConfigFromEnv } from "../src/config.js";
+import { INGILIZCE_RET } from "./video-metin.mjs";
 
 /** Nokia simülatör hatları — dokümanlarından, herkese açık. */
 const TEMIZ_HAT = "+99999991001"; // swapped:false
@@ -180,15 +181,26 @@ async function sahne(no: string, etiket: string, numara: string): Promise<void> 
   await durak(3000);
 
   if (karar.engel) {
+    /**
+     * SIRA BİLİNÇLİ: ÖNCE İNGİLİZCE, SONRA HAM TÜRKÇE ÇIKTI.
+     *
+     * İlk sürümde ham çıktı üstteydi ve İngilizce altında küçük duruyordu. Videonun en
+     * kritik anında, Türkçe bilmeyen bir jüri ekranda anlamadığı bir metin duvarı
+     * görüyordu — anlaşılmayan bir kanıt kanıt değildir.
+     *
+     * Ham çıktı SİLİNMEDİ, aşağı alındı ve "raw output" diye etiketlendi: anlaşılırlığı
+     * İngilizce, gerçekliği Türkçe taşıyor. Ürünün kendi metnini kameraya çevirip
+     * göstermek, ekranda ürünün değil pazarlamanın görünmesi olurdu.
+     *
+     * Çeviri elle yazılmıştır ve kayabilir; test/videoCevirisi.test.ts ham ret metninin
+     * hâlâ bu çevirinin anlattığı şeyi söylediğini çiviler.
+     */
     console.log("\n  " + kirmizi(kalin("  REFUSED — the approval prompt was never shown  ")));
     console.log("");
-    for (const satir of sarmala(karar.engel, 66)) console.log(kirmizi("    " + satir));
+    for (const satir of INGILIZCE_RET) console.log(kirmizi("    " + satir));
     console.log("");
-    console.log(gri("    (the gate speaks Turkish; in English:)"));
-    console.log(
-      gri("    \"REFUSED: network verification failed — the approver's SIM changed")
-    );
-    console.log(gri('     within the last 72 h. The approval prompt was never shown."'));
+    console.log(gri("    ── raw output from the gate (Turkish — the product's language) ──"));
+    for (const satir of sarmala(karar.engel, 66)) console.log(gri("    " + satir));
     console.log("");
     console.log("    " + kalin("elicitation prompts shown: ") + kirmizi(kalin("0")));
     console.log("    " + kalin("campaign state:            ") + yesil(kalin("unchanged")));
