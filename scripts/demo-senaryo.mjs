@@ -10,44 +10,50 @@
  */
 
 /**
- * Demo senaryosu: deck'teki terminal hikayesini GERÇEK MCP sunucusuyla, LLM'siz
- * (ANTHROPIC_API_KEY gerektirmeden) oynatır. Sunucu dist/index.js'ten stdio ile
- * başlatılır; bu betik elicitation form yeteneği ilan eden bir MCP istemcisidir.
+ * The demo scenario: it plays the deck's terminal story against the REAL MCP server,
+ * without an LLM and without needing an API key. The server is started from dist/index.js
+ * over stdio, and this script is an MCP client that advertises the elicitation form
+ * capability.
  *
- *   Perde 1 (AEGIS_NAC_SIMULATE=temiz)  : ağ temiz → onay istemi → BAŞARI
- *   Perde 2 (AEGIS_NAC_SIMULATE=degisti): SIM değişmiş sayılır → SERT RET,
- *                                            onay istemi HİÇ gösterilmez
- *   Perde 3 (temiz + degisti, iki alt sahne): AYNI kapının HIGH katmanı —
- *                                            set_campaign_status → ENABLED (go-live),
- *                                            pencere 24 değil 72 saat
+ *   Act 1 (AEGIS_NAC_SIMULATE=temiz)  : the network is clean → the approval prompt →
+ *                                          SUCCESS
+ *   Act 2 (AEGIS_NAC_SIMULATE=degisti): the SIM counts as swapped → a HARD REFUSAL, and the
+ *                                          approval prompt is NEVER shown
+ *   Act 3 (clean and swapped, two sub-scenes): the HIGH layer of the SAME gate —
+ *                                          set_campaign_status → ENABLED (going live),
+ *                                          with a window of 72 hours rather than 24
  *
- * Varsayılan mod KURU'dur: Perde 1 ve 3/A'da gerçek yazma aracı ÇAĞRILMAZ — betik araç
- * çağrısından hemen önce durur ve "[kuru] araç çağrısı atlandı" yazar. --canli
- * bayrağı verilirse gerçekten çağrılır (+1 küçük artış; onaydan sonra bütçe eski
- * değerine geri alınır — azaltma onay istemez). --canli'da onay kararını betik
- * DEĞİL, klavyeden yalnız 'Evet' yazan gerçek operatör verir (readline).
+ * The default mode is DRY: in Act 1 and Act 3/A the real write tool is NOT CALLED — the
+ * script stops immediately before the tool call and prints "[kuru] araç çağrısı atlandı".
+ * With the --canli flag it really is called, as a small increase of one unit, and after the
+ * approval the budget is returned to its old value, since a decrease needs no approval. Under
+ * --canli the approval decision is NOT the script's: it belongs to a real operator typing
+ * 'Evet' at the keyboard, through readline.
  *
- * Perde 3'ün canlı provası YALNIZCA --kampanya ile açıkça verilen ve PAUSED olan TEST
- * kampanyasında yapılır: kampanya gerçekten ENABLED edilir, sahne biter bitmez PAUSED'a
- * geri alınır ve durum GERİ OKUNARAK doğrulanır. Geri alma doğrulanamazsa betik BAĞIRIR
- * (kırmızı acil kutusu + çıkış kodu 1) — yayında kalan kampanya gerçek para harcar.
+ * Act 3's live rehearsal is performed ONLY on a TEST campaign that is PAUSED and named
+ * explicitly with --kampanya: the campaign really is set to ENABLED, returned to PAUSED the
+ * moment the scene ends, and the status is verified BY READING IT BACK. If that reversal
+ * cannot be verified, the script SHOUTS — a red emergency box and exit code 1 — because a
+ * campaign left live spends real money.
  *
- * Perde 2'nin ve Perde 3/B'nin çağrısı kuru modda da güvenlidir: ağ kapısı yazmadan ÖNCE
- * reddeder. Beklenen ret gelmezse (ya da istem bir kez bile gösterilirse) demo HATA ile
- * biter; bu perdelerin elicitation handler'ı her ihtimale karşı DAİMA reddeder (fail-closed).
+ * The calls in Act 2 and Act 3/B are safe in dry mode too: the network gate refuses BEFORE
+ * any write. If the expected refusal does not arrive, or the prompt is shown even once, the
+ * demo ends in an ERROR; the elicitation handler for those acts ALWAYS refuses, as a
+ * fail-closed precaution.
  *
- * AEGIS_NV_SIMULATE tanımlıysa (değerini bu betik BELİRLEMEZ, yalnız sunucu süreçlerine
- * olduğu gibi geçirir) Perde 3'te zincirin 2. halkasının kanıt satırı da vurgulanır.
+ * If AEGIS_NV_SIMULATE is defined — this script DOES NOT SET its value, it only passes it
+ * through to the server processes as-is — Act 3 also highlights the evidence line of the
+ * chain's second link.
  *
- * Kullanım:
- *   npm run demo -- --musteri <müşteri-id> [--kampanya <kampanya-id>] [--canli]
- *   Varsayılan KURU moddur (hiç yazma yok); --canli gerçek (küçük, geri alınan) bir bütçe
- *   artışı uygular ve --kampanya verilmişse TEST kampanyasını kısa süre yayına alır.
+ * Usage:
+ *   npm run demo -- --musteri <customer-id> [--kampanya <campaign-id>] [--canli]
+ *   The default is DRY mode with no writes at all; --canli applies a real, small, reverted
+ *   budget increase, and with --kampanya it takes the TEST campaign live briefly.
  *
- *   node scripts/demo-senaryo.mjs --kendini-sina   (gizli; müşteri/dist gerektirmez)
- *   Senaryoyu OYNATMAZ: yalnız yukarıdaki güvenlik kilidinin — "geri alma doğrulanamadı"
- *   bayrağının — gerçekten kırmızı acil kutusunu bastığını ve çıkış kodunu 1 yaptığını
- *   kanıtlar. Kilidin kendisi çağrılır, kopyası değil.
+ *   node scripts/demo-senaryo.mjs --kendini-sina   (hidden; needs no customer and no dist)
+ *   This DOES NOT PLAY the scenario: it only proves that the safety interlock above — the
+ *   "the reversal could not be verified" flag — really does print the red emergency box and
+ *   set the exit code to 1. The interlock itself is called, not a copy of it.
  */
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
@@ -58,7 +64,8 @@ import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotoc
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DEMO_TELEFON = "+905550001122"; // onaylayıcının DEMO numarası — spawn env ile sunucuya geçer
+const DEMO_TELEFON = "+905550001122"; // the approver's DEMO number, passed to the server in
+// the spawn environment
 
 /* ── CLI ─────────────────────────────────────────────────────────────────────── */
 
@@ -69,13 +76,15 @@ function bayrakDegeri(ad) {
 const MUSTERI = bayrakDegeri("--musteri");
 const KAMPANYA_ARG = bayrakDegeri("--kampanya")?.replace(/\D/g, "") || undefined;
 const CANLI = process.argv.includes("--canli");
-/** Gizli: senaryoyu değil, Perde 3'ün güvenlik kilidini sınar (aşağıda kendiniSina). */
+/** Hidden: it exercises Act 3's safety interlock, not the scenario — see kendiniSina
+ * below. */
 const KENDINI_SINA = process.argv.includes("--kendini-sina");
 
 /**
- * HIGH katman (yayına alma) penceresi — sunucudakiyle AYNI kural: CAMARA aralığı 1–2400,
- * kullanılamaz değer 72'ye düşer. Burada yalnız EKRANA yazmak ve isteme gelen kanıt
- * satırını doğrulamak için hesaplanır; kararı her zaman sunucu verir.
+ * The HIGH layer's window, the one for going live — the SAME rule as the server's: CAMARA's
+ * range is 1 to 2400, and an unusable value falls back to 72. It is computed here only to
+ * PRINT it and to verify the evidence line that arrives in the prompt; the decision is always
+ * the server's.
  */
 function yuksekPencereSaat() {
   const ham = Number(process.env.AEGIS_SIMSWAP_WINDOW_HOURS);
@@ -85,23 +94,23 @@ function yuksekPencereSaat() {
 const PENCERE_YUKSEK = yuksekPencereSaat();
 
 /**
- * Zincirin 2. halkası (AEGIS_NV_SIMULATE). Değerini BU BETİK BELİRLEMEZ: yalnız
- * tanımlı mı diye bakar ve sunucu süreçlerine mevcut değeriyle geçirir (bkz. sunucuBaslat,
- * AEGIS_ önekli tüm değişkenler aynen iletilir).
+ * The chain's second link (AEGIS_NV_SIMULATE). THIS SCRIPT DOES NOT SET its value: it only
+ * checks whether it is defined and passes it to the server processes with whatever value it
+ * has — see sunucuBaslat, where every AEGIS_-prefixed variable is forwarded verbatim.
  */
 const ZINCIR_2 = Boolean(process.env.AEGIS_NV_SIMULATE?.trim());
 
 /**
- * Onay isteyen araç çağrıları için İSTEMCİ tarafı zaman aşımı. MCP SDK varsayılanı 60
- * saniyedir ve insan onayı beklerken bu çok kısadır: operatör istemi okurken çağrı
- * düşer, ekrana "Request timed out" gelir ve sahne kırılır. Sunucunun elicitInput
- * zaman aşımıyla (approval.ts: 10 dakika) hizalanır ki kapıyı ikisinden biri değil,
- * hep aynı süre belirlesin.
+ * The CLIENT-side timeout for tool calls that ask for approval. The MCP SDK's default is 60
+ * seconds, which is far too short while waiting for a human: the call drops while the
+ * operator is still reading the prompt, "Request timed out" appears on screen, and the scene
+ * breaks. It is aligned with the server's elicitInput timeout of ten minutes in approval.ts,
+ * so the gate is governed by one duration rather than by whichever of the two fires first.
  */
 const ONAY_ZAMAN_ASIMI = { timeout: 10 * 60_000, resetTimeoutOnProgress: true };
 
-// --kendini-sina hiçbir sunucuya bağlanmaz ve hiçbir hesap okumaz: ne müşteri kimliği
-// ne de derlenmiş dist/ ister. Bu yüzden aşağıdaki iki ön koşulun dışında tutulur.
+// --kendini-sina connects to no server and reads no account: it needs neither a customer id
+// nor a compiled dist/. That is why it is held outside the two preconditions below.
 if (!MUSTERI && !KENDINI_SINA) {
   console.error("Kullanım: npm run demo -- --musteri <müşteri-id> [--kampanya <kampanya-id>] [--canli]");
   console.error("Varsayılan KURU moddur (hiç yazma yok); --canli gerçek (küçük, geri alınan) bir bütçe artışı uygular.");
@@ -133,12 +142,14 @@ function kutu(baslik, satirlar, renk = cyan) {
 }
 
 /**
- * --canli provasında GERÇEK operatör kararını klavyeden okur (betik karar VERMEZ).
+ * In a --canli rehearsal, this reads a REAL operator's decision from the keyboard; the
+ * script DOES NOT DECIDE.
  *
- * stdin kapanırsa (borulanmış girdi tükendi, `< /dev/null`, kopmuş oturum) rl.question
- * hiçbir zaman çözülmez ve koşu onay zaman aşımı boyunca asılı kalırdı. EOF bir cevap
- * değildir: boş dize döner ve çağıran onu 'Evet' saymadığı için sonuç RET olur — susan
- * bir kanal onay yerine geçmez (kapalı arıza).
+ * If stdin closes — piped input exhausted, `< /dev/null`, a dropped session — rl.question
+ * would never resolve and the run would hang for the whole approval timeout. EOF is not an
+ * answer: an empty string is returned, and because the caller does not count it as 'Evet',
+ * the outcome is a REFUSAL. A silent channel does not stand in for approval; it fails
+ * closed.
  */
 async function operatoreSor(soru) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -158,15 +169,15 @@ async function perdeBasligi(no, aciklama) {
   await bekle(500);
 }
 
-/* ── MCP yardımcıları ────────────────────────────────────────────────────────── */
+/* ── MCP helpers ─────────────────────────────────────────────────────────────── */
 
 const ilkMetin = (res) => String(res?.content?.[0]?.text ?? "");
 
 /**
- * dist/index.js'i stdio ile başlatır ve elicitation FORM yeteneği ilan eden bir
- * istemciyle bağlanır. Simülasyon kanalı + demo onaylayıcı numarası SPAWN ENV'iyle
- * geçirilir; Google kimlik bilgileri sunucunun kendi .env yüklemesinden gelir
- * (GOOGLE_ADS_ ve AEGIS_ önekli kabuk değişkenleri de aynen iletilir).
+ * Starts dist/index.js over stdio and connects with a client that advertises the
+ * elicitation FORM capability. The simulation channel and the demo approver's number are
+ * passed in the SPAWN ENVIRONMENT; the Google credentials come from the server's own .env
+ * loading, and shell variables prefixed GOOGLE_ADS_ and AEGIS_ are forwarded verbatim.
  */
 async function sunucuBaslat(simDegeri, elicitHandler) {
   const env = getDefaultEnvironment();
@@ -177,21 +188,22 @@ async function sunucuBaslat(simDegeri, elicitHandler) {
   env.AEGIS_APPROVER_PHONE = DEMO_TELEFON;
 
   /**
-   * GERÇEK TOKEN BİLEREK BOŞALTILIR.
+   * THE REAL TOKEN IS DELIBERATELY BLANKED.
    *
-   * Sunucu, token ile simülasyon değişkeninin BİRLİKTE tanımlı olmasını çelişkili
-   * yapılandırma sayar ve harcamayı reddeder (belirsizlikte gevşek kanal seçilmez).
-   * O kural doğrudur ve kalmalıdır — ama sahne demosunu da kırar: .env'de gerçek bir
-   * AEGIS_NAC_TOKEN bulunduğu an, yukarıdaki döngü onu spawn ortamına kopyalar ve
-   * her perde "çelişkili yapılandırma" retiyle biter. Bu yaşandı: token geldiği gün
-   * demo, kodda hiçbir şey değişmeden çalışmaz oldu.
+   * The server treats the token and the simulation variable being defined TOGETHER as a
+   * contradictory configuration and refuses to spend — under ambiguity, the looser channel is
+   * not chosen. That rule is right and must stay — but it also breaks the stage demo: the
+   * moment a real AEGIS_NAC_TOKEN is present in .env, the loop above copies it into the spawn
+   * environment and every act ends in a "contradictory configuration" refusal. This actually
+   * happened: on the day the token arrived, the demo stopped working with nothing changed in
+   * the code.
    *
-   * Boş dize yeterli: config.ts `?.trim() || undefined` ile okuduğu için boş değer
-   * "tanımsız" demektir. Sunucu .env'i kendi de yüklediğinden, DEĞİŞKENİ ATLAMAK
-   * yetmez — üzerine boş yazmak gerekir.
+   * An empty string is enough: config.ts reads it with `?.trim() || undefined`, so an empty
+   * value means "undefined". And because the server loads .env itself, SKIPPING the variable
+   * is not sufficient — it has to be overwritten as empty.
    *
-   * Demo bir SİMÜLASYON gösterisidir; gerçek CAMARA sorgusu için demo değil,
-   * `docs/CAMARA.md` §3 kontrol listesi izlenir.
+   * The demo is a SIMULATION showcase; for a real CAMARA query the checklist in
+   * `docs/CAMARA.md` §3 is followed, not the demo.
    */
   env.AEGIS_NAC_TOKEN = "";
 
@@ -213,18 +225,19 @@ async function sunucuBaslat(simDegeri, elicitHandler) {
 const DURUM_ADLARI = { 2: "ENABLED", 3: "PAUSED", 4: "REMOVED" };
 const durumAdi = (d) => (typeof d === "number" ? DURUM_ADLARI[d] ?? String(d) : String(d ?? "?"));
 
-/** run_gaql (salt-okunur) çalıştırır ve satırları döndürür. */
+/** Runs run_gaql, which is read-only, and returns the rows. */
 async function gaqlSatirlar(client, sorgu, limit = 50) {
   const res = await client.callTool({ name: "run_gaql", arguments: { customerId: MUSTERI, query: sorgu, limit } });
   if (res.isError) throw new Error(`Okuma başarısız (run_gaql): ${ilkMetin(res)}`);
   const satirlar = res.structuredContent?.satirlar;
   if (Array.isArray(satirlar)) return satirlar;
-  // structuredContent gelmezse metindeki JSON'a düş (":\n[...]" biçimi)
+  // With no structuredContent, fall back to the JSON in the text, in the ":\n[...]" form.
   const m = ilkMetin(res).match(/:\n(\[[\s\S]*\])\s*$/);
   return m ? JSON.parse(m[1]) : [];
 }
 
-/** run_gaql (salt-okunur) ile kampanya adaylarını + mevcut bütçelerini okur (sıralı). */
+/** Reads the candidate campaigns and their current budgets with run_gaql, read-only and
+ * sorted. */
 async function kampanyalariOku(client, kampanyaId) {
   const sorgu = kampanyaId
     ? `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${Number(kampanyaId)} LIMIT 1`
@@ -245,18 +258,19 @@ async function kampanyalariOku(client, kampanyaId) {
         : "Hesapta bütçesi okunabilen kampanya yok — --kampanya ile kimlik ver."
     );
   }
-  // Otomatik seçimde: önce PAUSED, sonra en küçük bütçe (tavan kelepçesine takılma
-  // riski en düşük; --canli modunda da en tehlikesiz aday budur).
+  // For the automatic pick: PAUSED first, then the smallest budget — the lowest risk of
+  // hitting the ceiling clamp, and under --canli the least dangerous candidate too.
   adaylar.sort((a, b) => (a.durum === "PAUSED" ? 0 : 1) - (b.durum === "PAUSED" ? 0 : 1) || a.butce - b.butce);
   return adaylar;
 }
 
-/** Perde 1/2'nin tek adayı: en tehlikesiz kampanya. */
+/** The single candidate for Acts 1 and 2: the least dangerous campaign. */
 async function kampanyaOku(client, kampanyaId) {
   return (await kampanyalariOku(client, kampanyaId))[0];
 }
 
-/** Hesabın günlük bütçe tavanını SALT-OKUNUR limits kaynağından okur (okunamazsa undefined). */
+/** Reads the account's daily budget ceiling from the READ-ONLY limits resource; undefined
+ * when it cannot be read. */
 async function tavanOku(client) {
   try {
     const res = await client.readResource({ uri: `aegis://accounts/${MUSTERI}/limits` });
@@ -268,14 +282,16 @@ async function tavanOku(client) {
 }
 
 /**
- * Perde 3 adayı. set_campaign_status ağ kapısına gelmeden ÖNCE iki kapıya bakar:
- * (1) kampanyanın günlük bütçesi hesabın güvenlik tavanını aşmamalı, (2) yayınlanabilir
- * (ENABLED reklam grubunda ENABLED) bir reklamı olmalı. Bunlardan birine takılan bir
- * kampanyada perde ağ kanıtını gösteremez — o yüzden aday ÖNCEDEN salt-okunur sorgularla
- * doğrulanır ve uygun aday yoksa perde dürüstçe atlanır (uydurma kanıt üretilmez).
+ * Act 3's candidate. BEFORE reaching the network gate, set_campaign_status passes two other
+ * gates: (1) the campaign's daily budget must not exceed the account's safety ceiling, and
+ * (2) it must have a servable ad, meaning an ENABLED ad in an ENABLED ad group. On a campaign
+ * that trips either of those, the act cannot show the network evidence — so the candidate is
+ * verified IN ADVANCE with read-only queries, and if no suitable candidate exists the act is
+ * honestly skipped rather than producing fabricated evidence.
  *
- * --canli yayına alma yalnız PAUSED bir kampanyada anlamlıdır: zaten yayındaki bir
- * kampanyayı "geri alma" adımı DURDURUR — başkasının canlı kampanyasını duraklatmayız.
+ * Going live under --canli only makes sense on a PAUSED campaign: on one that is already
+ * live, the reversal step would STOP it — and we do not pause someone else's live
+ * campaign.
  */
 async function yayinaAdayBul(client, tercihId, tavan) {
   const adaylar = await kampanyalariOku(client, tercihId);
@@ -314,8 +330,9 @@ async function yayinaAdayBul(client, tercihId, tavan) {
 }
 
 /**
- * Kampanyayı PAUSED'a döndürür ve durumu GERİ OKUYARAK doğrular — araç yanıtına inanmak
- * yetmez, yayında kalan kampanya gerçek para harcar. Bir kez yeniden dener.
+ * Returns the campaign to PAUSED and verifies the status BY READING IT BACK — believing the
+ * tool's response is not enough, because a campaign left live spends real money. It retries
+ * once.
  */
 async function duraklatVeDogrula(client, kampanya) {
   for (let deneme = 1; deneme <= 2; deneme++) {
@@ -340,7 +357,7 @@ async function duraklatVeDogrula(client, kampanya) {
   return false;
 }
 
-/** Geri alma doğrulanamadı: sessiz kalmak yok — ekranda BAĞIR. */
+/** The reversal could not be verified: no staying quiet — SHOUT on screen. */
 function geriAlmaBagir(kampanya) {
   kutu(
     "ACİL — ELLE MÜDAHALE GEREKİYOR",
@@ -357,8 +374,9 @@ function geriAlmaBagir(kampanya) {
 }
 
 /**
- * İstem metnindeki ağ doğrulama kanıt satırlarını (zincir halkalarını) ayıklar.
- * Halka sayısı sunucunun kaç kanıt eklediğine bağlıdır; betik hiçbirini uydurmaz.
+ * Extracts the network-verification evidence lines — the chain's links — from the prompt
+ * text. How many links there are depends on how much evidence the server attached; the script
+ * fabricates none of them.
  */
 function kanitSatirlari(mesaj) {
   return mesaj
@@ -374,20 +392,21 @@ let cikisKodu = 0;
 const ozet = []; // karşılaştırma tablosu satırları
 const EYLEM_BUTCE = "bütçe +1 (MEDIUM/24s)";
 const EYLEM_YAYIN = `yayına alma (HIGH/${PENCERE_YUKSEK}s)`;
-/** Perde 3/A canlı provası: kanıtlanana kadar "yayında" sayılır (kapalı arıza). */
+/** Act 3/A's live rehearsal: the campaign counts as "live" until proven otherwise — it
+ * fails closed. */
 let perde3Kampanya;
 let perde3GeriAlinmadi = false;
 
 /**
- * GÜVENLİK KİLİDİ — tek nokta, tek gerçek.
+ * THE SAFETY INTERLOCK — one place, one truth.
  *
- * Perde 3/A canlı provasında yayına alınan kampanyanın PAUSED'a döndüğü KANITLANAMADIYSA
- * sessiz kalınmaz: kırmızı acil kutusu basılır ve çıkış kodu 1 olur. Bayrağın çıkış
- * koduna bağlanması BU fonksiyonda olur; koşunun finally'si ile gizli --kendini-sina
- * yolu AYNI fonksiyonu çağırır, dolayısıyla sınanan yol canlı provanın kullandığı yolun
- * ta kendisidir (kopya kod yok).
+ * If, in Act 3/A's live rehearsal, it CANNOT BE PROVEN that the campaign taken live returned
+ * to PAUSED, we do not stay quiet: the red emergency box is printed and the exit code becomes
+ * 1. Binding that flag to the exit code happens in THIS function; the run's finally block and
+ * the hidden --kendini-sina path both call the SAME function, so the path under test is
+ * exactly the path the live rehearsal uses, with no duplicated code.
  *
- * @returns kilit tetiklendi mi
+ * @returns whether the interlock fired
  */
 function guvenlikKilidiniUygula() {
   if (!perde3GeriAlinmadi) return false;
@@ -398,15 +417,15 @@ function guvenlikKilidiniUygula() {
 }
 
 /**
- * Sinyalle ölüm, finally'yi ATLAR.
+ * Death by signal SKIPS the finally block.
  *
- * Perde 3/A canlı provasında kampanya ENABLED edildikten sonra PAUSED'a dönene kadar
- * kısa ama gerçek bir pencere vardır. O aralıkta Ctrl+C'ye basılırsa Node varsayılan
- * davranışıyla süreci finally'yi çalıştırmadan sonlandırır: ne acil kutusu basılır ne
- * çıkış kodu 1 olur — kampanya yayında kalıp gerçek para harcamaya devam eder. Kanca,
- * kilidin "koşu nasıl biterse bitsin en son burası konuşur" sözünü sinyal yoluna da
- * taşır. Kilit tetiklenmiyorsa (tehlike penceresi dışında) sinyal olağan biçimde,
- * 128+sinyal koduyla sonlanır.
+ * In Act 3/A's live rehearsal there is a short but real window between the campaign being set
+ * to ENABLED and its return to PAUSED. Press Ctrl+C in that window and Node's default
+ * behaviour ends the process without running the finally: no emergency box is printed, the
+ * exit code is not 1, and the campaign stays live spending real money. This hook carries the
+ * interlock's promise — that however the run ends, this is what speaks last — onto the signal
+ * path too. When the interlock does not fire, outside the danger window, the signal ends the
+ * process the usual way, with code 128 plus the signal number.
  */
 for (const sinyal of ["SIGINT", "SIGTERM"]) {
   process.on(sinyal, () => {
@@ -422,10 +441,11 @@ for (const sinyal of ["SIGINT", "SIGTERM"]) {
 }
 
 /**
- * Gizli --kendini-sina: senaryoyu OYNATMAZ, yalnız güvenlik kilidinin gerçekten bağlı
- * olduğunu iki yönde kanıtlar (geri alma doğrulandı → kutu yok/kod 0; doğrulanamadı →
- * kutu + kod 1). Sınama kendi beklentisini doğrulayamazsa 2 ile çıkar: "kilit sınandı"
- * diye sessizce geçmesindense gürültülü kırılsın.
+ * The hidden --kendini-sina: it DOES NOT PLAY the scenario, it only proves in both
+ * directions that the safety interlock really is wired up — reversal verified means no box
+ * and code 0; not verified means the box and code 1. If the check cannot confirm its own
+ * expectation it exits 2: better a loud break than quietly passing as "the interlock was
+ * tested".
  */
 if (KENDINI_SINA) {
   yaz(kalin("KENDİNİ SINAMA — Perde 3 güvenlik kilidi çıkış koduna bağlı mı?"));
@@ -466,7 +486,7 @@ try {
   );
   await bekle(900);
 
-  /* ── PERDE 1: ağ temiz ─────────────────────────────────────────────────────── */
+  /* ── ACT 1: the network is clean ───────────────────────────────────────────── */
   await perdeBasligi(1, `AEGIS_NAC_SIMULATE=temiz — ağ temiz: onay akışı normal işler`);
 
   let perde1IstemSayisi = 0;
@@ -477,17 +497,19 @@ try {
     const mesaj = String(req.params.message);
     kutu("ONAY İSTEMİ (gerçek MCP elicitation)", mesaj.split("\n"), sari);
     if (!CANLI) {
-      // Kuru modda buraya hiç gelinmemeli; gelinirse fail-closed reddet (stdin bekletme).
+      // Dry mode should never reach here; if it does, refuse fail-closed rather than
+      // blocking on stdin.
       yaz(kirmizi("[kuru] modda onay istemi beklenmiyordu — demo güvenlik gereği 'hayır' dedi."));
       return { action: "decline" };
     }
     if (!(/SİMÜLASYON/.test(mesaj) && /SIM değişimi yok/.test(mesaj))) {
-      // Beklenen simülasyon kanıtı yoksa bir şeyler ters gitti — fail-closed: reddet.
+      // Without the expected simulation evidence something has gone wrong — refuse,
+      // fail-closed.
       yaz(kirmizi("Beklenen SİMÜLASYON kanıt satırı istemde YOK — demo güvenlik gereği 'hayır' dedi."));
       return { action: "decline" };
     }
     perde1KanitVar = true;
-    // Karar betiğin DEĞİL, klavyenin: yalnız birebir 'Evet' kabul edilir.
+    // The decision is NOT the script's but the keyboard's: only an exact 'Evet' is accepted.
     const cevap = await operatoreSor("Operatör kararı — bütçe artışını onaylıyor musun? (yalnız 'Evet' kabul edilir): ");
     if (cevap === "Evet") {
       perde1OperatorOnayi = true;
@@ -534,7 +556,8 @@ try {
     );
     const metin = ilkMetin(res);
     if (!perde1OperatorOnayi) {
-      // Operatör 'Evet' yazmadı: yazma uygulanmadı — bu bir demo hatası değil, gerçek karardır.
+      // The operator did not type 'Evet': no write was applied — that is not a demo
+      // failure, it is a real decision.
       yaz(sari(`Operatör onay vermedi — sunucu yazmayı uygulamadı. Sunucu yanıtı: ${metin}`));
       ozet.push({
         perde: "1",
@@ -569,7 +592,7 @@ try {
   istemci = undefined;
   await bekle(900);
 
-  /* ── PERDE 2: SIM değişmiş ─────────────────────────────────────────────────── */
+  /* ── ACT 2: the SIM was swapped ────────────────────────────────────────────── */
   await perdeBasligi(2, `AEGIS_NAC_SIMULATE=degisti — İKİNCİ sunucu süreci: SIM değişmiş sayılır`);
 
   let perde2IstemSayisi = 0;
@@ -580,8 +603,9 @@ try {
   yaz(soluk("Sunucu süreci 2 başlatıldı (stdio) — aynı istemci, aynı elicitation yeteneği."));
   await bekle();
 
-  // Bütçe bu süreçte YENİDEN okunur: deneme her koşulda kesin ARTIŞ olmalı
-  // (artış olmayan çağrı ağ kapısına hiç uğramaz ve kuru modda yazma yapardı).
+  // The budget is RE-READ in this process: the attempt must be a definite INCREASE under
+  // every condition — a call that is not an increase never reaches the network gate, and in
+  // dry mode it would perform a write.
   const kampanya2 = await kampanyaOku(istemci, kampanya.id);
   const hedefButce2 = Math.round((kampanya2.butce + 1) * 100) / 100;
   yaz(`Aynı deneme: ${cyan(`update_campaign_budget ${kampanya2.butce} → ${hedefButce2}`)} — bu kez ağ "SIM değişti" diyor.`);
@@ -614,20 +638,21 @@ try {
   istemci = undefined;
   await bekle(900);
 
-  /* ── PERDE 3: AYNI kapının HIGH katmanı — yayına alma ──────────────────────── */
+  /* ── ACT 3: the HIGH layer of the SAME gate — going live ───────────────────── */
   await perdeBasligi(
     3,
     `set_campaign_status → ENABLED — AYNI kapı, HIGH katman: pencere 24 değil ${PENCERE_YUKSEK} saat`
   );
   yaz(soluk("İki alt sahne: 3/A ağ temiz (onay akışı işler) · 3/B SIM değişmiş (sert ret)."));
 
-  /* ── PERDE 3/A: ağ temiz ───────────────────────────────────────────────────── */
+  /* ── ACT 3/A: the network is clean ─────────────────────────────────────────── */
   yaz("\n" + kalin(`── PERDE 3/A ── AEGIS_NAC_SIMULATE=temiz — yayına alma denenir`));
 
   let perde3aIstemSayisi = 0;
   let perde3KanitVar = false;
   let perde3OperatorOnayi = false;
-  /** Handler kapanışı: kampanya ancak sunucu açıldıktan sonra okunabilir, çağrı anında dolu olur. */
+  /** A closure for the handler: the campaign can only be read once the server is up, and it
+   * is populated by the time the call happens. */
   let aday3;
 
   istemci = await sunucuBaslat("temiz", async (req) => {
@@ -635,8 +660,8 @@ try {
     const mesaj = String(req.params.message);
     kutu("ONAY İSTEMİ — YAYINA ALMA (gerçek MCP elicitation)", mesaj.split("\n"), sari);
 
-    // Kanıt satırlarını sunucu üretir; betik hiçbirini uydurmaz, yalnız ayıklayıp
-    // zincir halkalarına göre işaretler.
+    // The evidence lines are produced by the server; the script fabricates none of them, it
+    // only extracts them and marks them against the chain's links.
     const kanitlar = kanitSatirlari(mesaj);
     const ikinciHalkaMi = (s) => /numara doğrulaması/i.test(s);
     for (const k of kanitlar) {
@@ -647,17 +672,19 @@ try {
     }
 
     if (!CANLI) {
-      // Kuru modda buraya hiç gelinmemeli; gelinirse fail-closed reddet (stdin bekletme).
+      // Dry mode should never reach here; if it does, refuse fail-closed rather than
+      // blocking on stdin.
       yaz(kirmizi("[kuru] modda onay istemi beklenmiyordu — demo güvenlik gereği 'hayır' dedi."));
       return { action: "decline" };
     }
-    // HIGH katmanın kanıtı penceredir: medium 24 saatken burası PENCERE_YUKSEK saat olmalı.
+    // The HIGH layer's proof is the window: where medium is 24 hours, this must be
+    // PENCERE_YUKSEK hours.
     if (!(/SİMÜLASYON/.test(mesaj) && new RegExp(`son ${PENCERE_YUKSEK} saat`).test(mesaj))) {
       yaz(kirmizi(`Beklenen HIGH kanıt satırı (SİMÜLASYON + "son ${PENCERE_YUKSEK} saat") istemde YOK — demo güvenlik gereği 'hayır' dedi.`));
       return { action: "decline" };
     }
     perde3KanitVar = true;
-    // Karar betiğin DEĞİL, klavyenin: yalnız birebir 'Evet' kabul edilir.
+    // The decision is NOT the script's but the keyboard's: only an exact 'Evet' is accepted.
     const cevap = await operatoreSor(
       `Operatör kararı — "${aday3?.ad ?? "?"}" (#${aday3?.id ?? "?"}) GERÇEKTEN yayına alınsın mı? (yalnız 'Evet' kabul edilir): `
     );
@@ -677,7 +704,8 @@ try {
   const aday = await yayinaAdayBul(istemci, KAMPANYA_ARG, tavan);
 
   if (!aday.hazir) {
-    // Uydurma kanıt yok: ön kapılara takılan bir kampanyada ağ kapısı hiç konuşmaz.
+    // No fabricated evidence: on a campaign that trips the pre-gates, the network gate never
+    // speaks at all.
     kutu(
       "PERDE 3 ATLANDI — uydurma kanıt üretilmez",
       [
@@ -709,8 +737,8 @@ try {
     yaz(`Deneme: ${cyan(`set_campaign_status #${aday3.id} → ENABLED`)} (HIGH katman — ${PENCERE_YUKSEK} saatlik pencere)`);
     await bekle();
 
-    // Canlı prova YALNIZ PAUSED kampanyada: zaten yayındaki bir kampanyada "geri alma"
-    // adımı onu DURDURURDU — başkasının canlı kampanyasını duraklatmayız.
+    // The live rehearsal runs ONLY on a PAUSED campaign: on one that is already live, the
+    // reversal step would STOP it — and we do not pause someone else's live campaign.
     const canliProva = CANLI && aday3.durum === "PAUSED";
     if (CANLI && !canliProva) {
       yaz(
@@ -744,8 +772,9 @@ try {
         yazma: CANLI ? "yok (atlandı)" : "[kuru] atlandı",
       });
     } else {
-      // Kapalı arıza: çağrıdan ÖNCE "yayında" say. Aksi KANITLANANA kadar bayrak kalkmaz;
-      // koşu nasıl biterse bitsin finally'deki güvenlik kilidi bağırır ve çıkış kodunu bozar.
+      // Fail closed: count it as live BEFORE the call. The flag stays up until the contrary
+      // is PROVEN; however the run ends, the safety interlock in the finally shouts and
+      // breaks the exit code.
       perde3Kampanya = aday3;
       perde3GeriAlinmadi = true;
 
@@ -762,14 +791,15 @@ try {
         );
         metin3 = ilkMetin(res3);
       } catch (e) {
-        // Çağrı düştü: yazmanın olup olmadığı BİLİNMİYOR. Karar aşağıdaki geri okumaya
-        // bırakılır — "hata aldım, demek ki yazılmadı" varsayımı tam da kilidin
-        // yakalaması gereken sessiz yayında-kalma durumunu kaçırırdı.
+        // The call dropped: whether the write happened is UNKNOWN. The decision is left to
+        // the read-back below — the assumption "I got an error, so nothing was written"
+        // would miss precisely the silent left-live case the interlock exists to catch.
         cagriHatasi = e?.message ?? String(e);
         yaz(kirmizi(`Yayına alma çağrısı hata verdi: ${cagriHatasi}`));
       }
 
-      // Araç yanıtına İNANILMAZ: gerçek durum her koşulda hesaptan GERİ OKUNUR.
+      // The tool's response is NOT BELIEVED: under every condition the real status is READ
+      // BACK from the account.
       let suanki;
       try {
         const [satir3] = await gaqlSatirlar(
@@ -784,7 +814,7 @@ try {
       }
 
       if (suanki === "ENABLED") {
-        // Çağrı hata verdiyse bu bir başarı değil, sessizce yayında kalmış bir kampanyadır.
+        // If the call errored, this is not a success but a campaign quietly left live.
         yaz(
           cagriHatasi
             ? kirmizi(`YAYINDA — çağrı hata verdi ama kampanya ENABLED okundu (tam da kilidin varlık sebebi).`)
@@ -810,21 +840,23 @@ try {
           yaz(kirmizi("GERİ ALMA DOĞRULANAMADI — ayrıntı ve elle müdahale adımları koşunun EN SONUNDA."));
         }
       } else {
-        // Yayına hiç alınmadı: geri alınacak bir şey yok, kilit kalkar. Bayrak YALNIZ
-        // durumun hesaptan geri okunmasıyla düşer; okuma başarısız olduğunda yukarıdaki
-        // catch "ENABLED" varsayar ve kilit açık kalır (kapalı arıza korunur).
+        // It never went live: there is nothing to reverse and the interlock lifts. The flag
+        // comes down ONLY by reading the status back from the account; when that read
+        // fails, the catch above assumes "ENABLED" and the interlock stays up, preserving
+        // the fail-closed behaviour.
         perde3GeriAlinmadi = false;
         perde3Kampanya = undefined;
         if (cagriHatasi) {
-          // Çağrı düştü ama kampanya yayına ALINMADI (geri okundu) — yanlış yere acil
-          // alarmı çalmadan, dürüst bir demo hatasıyla bit.
+          // The call dropped but the campaign was NOT taken live, as the read-back shows —
+          // so end with an honest demo error rather than sounding a false emergency.
           throw new Error(
             `Perde 3/A çağrısı tamamlanamadı: ${cagriHatasi}\n` +
               `Kampanya #${aday3.id} yayına ALINMADI — durum hesaptan geri okundu: ${suanki}.`
           );
         }
         if (/NUMARA DOĞRULAMASI BAŞARISIZ/.test(metin3)) {
-          // Zincirin 2. halkası reddetti: SIM Swap temiz olsa bile istem gösterilmez.
+          // The chain's second link refused: even with a clean SIM Swap, the prompt is not
+          // shown.
           kutu("RET — NUMARA DOĞRULAMASI BAŞARISIZ (zincirin 2. halkası)", metin3.split("\n"), kirmizi);
           if (perde3aIstemSayisi !== 0) {
             throw new Error(`GÜVENLİK İHLALİ: 2. halka reddederken onay istemi ${perde3aIstemSayisi} kez gösterildi.`);
@@ -839,7 +871,8 @@ try {
             yazma: `yok (geri okundu: ${suanki})`,
           });
         } else if (perde3aIstemSayisi > 0 && !perde3OperatorOnayi) {
-          // Operatör 'Evet' yazmadı: yazma uygulanmadı — bu bir demo hatası değil, gerçek karardır.
+          // The operator did not type 'Evet': no write was applied — that is not a demo
+      // failure, it is a real decision.
           yaz(sari(`Operatör onay vermedi — sunucu kampanyayı yayına almadı. Sunucu yanıtı: ${metin3}`));
           ozet.push({
             perde: "3/A",
@@ -861,9 +894,9 @@ try {
     istemci = undefined;
     await bekle(900);
 
-    /* ── PERDE 3/B: SIM değişmiş — sert ret, istem HİÇ gösterilmez ──────────── */
+    /* ── ACT 3/B: the SIM was swapped — a hard refusal, the prompt NEVER shown ─── */
     if (perde3GeriAlinmadi) {
-      // Yayında kalmış olabilecek bir kampanya varken yeni yazma denemesi yapılmaz.
+      // While a campaign may still be live, no new write is attempted.
       yaz(kirmizi("Perde 3/B atlandı: 3/A'nın geri alması doğrulanana kadar başka yazma denenmez."));
       ozet.push({
         perde: "3/B",
@@ -905,7 +938,8 @@ try {
         yaz(kalin(`Perde 2'nin 24 saatlik penceresi burada ${PENCERE_YUKSEK} saat: aynı kapı, daha riskli eylem, daha geniş bakış.`));
       }
 
-      // Söze değil hesaba bakılır: yazmanın gerçekten olmadığı GERİ OKUNARAK doğrulanır.
+      // We look at the account, not at what we were told: that no write happened is verified
+      // BY READING IT BACK.
       let durumB;
       try {
         const [satirB] = await gaqlSatirlar(
@@ -917,7 +951,8 @@ try {
       } catch (e) {
         durumB = `okunamadı (${e?.message ?? e})`;
       }
-      // Aday zaten ENABLED verilmişse (yalnız kuru modda mümkün) bu bir ihlal değildir.
+      // If the candidate was already handed to us as ENABLED, which is possible only in dry
+      // mode, that is not a violation.
       if (durumB === "ENABLED" && aday3.durum !== "ENABLED") {
         throw new Error(`GÜVENLİK İHLALİ: ret metnine rağmen kampanya #${aday3.id} ENABLED okundu.`);
       }
@@ -936,7 +971,7 @@ try {
     }
   }
 
-  /* ── Özet tablosu ──────────────────────────────────────────────────────────── */
+  /* ── The summary table ─────────────────────────────────────────────────────── */
   yaz("\n" + kalin("═══ ÖZET — üç perdenin karşılaştırması ════════════════════════════"));
   const basliklar = {
     perde: "Perde",
@@ -966,9 +1001,10 @@ try {
   cikisKodu = 1;
 } finally {
   if (istemci) await istemci.close().catch(() => {});
-  // GÜVENLİK KİLİDİ: koşu nasıl biterse bitsin (başarı, hata, beklenmedik fırlatma)
-  // en son burası konuşur. Ekranın SONUNDA durması bilinçlidir — kutu özet tablosunun
-  // altında kalır, yukarı kaymaz. Kilidi --kendini-sina aynı fonksiyondan sınar.
+  // THE SAFETY INTERLOCK: however the run ends — success, error, an unexpected throw —
+  // this speaks last. Standing at the END of the screen is deliberate: the box stays below
+  // the summary table rather than scrolling above it. --kendini-sina exercises the interlock
+  // through this same function.
   guvenlikKilidiniUygula();
 }
 process.exitCode = cikisKodu;
