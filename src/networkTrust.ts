@@ -403,30 +403,32 @@ export interface AgIz {
  * way to refuse a legitimate spend. So a budget increase (medium) settles for the single
  * strongest signal: a SIM change is the question that stops whoever took the account over
  * from answering the approval prompt. Going live (high) — the moment real spending starts —
- * tamamını ister.
+ * asks for the whole chain.
  */
 export const RISK_HALKA_ESLEMESI: Readonly<Record<AgRisk, readonly string[]>> = Object.freeze({
   medium: Object.freeze(["simSwap"]),
   high: Object.freeze(["simSwap", "nv", "reach", "loc", "devSwap", "callFwd"]),
 });
 
-/** Bu risk katmanında bu halka koşar mı? Katmanların TEK karar kaynağı. */
+/** Does this link run on this risk tier? The layers' SINGLE source of that decision. */
 export function halkaKosarMi(risk: AgRisk, halkaId: string): boolean {
   return RISK_HALKA_ESLEMESI[risk].includes(halkaId);
 }
 
 /**
- * KADEMEYE UYGUN RET NEDENLERİ — ve aynı zamanda BELGENİN tek kaynağı.
+ * THE REFUSAL REASONS ELIGIBLE FOR STEP-UP — and at the same time the documentation's
+ * single source.
  *
- * `export` bir kullanım kolaylığı değil, ölçülmüş bir boşluğun kapatılmasıdır: bu küme
- * kapının "koşulsuz reddeder" davranışını KOŞULLU hâle getirir (AEGIS_STEPUP açıkken
- * buradaki her neden düz ret yerine insan istemine bağlanır), ama README ve runbook bunu
- * bilmediği için "SIM değişimi anında reddeder, sonraki hiçbir halka yumuşatamaz"
- * cümlesini KURAL diye yazıyordu — belge, tersine çalışan bir değişmezi ilan ediyordu.
+ * The `export` is not a convenience but the closing of a measured gap: this set turns the
+ * gate's "refuses unconditionally" behaviour into a CONDITIONAL one — with AEGIS_STEPUP on,
+ * every reason here is bound to a human prompt instead of a flat refusal. But the README and
+ * the runbook did not know that, and stated as a RULE that "a SIM change refuses
+ * immediately, and no later link can soften it": the documentation was declaring an
+ * invariant that ran the other way.
  *
- * Kümeyi dışa açmak, belge gözcülerinin (test/zincirBelgeKademe.test.ts) listeyi serbest
- * metinden değil KODDAN türetmesini sağlar: buraya yeni bir neden eklendiğinde runbook
- * onu anmıyorsa test KIRMIZI olur.
+ * Exporting the set lets the documentation guards (test/zincirBelgeKademe.test.ts) derive
+ * the list FROM THE CODE rather than from prose: add a new reason here and the test goes RED
+ * if the runbook does not mention it.
  */
 export const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
   "sim-degisti",
@@ -437,53 +439,59 @@ export const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
 ]);
 
 /**
- * HANGİ TEMİZ HALKA HANGİ BOZUK SİNYALE KEFİL OLABİLİR — tek görünür tablo.
+ * WHICH CLEAN LINK CAN VOUCH FOR WHICH DEGRADED SIGNAL — one visible table.
  *
- * NEDEN GEREKLİ: yükseltme "en az bir gerçek halka temiz döndü" koşuluyla veriliyordu ve
- * bu koşul halkanın NE ÖLÇTÜĞÜNE bakmıyordu. Ölçülen sonuç: saptanmış GERÇEK bir SIM
- * değişimine, tek başına erişilebilirlik halkası kefil olup yükseltmeyi taşıyabiliyordu.
+ * WHY IT IS NEEDED: an escalation was granted on the condition that "at least one real link
+ * came back clean", and that condition never asked WHAT the link had measured. The measured
+ * result: a genuine, detected SIM change could be vouched for by the reachability link
+ * alone, and that link carried the escalation.
  *
- * Oysa erişilebilirlik bir KİMLİK sinyali değil, bir CANLILIK sinyalidir: SIM'i ele
- * geçiren saldırganın telefonu da şebekeden erişilebilirdir, cihazı değiştirenin de,
- * çağrıları yönlendirenin de. "Cihaz açık" ifadesi bu sinyallerin hiçbiriyle ÇELİŞMEZ —
- * ve bir sinyali çürütemeyen halka ona kefil de olamaz. Kapı olarak değerlidir
- * (erişilemeyen cihaz şüphelidir), kefil olarak değersizdir; bu yüzden aşağıdaki hiçbir
- * satırda geçmez. Aynı gerekçeyle `nv` de yoktur: o zaten yalnız simülasyondur.
+ * But reachability is not an IDENTITY signal, it is a LIVENESS one: the phone of the
+ * attacker holding the swapped SIM answers the network too, and so does the phone of
+ * whoever changed the device, or diverted the calls. "The device is on" CONTRADICTS none of
+ * those signals — and a link that cannot disprove a signal cannot vouch for it either. It is
+ * valuable as a gate, since an unreachable device is suspicious, and worthless as a voucher;
+ * so it appears in none of the rows below. `nv` is absent for the same reason: it is
+ * simulation-only anyway.
  *
- * Tablo, listede OLMAYAN her neden için boş küme demektir (kapalı arıza: tanınmayan bir
- * bozuk sinyale hiçbir halka kefil olamaz, yani yükseltme verilmez). KADEME_UYGUN'daki
- * her nedenin burada bir satırı bulunmak zorundadır; test/kademeliDogrulama.test.ts iki
- * listeyi karşılıklı sınar, böylece yeni bir neden kefilsiz eklenemez.
+ * For any reason NOT in the table the set is empty (fail closed: no link can vouch for an
+ * unrecognised degraded signal, so no escalation is granted). Every reason in KADEME_UYGUN
+ * must have a row here; test/kademeliDogrulama.test.ts checks the two lists against each
+ * other, so a new reason cannot be added without its vouchers.
  */
 export const KEFIL_ESLEMESI: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  // SIM değişti: cihaz aynı mı, hat beklenen ülkede mi, çağrı yönlendirmesi var mı?
+  // The SIM changed: is the device the same, is the line in the expected country, is
+  // there call forwarding?
   "sim-degisti": Object.freeze(["devSwap", "loc", "callFwd"]),
-  // Cihaz değişti: SIM aynı mı, hat beklenen ülkede mi, yönlendirme var mı?
+  // The device changed: is the SIM the same, is the line in the expected country, is there
+  // forwarding?
   "cihaz-degisti": Object.freeze(["simSwap", "loc", "callFwd"]),
-  // Cihaza ulaşılamıyor: kimlik halkalarının hepsi konuşabilir.
+  // The device is unreachable: every identity link has something to say.
   "cihaz-erisilemez": Object.freeze(["simSwap", "devSwap", "loc", "callFwd"]),
-  // Konum beklenmedik: SIM ve cihaz aynıysa seyahat açıklaması makul; yönlendirme yoksa.
+  // The location is unexpected: with the SIM and device unchanged, travel is a plausible
+  // explanation — provided there is no forwarding.
   "konum-beklenmedik": Object.freeze(["simSwap", "devSwap", "callFwd"]),
-  // Bir kontrol okunabilir yanıt veremedi: kimlik halkalarının temiz cevabı anlamlıdır.
+  // A check could not give a readable answer: a clean response from the identity links is
+  // meaningful.
   "ag-yanitsiz": Object.freeze(["simSwap", "devSwap", "loc", "callFwd"]),
 });
 
 /**
- * KADEMEYE ASLA UYGUN OLMAYANLAR — ve listede olmayan her neden zaten uygun değildir
- * (varsayılan RET tarafıdır). Burada yalnız GEREKÇELERİ yazılıdır:
+ * THE REASONS NEVER ELIGIBLE FOR STEP-UP — and any reason absent from the table is already
+ * ineligible, since that is the default REFUSE side. Only the REASONING is recorded here:
  *
- * `cagri-yonlendirme-acik` — en önemlisi ve sezgiye aykırı olanı. Çağrı yönlendirme
- *   açıkken kademeyi yükseltmek, daha güçlü doğrulamayı SALDIRGANA göndermek demektir:
- *   yükseltmenin taşıyıcısı (çağrı, SMS) tam da ele geçirilmiş olan kanaldır. Yani
- *   burada yükseltme güvenliği artırmaz, saldırganın işini kolaylaştırır.
+ * `cagri-yonlendirme-acik` — the most important one, and the counter-intuitive one.
+ *   Escalating while call forwarding is active means sending the stronger verification TO
+ *   THE ATTACKER: the escalation's carrier, a call or an SMS, is exactly the channel that
+ *   has been taken over. Escalating here does not add security, it does the attacker's work.
  *
- * `nv-uyusmadi` — numara doğrulaması bir "okunamadı" değil, doğrudan bir UYUŞMAZLIK
- *   ifadesidir: ağ, hattın beklenen numara olmadığını söylüyor.
+ * `nv-uyusmadi` — number verification is not an "unreadable", it is a direct statement of
+ *   MISMATCH: the network is saying the line is not the expected number.
  *
  * `yapilandirma-celiskili`, `beklenen-ulke-gecersiz`, `onaylayici-numarasi-yok`,
- * `simulasyon-degeri-tanimsiz` — bunlar kullanıcının değil OPERATÖRÜN durumudur.
- *   Daha güçlü bir kimlik doğrulaması yanlış yapılandırmayı düzeltmez; onları
- *   yükseltmek, bir yapılandırma hatasını kullanıcı doğrulamasıyla örtmek olurdu.
+ * `simulasyon-degeri-tanimsiz` — these are the OPERATOR's situation, not the user's.
+ *   Stronger identity verification does not fix a misconfiguration; escalating them would
+ *   paper over a configuration fault with a user check.
  */
 
 export interface AgKarar {
@@ -491,27 +499,28 @@ export interface AgKarar {
   engel?: string;
   /** Evidence lines appended to the human approval prompt. */
   kanit: string[];
-  /** Kararın yapısal izi — HER dönüş noktası doldurur (bkz. AgIz). */
+  /** The decision's structured trace — EVERY return point fills it in (see AgIz). */
   iz: AgIz;
   /**
-   * Karar kademeli doğrulamayla ayakta kaldıysa doldurulur; `engel` ile BİRLİKTE
-   * asla bulunmaz. Onay katmanı bunu görünce farklı bir istem gösterir ve tavanı
-   * düşürür — yani yükseltme sessiz bir "geçti" değildir.
+   * Filled in when the decision survived through step-up verification; it is NEVER present
+   * TOGETHER with `engel`. Seeing it, the approval layer shows a different prompt and lowers
+   * the ceiling — so an escalation is not a silent "passed".
    */
   kademe?: KademeKarari;
 }
 
-/** Kademeli doğrulamanın onay katmanına taşıdığı bilgi. */
+/** What step-up verification carries up to the approval layer. */
 export interface KademeKarari {
-  /** Yükseltmeye sebep olan bozuk sinyal. */
+  /** The degraded signal that caused the escalation. */
   neden: RetNedeni;
-  /** Bozulan sinyalin insan diliyle karşılığı — onay isteminde aynen gösterilir. */
+  /** The degraded signal in human language — shown verbatim in the approval prompt. */
   aciklama: string;
-  /** Yükseltmeyi taşıyan, GERÇEK kanaldan temiz dönen halkaların id'leri. */
+  /** The ids of the links carrying the escalation: those that came back clean over a REAL
+   * channel. */
   dogrulayan: string[];
 }
 
-/** NV halkasının kendi sonucu; zincir birleşiminde AgIz'e katılır. */
+/** The NV link's own result; it joins AgIz when the chain is assembled. */
 interface NvSonuc {
   engel?: string;
   kanit: string[];
@@ -521,10 +530,12 @@ interface NvSonuc {
 }
 
 /**
- * Halka 3 ve 4'ün ortak sonuç şekli. Halkanın KENDİ iz değerini taşır; hangi AgIz
- * alanına yazılacağını zincir birleşimi bilir — böylece iki halka tek alana ezilemez.
+ * The shared result shape of links 3 and 4. It carries the link's OWN trace value; which
+ * AgIz field it is written to is known by the chain assembly — so two links can never be
+ * collapsed into one field.
  *
- * Halka hiç koşmadıysa katman fonksiyonu `undefined` döner (bu tip hiç üretilmez).
+ * When a link does not run at all, its layer function returns `undefined` and this type is
+ * never produced.
  */
 interface HalkaSonuc {
   engel?: string;
@@ -532,7 +543,8 @@ interface HalkaSonuc {
   halka: HalkaIzi;
   maskeliNumara?: string;
   retNedeni?: RetNedeni;
-  /** Yalnız pencereli halka (5) doldurur; zincir birleşimi devSwapPencereSaat'e yazar. */
+  /** Only the windowed link (5) fills this in; the chain assembly writes it to
+   * devSwapPencereSaat. */
   pencereSaat?: number;
 }
 
@@ -542,171 +554,185 @@ export interface AgAyar {
   approverPhone?: string;
   simSwapWindowHours: number;
   /**
-   * KADEMELİ DOĞRULAMA (AEGIS_STEPUP). Varsayılan KAPALI ve bu bilinçli.
+   * STEP-UP VERIFICATION (AEGIS_STEPUP). OFF by default, and deliberately so.
    *
-   * Açıldığında, olağan bir kullanıcı durumundan doğan bozuk sinyal (SIM/cihaz
-   * değişimi, seyahat, kapalı telefon, cevapsız ağ) düz retle sonuçlanmaz: kalan
-   * bütün halkalar gerçek kanaldan temiz dönerse işlem, bozulan sinyali adıyla
-   * söyleyen daha güçlü bir insan doğrulamasına ve düşürülmüş bir tavana bağlanır.
+   * When it is on, a degraded signal arising from an ordinary human situation — a changed
+   * SIM or device, travel, a phone that is off, a silent network — does not end in a flat
+   * refusal: if all the remaining links come back clean over a real channel, the action is
+   * bound to a stronger human verification that names the degraded signal, and to a lowered
+   * ceiling.
    *
-   * Kapalı varsayılan, kapının bugünkü davranışını değiştirmemek içindir: yükseltme
-   * bir GEVŞETMEDİR ve gevşemeyi operatör açıkça seçmelidir.
+   * The off default exists so the gate's current behaviour does not change underneath
+   * anyone: an escalation is a LOOSENING, and a loosening has to be chosen explicitly by the
+   * operator.
    */
   stepUp?: boolean;
   /**
-   * SİMÜLASYON kanalı (AEGIS_NAC_SIMULATE): "temiz" | "degisti". Tanımlıysa gerçek
-   * SDK hiç kullanılmaz — jüri demoları NaC token'sız çalışır. Değer burada tip olarak
-   * dar tutulmaz: doğrulama KARAR ANINDA yapılır ki bozuk bir env değeri sunucuyu
-   * başlangıçta düşürmesin, sadece harcama kapısını kapalı arızaya götürsün.
+   * The SIMULATION channel (AEGIS_NAC_SIMULATE): "temiz" | "degisti". When it is set the
+   * real SDK is never used, so a jury demo runs without a NaC token. The value is not
+   * narrowed at the type level here: validation happens AT DECISION TIME, so that a
+   * malformed environment value does not bring the server down at startup and only takes the
+   * spending gate to its fail-closed side.
    */
   nacSimulate?: string;
   /**
-   * Number Verification SİMÜLASYON kanalı (AEGIS_NV_SIMULATE):
-   * "dogrulandi" | "uyusmadi". Zincirin 2. halkası; YALNIZ simülasyon (gerçek CAMARA
-   * NV cihaz-taraflı OIDC ister, sunucudan tek başına çağrılamaz — bkz. dosya başı).
+   * The Number Verification SIMULATION channel (AEGIS_NV_SIMULATE):
+   * "dogrulandi" | "uyusmadi". Link 2 of the chain, and SIMULATION ONLY — real CAMARA NV
+   * requires a device-side OIDC flow and cannot be called from a server alone (see the file
+   * header).
    *
-   * nacSimulate'ten BAĞIMSIZDIR: gerçek SIM-Swap token'ıyla da, kapalı SIM-Swap
-   * katmanıyla da birleşebilir. Değer burada tip olarak dar tutulmaz; doğrulama
-   * karar anında yapılır (aynı kapalı-arıza gerekçesi).
+   * It is INDEPENDENT of nacSimulate: it can combine with a real SIM Swap token or with a
+   * disabled SIM Swap layer. The value is not narrowed at the type level here; validation
+   * happens at decision time, for the same fail-closed reason.
    */
   nvSimulate?: string;
   /**
-   * Device Reachability SİMÜLASYON kanalı (AEGIS_REACH_SIMULATE):
-   * "erisilebilir" | "anormal". Zincirin 3. halkası; tanımlıysa gerçek SDK'ya HİÇ
-   * dokunulmaz. Değer burada tip olarak dar tutulmaz — doğrulama karar anında yapılır.
+   * The Device Reachability SIMULATION channel (AEGIS_REACH_SIMULATE):
+   * "erisilebilir" | "anormal". Link 3 of the chain; when it is set the real SDK is NEVER
+   * touched. The value is not narrowed at the type level here — validation happens at
+   * decision time.
    */
   reachSimulate?: string;
   /**
-   * Halka 3'ün GERÇEK kanalının açma/kapama anahtarı (AEGIS_REACH_CHECK).
+   * The on/off switch for link 3's REAL channel (AEGIS_REACH_CHECK).
    *
-   * Bilerek OPT-IN: erişilebilirlik meşru olarak dalgalanır (uçak modu, kapsama), bu
-   * yüzden yalnızca NaC token'ının varlığına bakıp sorguyu açmak, SIM-Swap için token
-   * tanımlamış bir operatöre hiç istemediği yanlış-pozitif retleri dayatırdı. Kapalıyken
-   * halka sorgu yapmaz ve izine "kapali" yazar (bkz. dosya başı, Halka 3).
+   * Deliberately OPT-IN: reachability fluctuates legitimately — flight mode, coverage — so
+   * enabling the query merely because a NaC token exists would impose false-positive
+   * refusals on an operator who configured that token for SIM Swap. While it is off the link
+   * runs no query and records "kapali" in its trace (see the file header, Link 3).
    */
   reachCheck?: boolean;
   /**
-   * Location SİMÜLASYON kanalı (AEGIS_LOC_SIMULATE): "beklenen" | "beklenmedik".
-   * Zincirin 4. halkası; aynı kapalı-arıza gerekçesiyle değer karar anında doğrulanır.
+   * The Location SIMULATION channel (AEGIS_LOC_SIMULATE): "beklenen" | "beklenmedik".
+   * Link 4 of the chain; for the same fail-closed reason the value is validated at decision
+   * time.
    */
   locSimulate?: string;
   /**
-   * Halka 4'ün beklentisi (AEGIS_EXPECTED_COUNTRY, ISO 3166-1 alpha-2).
+   * Link 4's expectation (AEGIS_EXPECTED_COUNTRY, ISO 3166-1 alpha-2).
    *
-   * TANIMSIZSA HALKA KOŞMAZ ("kapali" izi): beklenen ülke UYDURULMAZ. Tanımlı ama iki
-   * harfli kod değilse bu bir yapılandırma hatasıdır ve kapalı arızaya (RET) gider —
-   * operatör halkayı istemiş ama anlaşılmayan bir değer vermiştir.
+   * IF IT IS UNSET THE LINK DOES NOT RUN, recording "kapali": an expected country is never
+   * INVENTED. If it is set but is not a two-letter code, that is a configuration fault and
+   * goes to the fail-closed side as a REFUSAL — the operator asked for the link and supplied
+   * a value that cannot be understood.
    */
   expectedCountry?: string;
   /**
-   * Device Swap SİMÜLASYON kanalı (AEGIS_DEVICESWAP_SIMULATE):
-   * "temiz" | "degisti". Zincirin 5. halkası; tanımlıysa gerçek SDK'ya HİÇ dokunulmaz.
-   * Değer burada tip olarak dar tutulmaz — doğrulama karar anında yapılır.
+   * The Device Swap SIMULATION channel (AEGIS_DEVICESWAP_SIMULATE):
+   * "temiz" | "degisti". Link 5 of the chain; when it is set the real SDK is NEVER touched.
+   * The value is not narrowed at the type level here — validation happens at decision
+   * time.
    */
   devSwapSimulate?: string;
   /**
-   * Halka 5'in GERÇEK kanalının açma/kapama anahtarı (AEGIS_DEVICESWAP_CHECK).
+   * The on/off switch for link 5's REAL channel (AEGIS_DEVICESWAP_CHECK).
    *
-   * Halka 3'le aynı gerekçeyle OPT-IN, artı GECİKME gerekçesi: HIGH katmandaki her onay,
-   * koşan her gerçek halka için bir CAMARA gidiş-dönüşü daha bekler. Yalnızca token'ın
-   * varlığına bakıp sorguyu açmak, SIM-Swap için token tanımlamış bir operatöre hiç
-   * istemediği gecikmeyi (ve telefonunu yenileyen kullanıcıda yanlış-pozitif reti)
-   * dayatırdı. Kapalıyken halka sorgu yapmaz ve izine "kapali" yazar.
+   * OPT-IN for the same reason as link 3, plus a LATENCY reason: every approval on the HIGH
+   * tier waits for one more CAMARA round trip per real link that runs. Enabling the query
+   * merely because a token exists would impose latency the operator never asked for — and a
+   * false-positive refusal on any user who replaced their phone. While it is off the link
+   * runs no query and records "kapali" in its trace.
    */
   devSwapCheck?: boolean;
   /**
-   * Call Forwarding SİMÜLASYON kanalı (AEGIS_CALLFWD_SIMULATE):
-   * "kapali" | "acik". Zincirin 6. halkası; aynı kapalı-arıza gerekçesiyle değer karar
-   * anında doğrulanır.
+   * The Call Forwarding SIMULATION channel (AEGIS_CALLFWD_SIMULATE):
+   * "kapali" | "acik". Link 6 of the chain; for the same fail-closed reason the value is
+   * validated at decision time.
    *
-   * NOT: buradaki "kapali" YÖNLENDİRMENİN kapalı (yani temiz) olduğunu söyler; iz
-   * alanındaki "kapali" (halka koşmadı) ile aynı kelime, ayrı sözlüktür.
+   * NOTE: "kapali" here says the FORWARDING is off, that is, clean. It is the same word as
+   * the "kapali" in a trace field, which means the link did not run — same word, different
+   * vocabulary.
    */
   callFwdSimulate?: string;
   /**
-   * Halka 6'nın GERÇEK kanalının açma/kapama anahtarı (AEGIS_CALLFWD_CHECK).
-   * Halka 5'le aynı gerekçe: hiçbir halka varsayılan olarak açılmaz — gecikme ve ret
-   * riski operatörün AÇIK niyetini ister.
+   * The on/off switch for link 6's REAL channel (AEGIS_CALLFWD_CHECK).
+   * The same reason as link 5: no link is enabled by default — the latency and the risk of a
+   * refusal both require the operator's EXPLICIT intent.
    */
   callFwdCheck?: boolean;
 }
 
 /**
- * Bir zincir halkasının AŞAĞI AKIŞTAKİ tüm bağlantı noktaları — tek satırda.
+ * All of a chain link's DOWNSTREAM connection points — on one line.
  *
- * `izAlani` ve `ayarAlanlari` DERLEYİCİ tarafından bağlanır (`keyof AgIz` /
- * `keyof AgAyar`): AgIz'de bir alan yeniden adlandırılırsa kayıt DERLENMEZ.
- * `gunlukAlani`, `retIsaretleri` ve `envler` başka dosyalara (kararGunlugu.ts,
- * bu dosyanın ret metinleri, config.ts) işaret ettiği için tipten bağlanamaz;
- * onları test/zincirButunlugu.test.ts çalışma anında doğrular.
+ * `izAlani` and `ayarAlanlari` are bound by the COMPILER (`keyof AgIz` / `keyof AgAyar`):
+ * rename a field on AgIz and the record NO LONGER COMPILES. `gunlukAlani`, `retIsaretleri`
+ * and `envler` point at other files — kararGunlugu.ts, this file's refusal texts, config.ts
+ * — and so cannot be bound by the type; test/zincirButunlugu.test.ts verifies those at
+ * runtime.
  */
 export interface ZincirHalkasi {
-  /** Halkanın kısa kimliği (CAMARA sinyal adına yakın; yalnız kayıt/rapor içindir). */
+  /** The link's short id, close to the CAMARA signal name; for records and reports only. */
   readonly id: string;
-  /** Halkanın AgIz üzerindeki KENDİ alanı — iki halka tek alana ASLA ezilmez. */
+  /** The link's OWN field on AgIz — two links are NEVER collapsed into one. */
   readonly izAlani: keyof AgIz;
-  /** Halkanın KararKaydi (kararGunlugu.ts) üzerindeki KENDİ alanı. */
+  /** The link's OWN field on KararKaydi (kararGunlugu.ts). */
   readonly gunlukAlani: string;
   /**
-   * Halkanın KENDİ geriye bakış penceresini taşıyan AgIz alanı — penceresi olmayan
+   * The AgIz field carrying the link's OWN look-back window — for a link without
    * halkada (2., 3., 4., 6.) YOKTUR.
    *
-   * Pencereler de halka alanları gibi ASLA tek alana ezilmez: 1. ve 5. halka aynı
-   * yapılandırma değerinden (AEGIS_SIMSWAP_WINDOW_HOURS) beslense bile "hangi soru
-   * hangi pencereyle soruldu" ayrımı kaybolmamalı. Kayda alınmasının sebebi ölçülmüş
-   * bir boşluk: alan-alan mutasyonda `pencereSaat` bekçiliyken (2-7 test kızarıyor)
-   * `devSwapPencereSaat` HEM üretim HEM yazım katmanında silindiğinde takım yeşil
-   * kalıyordu — yani SIM-Swap kapalıyken satırdaki TEK pencere bekçisizdi.
+   * Windows, like link fields, are NEVER collapsed into one: even though links 1 and 5 are
+   * fed by the same setting (AEGIS_SIMSWAP_WINDOW_HOURS), the distinction of "which question
+   * was asked with which window" must not be lost. It is in the registry because of a
+   * measured gap: under field-by-field mutation `pencereSaat` was guarded — deleting it
+   * turned 2 to 7 tests red — while deleting `devSwapPencereSaat` from BOTH the production
+   * and the writing layer left the suite green. So with SIM Swap disabled, the ONLY window
+   * on the record had no guard at all.
    */
   readonly pencereIzAlani?: keyof AgIz;
-  /** Pencerenin KararKaydi üzerindeki alanı; penceresiz halkada YOKTUR. */
+  /** The window's field on KararKaydi; ABSENT for a link that has no window. */
   readonly pencereGunlukAlani?: string;
   /**
-   * Bu halkanın ret metninde GERÇEKTEN geçen ayırt edici ifadeler. Aşağı akıştaki
-   * sınıflandırıcı (scripts/brain/uygulama.mjs · AG_KAPISI_IZLERI) bunlardan en az
-   * birini tanımak ZORUNDADIR; tanımazsa ağ kapısının reti sıradan bir sunucu reddi
-   * gibi görünür ve raporda "GÜVENLİK KAPISI ÇALIŞTI" bloğu hiç basılmaz.
+   * The distinctive phrases that GENUINELY appear in this link's refusal text. The
+   * classifier downstream (scripts/brain/uygulama.mjs, AG_KAPISI_IZLERI) MUST recognise at
+   * least one of them; if it does not, a refusal from the network gate looks like an ordinary
+   * server refusal and the report never prints its "GÜVENLİK KAPISI ÇALIŞTI" block.
    */
   readonly retIsaretleri: readonly string[];
-  /** Halkanın KENDİ env adları — config.ts'te process.env ile GERÇEKTEN okunanlar. */
+  /** The link's OWN environment names — the ones config.ts GENUINELY reads from
+   * process.env. */
   readonly envler: readonly string[];
-  /** Halkanın AgAyar alanları — http.ts'teki contextFor önbellek anahtarına girmek ZORUNDA. */
+  /** The link's AgAyar fields — these MUST enter the contextFor cache key in http.ts. */
   readonly ayarAlanlari: readonly (keyof AgAyar)[];
   /**
-   * Halka CANLI uç noktaya karşı doğrulandıysa doğrulama TARİHİ (ISO, YYYY-MM-DD);
-   * doğrulanmadıysa alan HİÇ YOKTUR.
+   * If the link has been verified against the LIVE endpoint, the DATE of that verification
+   * (ISO, YYYY-MM-DD); if it has not, the field is ABSENT.
    *
-   * NEDEN KAYITTA: "hangi halka gerçekten canlı koştu" jüriye, mentöre ve okuyucuya
-   * verilen en pahalı iddiadır ve bugüne kadar YALNIZ serbest metinde yaşıyordu. Sonuç
-   * ölçüldü: aynı depoda docs/CAMARA.md §1 "Live since 31 Aug" derken §2 "links 2, 3
-   * and 4 have not run live" diyordu, README diyagramı ise CAMARA'yı "never yet called
-   * live" diye etiketliyordu. Üçü aynı anda doğru olamaz.
+   * WHY IT IS IN THE REGISTRY: "which link genuinely ran live" is the most expensive claim
+   * made to a jury, a mentor and a reader, and until now it lived ONLY in prose. The result
+   * was measured: in the same repository, docs/CAMARA.md §1 said "Live since 31 Aug" while
+   * §2 said "links 2, 3 and 4 have not run live", and the README diagram labelled CAMARA
+   * "never yet called live". All three cannot be true at once.
    *
-   * Alan bir DAVRANIŞ anahtarı DEĞİLDİR — kapı onu okumaz. Yalnız belgeyi koda bağlar:
-   * test/zincirBelgeKademe.test.ts canlılık iddialarını buradan türetir, belgeden değil.
+   * The field is NOT a behaviour switch — the gate does not read it. It only binds the
+   * documentation to the code: test/zincirBelgeKademe.test.ts derives the liveness claims
+   * from here rather than from the prose.
    */
   readonly canliDogrulandi?: string;
 }
 
 /**
- * ZİNCİRİN TEK KAYNAĞI (six links, one registry).
+ * THE CHAIN'S SINGLE SOURCE (six links, one registry).
  *
- * NEDEN VAR: bu depoda dört tur üst üste aynı hata sınıfı tekrarladı — kapıya yeni bir
- * halka eklendi, ama AŞAĞI AKIŞTAKİ tüketiciler (karar günlüğü alanları, http.ts'in
- * contextFor önbellek anahtarı, Growth Brain'in ret sınıflandırıcısı, env belgeleri)
- * güncellenmeden kaldı. Sonuç her seferinde SESSİZ oldu: günlük yalan söyledi, açılan
- * bir halka önbellekten kapalı sunuldu, ağ kapısının reti "sıradan sunucu reddi" gibi
- * göründü. Testi olan bağlantılar tuttu, testsiz olanlar kaçtı.
+ * WHY IT EXISTS: the same class of mistake repeated four rounds running in this repository —
+ * a new link was added to the gate while the DOWNSTREAM consumers went un-updated: the
+ * decision log's fields, the contextFor cache key in http.ts, Growth Brain's refusal
+ * classifier, the environment documentation. The result was SILENT every time: the log lied,
+ * an enabled link was served from the cache as disabled, and a refusal from the network gate
+ * looked like "an ordinary server refusal". The connections that had tests held; the ones
+ * without tests escaped.
  *
- * Bu yüzden halkanın kimliği artık altı ayrı dosyaya dağılmış örtük bilgi değil, tek bir
- * kayıt: yeni halka BURAYA eklenir ve test/zincirButunlugu.test.ts her tüketiciyi bu
- * kayda karşı doğrular — eksik bağlantı derlemede ya da testte KIRMIZI olur, sessiz
+ * So a link's identity is no longer implicit knowledge spread across six files but one
+ * record: a new link is added HERE, and test/zincirButunlugu.test.ts verifies every consumer
+ * against this registry — a missing connection turns RED in the compiler or the tests rather
+ * than staying silent
  * kalamaz.
  *
- * DİKKAT: kayıt bir DAVRANIŞ anahtarı DEĞİLDİR. Kapı mantığı (agDogrula ve halka
- * katmanları) bu diziyi okumaz; sıra, opt-in kuralları ve fail-closed yolları eskisi
- * gibi kodun kendisindedir. Buraya bir satır eklemek bir halkayı ÇALIŞTIRMAZ; yalnız
- * mevcut halkanın aşağı akıştaki borçlarını beyan eder.
+ * CAREFUL: the registry is NOT a behaviour switch. The gate logic — agDogrula and the link
+ * layers — does not read this array; the order, the opt-in rules and the fail-closed paths
+ * live in the code itself as before. Adding a row here does not make a link RUN; it only
+ * declares an existing link's downstream obligations.
  */
 export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
   {
@@ -725,13 +751,13 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     izAlani: "nv",
     gunlukAlani: "nvKanali",
     retIsaretleri: ["NUMARA DOĞRULAMASI BAŞARISIZ", "numara doğrulaması aktif"],
-    // YALNIZ simülasyon: gerçek CAMARA NV cihaz-taraflı OIDC ister (bkz. dosya başı),
-    // bu yüzden halkanın bir token/opt-in env'i YOKTUR.
+    // SIMULATION ONLY: real CAMARA NV requires a device-side OIDC flow (see the file
+    // header), so this link has NO token or opt-in environment variable.
     envler: ["AEGIS_NV_SIMULATE"],
     ayarAlanlari: ["nvSimulate"],
-    // canliDogrulandi YOK ve olamaz: gerçek NV cihaz-taraflı OIDC'dir, sunucudan
-    // çağrılamaz (bkz. docs/CAMARA.md §4). Bu halka için "henüz koşmadı" bayat bir
-    // beyan değil, mimari bir hükümdür.
+    // There is no canliDogrulandi and there cannot be: real NV is a device-side OIDC flow
+    // and cannot be called from a server (see docs/CAMARA.md §4). For this link "has not run
+    // yet" is not a stale claim but an architectural verdict.
   },
   {
     id: "deviceStatusReachability",
@@ -763,7 +789,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     id: "deviceSwap",
     izAlani: "devSwap",
     gunlukAlani: "devSwapKanali",
-    // 5. halkanın penceresi 1. halkanınkiyle AYNI değerden türer ama AYRI alandır.
+    // Link 5's window derives from the SAME value as link 1's but is a SEPARATE field.
     pencereIzAlani: "devSwapPencereSaat",
     pencereGunlukAlani: "devSwapPencereSaat",
     retIsaretleri: [
@@ -791,23 +817,23 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
 ] as const;
 
 /**
- * Halkaya DEĞİL, zincirin tamamına ait ayarlar. Ayrı durmalarının sebebi kayıt hijyeni:
- * bunları herhangi bir halkanın altına yazmak, o halkanın "kendi" env'iymiş gibi
- * okunmasına ve halka kaldırıldığında zincir genelindeki bir ayarın onunla birlikte
- * silinmesine yol açardı.
+ * Settings that belong to the whole chain rather than to a link. They stand apart for
+ * registry hygiene: writing them under any one link would make them read as that link's
+ * "own" environment, and removing the link would delete a chain-wide setting along with it.
  *
- * `simSwapWindowHours` bilerek burada: pencereyi 1. VE 5. halka paylaşır (ama izde ayrı
+ * `simSwapWindowHours` is here deliberately: links 1 AND 5 share the window, though they are
+ * separate in the trace
  * alanlara yazar — bkz. AgIz.devSwapPencereSaat).
  */
 export const ZINCIR_ORTAK_AYARLARI: readonly (keyof AgAyar)[] = [
   "approverPhone",
   "simSwapWindowHours",
   /**
-   * `stepUp` de zincir GENELİNE aittir: tek bir halkanın değil, zincirin BÜTÜN çıktısının
-   * anlamını değiştirir — açıkken KADEME_UYGUN'daki her ret, düz ret olmak yerine insan
-   * istemine bağlanır. Kayıtta olmaması ölçülebilir bir boşluktu: gözcüler onu aramadığı
-   * için `AEGIS_STEPUP` docs/ altında hiç geçmiyordu ve runbook'un kapalı-arıza
-   * matrisi, açıkken artık geçerli olmayan bir sonuç vaat ediyordu.
+   * `stepUp` belongs to the WHOLE chain too: it changes the meaning not of one link but of
+   * the chain's ENTIRE output — with it on, every refusal in KADEME_UYGUN is bound to a human
+   * prompt instead of being flat. Its absence from the registry was a measurable gap: because
+   * the guards did not look for it, `AEGIS_STEPUP` appeared nowhere under docs/, and the
+   * runbook's fail-closed matrix promised an outcome that no longer held once it was on.
    */
   "stepUp",
 ] as const;
