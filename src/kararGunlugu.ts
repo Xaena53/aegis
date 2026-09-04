@@ -1,166 +1,178 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Ağ kapısı KARAR GÜNLÜĞÜ — denetlenebilirlik izi.
+ * The network gate's DECISION LOG — the audit trail.
  *
- * Ağ kapısı (networkTrust.ts) bir harcama artışını reddettiğinde bunu yalnızca ajana
- * söyler; hesap sahibi "geçen ay kaç kez reddedildi, hangi pencereyle, hangi kanaldan"
- * sorusunu sonradan cevaplayamaz. Bu modül risk etiketli her ağ kararını tek satırlık
- * JSONL olarak biriktirir; kapının kendisine hiç dokunmaz.
+ * When the network gate (networkTrust.ts) refuses a spending increase it tells only the
+ * agent; the account owner has no way to answer "how many times was I refused last month,
+ * under which window, over which channel" afterwards. This module accumulates every
+ * risk-tagged network decision as a single line of JSONL, and never touches the gate itself.
  *
- * DÖRT DEĞİŞMEZ:
+ * FIVE INVARIANTS:
  *
- * 1) GÜNLÜK KAPI DEĞİL, GÖZLEMDİR. Yazma hatası (bozuk yol, salt-okunur dizin, dolu
- *    disk) onay akışını ASLA düşürmez — hata stderr'e tek satır olarak yazılır ve akış
- *    aynen sürer. Tersi, bir denetim aracını yeni bir arıza noktasına çevirirdi:
- *    yanlış yazılmış bir yol yüzünden meşru harcama onayları patlardı.
+ * 1) THE LOG IS AN OBSERVATION, NOT A GATE. A write failure — a bad path, a read-only
+ *    directory, a full disk — NEVER brings the approval flow down: the error is written to
+ *    stderr as one line and the flow continues unchanged. The opposite would turn an audit
+ *    tool into a new point of failure: legitimate spending approvals would break because of
+ *    a mistyped path.
  *
- * 2) SIR YAZILMAZ. Tam onaylayıcı numarası, NaC token'ı veya ham upstream hata metni
- *    kayda ASLA girmez. Numara alanı kapının maskele() çıktısıdır ve buraya yazılmadan
- *    önce yapısal olarak da doğrulanır (en az bir '*' — maskesiz bir E.164 numara bu
- *    kapıdan geçemez). Ret nedeni serbest metin değil, networkTrust'ın SABİT RetNedeni
- *    sözlüğünden bir koddur; böylece upstream'den gelen hiçbir metin günlüğe sızamaz.
+ * 2) NO SECRETS ARE WRITTEN. A full approver number, a NaC token or raw upstream error text
+ *    NEVER enters a record. The number field is the gate's own maskele() output and is
+ *    additionally validated structurally before it is written here (at least one '*' — an
+ *    unmasked E.164 number cannot get through that gate). The refusal reason is not free
+ *    text but a code from networkTrust's FIXED RetNedeni vocabulary, so no upstream text can
+ *    leak into the log.
  *
- * 3) KAYIT METİNDEN DEĞİL, İZDEN ÜRETİLİR. Eskiden kanal/pencere/numara/ret nedeni
- *    ret ve kanıt METİNLERİ koklanarak tahmin ediliyordu; iki halkanın metni tek dizede
- *    birleştiği için günlük yalan söyleyebiliyordu (SIM-Swap kapalı + NV simülasyonu
- *    "gecti/simulasyon" görünüyor, gerçek CAMARA sorgusu + NV simülasyonu "gercek"
- *    yerine "simulasyon" yazılıyordu). Artık her alan AgKarar.iz'den gelir ve zincirin
- *    HER halkası AYRI alana (simSwapKanali / nvKanali / reachKanali / locKanali /
- *    devSwapKanali / callFwdKanali) yazılır — tek boolean'a ASLA ezilmez. Pencereli
- *    halkalar da ayrıdır: pencereSaat SIM-Swap'ın, devSwapPencereSaat 5. halkanındır.
+ * 3) THE RECORD IS DERIVED FROM THE TRACE, NOT FROM TEXT. Channel, window, number and
+ *    refusal reason used to be guessed by sniffing the refusal and evidence STRINGS; because
+ *    two links' text merged into one string, the log could lie (SIM Swap off plus an NV
+ *    simulation showed as "gecti/simulasyon", while a real CAMARA query plus an NV
+ *    simulation was written as "simulasyon" instead of "gercek"). Every field now comes from
+ *    AgKarar.iz, and EVERY link of the chain is written to its OWN field (simSwapKanali /
+ *    nvKanali / reachKanali / locKanali / devSwapKanali / callFwdKanali) — NEVER collapsed
+ *    into one boolean. The windowed links are separate too: pencereSaat belongs to SIM Swap,
+ *    devSwapPencereSaat to link 5.
  *
- *    Bu kural halka eklendikçe yeniden kazanılmak zorundadır: 3. ve 4. halka ilk
- *    yazıldığında izde vardı ama kayda geçmiyordu, dolayısıyla SİMÜLE bir halkanın
- *    ürettiği ret, kayıtta yalnız "simSwapKanali":"gercek" görünüp gerçek bir CAMARA
- *    sorgusunun ürünü sanılıyordu. Yeni halka eklerken buraya da alan eklenmeli.
+ *    This rule has to be won again with every link added: when links 3 and 4 were first
+ *    written they were in the trace but did not reach the record, so a refusal produced by a
+ *    SIMULATED link appeared in the log with only "simSwapKanali":"gercek" and was taken for
+ *    the product of a real CAMARA query. Adding a link means adding its field here.
  *
- * 4) TUTAR ÖLÇÜLÜR, TAHMİN EDİLMEZ. "Kaç kez reddedildi" tek başına yarım cevaptır;
- *    denetçi "NE BÜYÜKLÜKTE bir harcama" diye de sorar. Bu yüzden karara konu olan
- *    günlük tutar `tutar` alanına yazılır — ama YALNIZCA çağrı yeri onu gerçekten
- *    okuyabildiyse. Okunamayan bütçe için alan HİÇ yazılmaz; 0 yazmak "bilmiyorum"u
- *    "sıfır harcama" diye kaydetmek, yani bu dosyanın var oluş nedenine aykırı olurdu.
+ * 4) THE AMOUNT IS MEASURED, NOT GUESSED. "How many times was it refused" is half an answer;
+ *    an auditor also asks "spending of WHAT SIZE". So the daily amount the decision concerns
+ *    is written to the `tutar` field — but ONLY when the call site genuinely managed to read
+ *    it. For an unreadable budget the field is not written at all; writing 0 would record "I
+ *    do not know" as "zero spending", against the very reason this file exists.
  *
- * 5) GÜNLÜĞÜN BİR TAVANI VAR. Sınırsız büyüyen bir denetim dosyası, onay bile
- *    gerektirmeyen bir istek seliyle diski doldurulabilir; ve dolu diskte yazma hatası
- *    akışı düşürmediği için iz SESSİZCE durur. Tavana ulaşan dosya `<yol>.1` olarak
- *    devredilir (bkz. GUNLUK_AZAMI_BAYT).
+ * 5) THE LOG HAS A CEILING. An audit file that grows without bound can be used to fill the
+ *    disk with a flood of requests that do not even require approval; and on a full disk the
+ *    trail stops SILENTLY, because a write failure does not bring the flow down. A file that
+ *    reaches the ceiling is rolled over to `<path>.1` (see GUNLUK_AZAMI_BAYT).
  *
- * Günlük varsayılan olarak KAPALIDIR: AEGIS_DECISION_LOG tanımlı değilse hiçbir
- * dosya oluşturulmaz ve hiçbir şey yazılmaz (demo/compose ortamı açar).
+ * The log is OFF by default: with AEGIS_DECISION_LOG unset no file is created and nothing is
+ * written (the demo and compose environments switch it on).
  */
 import { appendFileSync, renameSync, statSync } from "node:fs";
 import type { AgKarar, AgRisk, HalkaIzi, NvIzi, RetNedeni, SimSwapIzi } from "./networkTrust.js";
 
 /**
- * Kapının verdiği kararın SÖZLÜĞÜ — dört değer, tamamı.
+ * The VOCABULARY of the gate's verdict — four values, and that is all of them.
  *
- * "kademeli" AYRI bir sonuçtur ve "gecti"ye katlanmaz. Denetçi için bu ayrım işin
- * kendisidir: "hiçbir sinyal bozuk değildi" ile "bir sinyal bozuktu, diğerleri temiz
- * geldiği için insana sorularak geçildi" aynı güven seviyesi değildir. Tek bir "gecti"
- * etiketi altında toplanırlarsa, kapının gevşediği anlar kapının hiç zorlanmadığı
- * anlardan ayırt edilemez — ve sonradan "kaç kez yükseltme yaptık" sorusu
- * cevaplanamaz hâle gelir.
+ * "kademeli" is a SEPARATE outcome and is not folded into "gecti". For an auditor that
+ * distinction is the whole job: "no signal was degraded" and "one signal was degraded, and
+ * because the others came back clean it passed by asking a human" are not the same level of
+ * confidence. Collected under a single "gecti" label, the moments the gate loosened become
+ * indistinguishable from the moments it was never under pressure — and the question "how
+ * many times did we escalate" becomes unanswerable after the fact.
  */
 export const KARAR_SONUCLARI = ["gecti", "kademeli", "ret", "kapali"] as const;
 
 /**
- * Sözlük DİZİDEN türetilir, tersi değil: belgelerin (docs/DEMO.md · .env.example)
- * bu değerleri saydığını sınayan gözcü, çalışma anında okunabilen bir listeye
- * ihtiyaç duyar. Elle yazılmış bir birleşim, sözlüğe sessizce dördüncü bir değer
- * eklenmesine izin veriyordu: kod "kademeli" yazarken belgelerde üç değer vardı ve
- * o sözlüğe göre sayaç kuran operatörde kapının yumuşadığı satırlar hiçbir kovaya
- * girmiyordu.
+ * The type is derived FROM THE ARRAY, not the other way round: the guard that checks the
+ * documentation (docs/DEMO.md and .env.example) counts these values needs a list it can read
+ * at runtime. A hand-written union allowed a fourth value to be added to the vocabulary
+ * silently: the code wrote "kademeli" while the documentation listed three values, and for
+ * an operator building counters from that documentation the rows where the gate softened
+ * fell into no bucket at all.
  */
 export type KararSonucu = (typeof KARAR_SONUCLARI)[number];
 
 export interface KararKaydi {
-  /** ISO-8601 zaman damgası. */
+  /** ISO-8601 timestamp. */
   zaman: string;
-  /** Eylemin tek cümlelik özeti (kısaltılmış; kampanya adı içerir, sır içermez). */
+  /** A one-sentence summary of the action (abbreviated; contains the campaign name, never a
+   * secret). */
   eylem: string;
   /**
-   * Kararın ait olduğu reklam hesabı (Google Ads müşteri ID). Hosted çok-kiracılı
-   * modda tüm kiracıların kararları TEK dosyaya düştüğü için, bu alan olmadan
-   * "kimin hesabında ne oldu" sorusu cevaplanamıyordu. Çağrı yeri geçmezse yazılmaz.
+   * The ad account this decision belongs to (the Google Ads customer ID). In hosted
+   * multi-tenant mode every tenant's decisions land in ONE file, so without this field the
+   * question "what happened in whose account" could not be answered. If the call site does
+   * not pass it, it is not written.
    */
   hesapId?: string;
   risk: AgRisk;
   karar: KararSonucu;
   /**
-   * Kademeli doğrulama devreye girdiyse, yükseltmeyi TAŞIYAN halkaların id'leri.
-   * Yükseltme yoksa alan hiç yazılmaz — "yükseltme olmadı" ile "olduğu hâlde
-   * doğrulayanı kaydedilmedi" birbirine karışmasın.
+   * When step-up verification engaged, the ids of the links that CARRIED the escalation.
+   * With no escalation the field is not written at all — so that "there was no escalation"
+   * and "there was one but its vouchers went unrecorded" cannot be confused.
    */
   kademeDogrulayan?: string[];
-  /** 1. halka: gerçek CAMARA sorgusu mu, simülasyon mu, kapalı mı, hiç çalışamadı mı. */
+  /** Link 1: was it a real CAMARA query, a simulation, disabled, or unable to run at
+   * all. */
   simSwapKanali: SimSwapIzi;
-  /** 2. halka (Number Verification); halka hiç koşmadıysa alan YOKTUR. */
+  /** Link 2 (Number Verification); if the link never ran, the field is ABSENT. */
   nvKanali?: NvIzi;
-  /** 3. halka (Device Reachability); halka hiç koşmadıysa alan YOKTUR. */
+  /** Link 3 (Device Reachability); if the link never ran, the field is ABSENT. */
   reachKanali?: HalkaIzi;
-  /** 4. halka (konum / beklenen ülke); halka hiç koşmadıysa alan YOKTUR. */
+  /** Link 4 (location / expected country); if the link never ran, the field is ABSENT. */
   locKanali?: HalkaIzi;
-  /** 5. halka (Device Swap — yeni cihaza taşınma); halka hiç koşmadıysa alan YOKTUR. */
+  /** Link 5 (Device Swap — the number moving to a new handset); if the link never ran, the
+   * field is ABSENT. */
   devSwapKanali?: HalkaIzi;
-  /** 6. halka (Call Forwarding); halka hiç koşmadıysa alan YOKTUR. */
+  /** Link 6 (Call Forwarding); if the link never ran, the field is ABSENT. */
   callFwdKanali?: HalkaIzi;
-  /** Sorgulanan SIM-swap geriye bakış penceresi (saat); sorgu yapılmadıysa yok. */
+  /** The SIM-swap look-back window that was queried, in hours; absent when no query ran. */
   pencereSaat?: number;
   /**
-   * 5. halkanın KENDİ geriye bakış penceresi (saat). pencereSaat ile birleştirilmez:
-   * SIM-Swap katmanı kapalıyken bile cihaz-değişim halkası koşabilir ve o pencereyi
-   * SIM-Swap'ınkiymiş gibi yazmak denetçiyi yanıltırdı.
+   * Link 5's OWN look-back window, in hours. It is not merged with pencereSaat: the device
+   * swap link can run even while the SIM Swap layer is disabled, and recording that window
+   * as if it were SIM Swap's would mislead an auditor.
    */
   devSwapPencereSaat?: number;
   /**
-   * RİSKTEKİ TUTAR: kararın konusu olan GÜNLÜK para büyüklüğü, hesabın KENDİ para
-   * biriminde. "Geçen ay kaç kez reddedildi" sorusunun yanında duran "ne büyüklükte"
-   * sorusu bu alan olmadan cevaplanamıyordu.
+   * THE AMOUNT AT RISK: the DAILY sum the decision concerns, in the account's OWN currency.
+   * Alongside "how many times was I refused last month" sits the question "of what size",
+   * and without this field it could not be answered.
    *
-   * ÜÇ KURAL:
+   * THREE RULES:
    *
-   * a) Para birimi alanı YOKTUR. Birim zaten hesabın bağlamıdır (hesapId + hesabın
-   *    Google Ads/Meta para birimi); buraya bir `paraBirimi` uydurmak, kapının hiç
-   *    ölçmediği bir bilgiyi ölçülmüş gibi kaydetmek olurdu.
+   * a) THERE IS NO CURRENCY FIELD. The unit is already the account's context (hesapId plus
+   *    that account's Google Ads or Meta currency); inventing a `paraBirimi` here would
+   *    record as measured something the gate never measured.
    *
-   * b) MICROS DEĞİL, para birimi. 50 TL "50" olarak yazılır, "50000000" olarak değil:
-   *    denetçinin okuduğu sayı budur, ayrıca micros büyüklüğündeki rakam dizileri
-   *    kayıttaki sır taramalarında kimlik/numara gibi görünürdü.
+   * b) THE CURRENCY AMOUNT, NOT MICROS. 50 TRY is written as "50", not "50000000": that is
+   *    the number an auditor reads, and digit strings of micros magnitude also looked like
+   *    identifiers or phone numbers to the secret scanners run over these records.
    *
-   * c) OKUNAMAYAN TUTAR YAZILMAZ. Çağrı yeri bütçeyi okuyamadıysa alanı HİÇ geçmez;
-   *    0 ya da tahmin yazmak "bilmiyorum"u "sıfır harcama" diye kaydetmek olurdu.
-   *    Anlamı işleme göre değişir ve bilinçlidir: bütçe değişiminde YENİ bütçe, canlı kampanyaya reklam/kelime eklerken o kampanyanın mevcut günlük bütçesi
-   *    (riske girecek tavan), yayına almada kampanyanın günlük bütçesidir.
+   * c) AN UNREADABLE AMOUNT IS NOT WRITTEN. If the call site could not read the budget it
+   *    does not pass the field AT ALL; writing 0 or a guess would record "I do not know" as
+   *    "zero spending". Its meaning varies by operation, deliberately: for a budget change it
+   *    is the NEW budget; when adding an ad or keyword to a live campaign it is that
+   *    campaign's current daily budget, the ceiling being put at risk; and for a go-live it
+   *    is the campaign's daily budget.
    */
   tutar?: number;
-  /** Onaylayıcı numarasının MASKELİ hâli (ör. "+905*******33"); asla tam numara. */
+  /** The approver's number in MASKED form (for example "+905*******33"); never the full
+   * number. */
   maskeliNumara?: string;
-  /** networkTrust'ın sabit sözlüğünden ret kodu; serbest/upstream metin DEĞİL. */
+  /** A refusal code from networkTrust's fixed vocabulary; NOT free or upstream text. */
   retNedeniKisa?: RetNedeni;
   /**
-   * Zincir boyunca üretilen TÜM ret nedenleri (bkz. AgIz.retNedenleri) —
-   * `retNedeniKisa` yalnız kararı VEREN nedendir ve yol boyunca üzerine yazılır.
-   * Bu alan olmadan "SIM değişti + çağrı yönlendirme açık" ile "yalnız çağrı
-   * yönlendirme açık" birebir aynı satırı üretiyordu: saptanmış SIM değişimi izden
-   * siliniyor, üstelik satır temiz bir sorgu izlenimi veriyordu. Hiçbir ret nedeni
-   * üretilmediyse alan HİÇ yazılmaz.
+   * EVERY refusal reason produced along the chain (see AgIz.retNedenleri) — whereas
+   * `retNedeniKisa` is only the reason that MADE the decision, and is overwritten as the
+   * chain proceeds. Without this field, "the SIM changed and call forwarding is active"
+   * produced a line byte-for-byte identical to "call forwarding is active": the detected SIM
+   * change was erased from the trail, and the line gave the impression of a clean query. If
+   * no refusal reason was produced at all, the field is NOT written.
    */
   retNedenleri?: RetNedeni[];
 }
 
-/** Kampanya adları uzun olabilir; günlük satırını sınırlı tutar. */
+/** Campaign names can be long; this keeps the log line bounded. */
 const EYLEM_AZAMI = 160;
 
-/** Hesap kimliği de sınırlı yazılır: çağrı yeri ne gönderirse göndersin satır şişmez. */
+/** The account ID is length-bounded too: whatever the call site sends, the line does not
+ * bloat. */
 const HESAP_ID_AZAMI = 32;
 
 /**
- * Maskeli numara simgesi: en az bir '*' İÇERMEK ZORUNDA. Maskesiz bir E.164 numara
- * (yalnız '+' ve rakam) bu desene yapısal olarak giremez.
+ * The masked-number pattern: it MUST contain at least one '*'. An unmasked E.164 number
+ * (only '+' and digits) cannot structurally match it.
  *
- * İz zaten maskele() çıktısı taşır; bu kontrol onun yerine geçmez, ONU DOĞRULAR:
- * ileride bir katman izi ham numarayla doldurursa sır günlüğe düşmesin diye son
- * savunma hattıdır (kapalı arıza: şüpheli değer yazılmaz, düşürülür).
+ * The trace already carries maskele() output; this check does not replace that, it VERIFIES
+ * it — a last line of defence in case some future layer fills the trace with a raw number,
+ * so the secret does not reach the log (fail closed: a suspicious value is dropped, not
+ * written).
  */
 const MASKELI_NUMARA_DESENI = /\*/;
 
@@ -169,7 +181,8 @@ function kisalt(metin: string, azami: number): string {
   return tek.length <= azami ? tek : tek.slice(0, azami - 1) + "…";
 }
 
-/** Maskesiz görünen bir numarayı kayda ALMAZ; sessizce yutmaz, stderr'e söyler. */
+/** A number that looks unmasked is NOT recorded; it is not swallowed silently either — it
+ * is reported on stderr. */
 function maskeliDogrula(numara: string | undefined): string | undefined {
   if (numara === undefined) return undefined;
   if (MASKELI_NUMARA_DESENI.test(numara)) return numara;
@@ -180,15 +193,15 @@ function maskeliDogrula(numara: string | undefined): string | undefined {
 }
 
 /**
- * Riskteki tutarı kayda ALMADAN önce sayı olarak doğrular.
+ * Validates the amount at risk as a number BEFORE it is recorded.
  *
- * NaN/Infinity, negatif değer ya da sayı olmayan bir şey, çağrı yerinde bir hatanın
- * (ör. okunamayan `amount_micros`'un sessizce NaN'a dönmesi) günlüğe sızmasıdır.
- * Böyle bir değeri yazmak denetçiye uydurma bir büyüklük göstermek olurdu: alan
- * DÜŞÜRÜLÜR, ama sessizce değil — operatör stderr'den görür.
+ * NaN, Infinity, a negative value or anything that is not a number is a fault at the call
+ * site leaking into the log — an unreadable `amount_micros` quietly becoming NaN, for
+ * instance. Writing such a value would show an auditor a fabricated magnitude, so the field
+ * is DROPPED — but not silently: the operator sees it on stderr.
  *
- * 0 geçerlidir ve düşürülmez: "bütçesi 0 olarak okundu" gerçek bir ölçümdür;
- * "okunamadı" ise çağrı yerinin alanı hiç geçmemesiyle ifade edilir.
+ * 0 is valid and is not dropped: "the budget read as 0" is a real measurement, whereas
+ * "could not be read" is expressed by the call site not passing the field at all.
  */
 function tutarDogrula(tutar: number | undefined): number | undefined {
   if (tutar === undefined) return undefined;
@@ -200,31 +213,34 @@ function tutarDogrula(tutar: number | undefined): number | undefined {
 }
 
 /**
- * Hiçbir halka SORGU YAPMADI mı? Engel yokken bu, "geçti" değil "kapalı"dır —
- * hiç sorulmamış bir kontrolü geçmiş göstermek denetimi yalanlar.
+ * Did NO link run a query at all? With no refusal present, that is "kapali" (disabled), not
+ * "gecti" (passed) — presenting a check that was never asked as having been passed makes the
+ * audit lie.
  *
- * Ölçüt yalnız 1. halkadır ve bu bilinçlidir: SIM-Swap halkası bir SIM-değişim
- * yargısı üretir (gerçek CAMARA sorgusuyla ya da demoda simüle kanalla). 2. halka
- * (Number Verification) ise YAPISAL OLARAK sorgu yapamaz — gerçek NV cihaz-taraflı
- * OIDC ister, sunucu onu tek başına çağıramaz (bkz. networkTrust.ts dosya başı).
- * Dolayısıyla NV bir kararı REDDEDEBİLİR ama "kapalı"yı asla "geçti"ye çeviremez:
- * SIM-Swap kapalıyken NV simülasyonunun tek başına işlemi doğrulanmış göstermesi,
- * bu günlüğün düzeltmek için var olduğu yalanın ta kendisiydi.
+ * The criterion is link 1 alone, and that is deliberate: the SIM Swap link produces a verdict
+ * about a SIM change, either through a real CAMARA query or, in a demo, through the simulated
+ * channel. Link 2 (Number Verification) STRUCTURALLY cannot run a query — real NV requires a
+ * device-side OIDC flow that a server cannot call on its own (see the header of
+ * networkTrust.ts). So NV can REFUSE a decision but can never turn "disabled" into "passed":
+ * an NV simulation making an action look verified while SIM Swap was off was precisely the
+ * lie this log exists to correct.
  */
 function hicSorguYok(simSwap: SimSwapIzi): boolean {
   return simSwap !== "gercek" && simSwap !== "simulasyon";
 }
 
 /**
- * Ağ kapısının kararını günlük kaydına çevirir. Tüm alanlar kapının YAPISAL izinden
- * (AgKarar.iz) gelir; ret/kanıt metinleri artık hiç okunmaz.
+ * Turns the network gate's verdict into a log record. Every field comes from the gate's
+ * STRUCTURED trace (AgKarar.iz); the refusal and evidence strings are no longer read at
+ * all.
  */
 export function agKararKaydiOlustur(
   eylem: string,
   risk: AgRisk,
   ag: AgKarar,
   hesapId?: string,
-  /** Riskteki günlük tutar; çağrı yeri OKUYABİLDİYSE geçer, okuyamadıysa hiç geçmez. */
+  /** The daily amount at risk; the call site passes it when it COULD read it, and not at
+   * all when it could not. */
   tutar?: number
 ): KararKaydi {
   const iz = ag.iz;
@@ -245,54 +261,58 @@ export function agKararKaydiOlustur(
     tutar: tutarDogrula(tutar),
     maskeliNumara: maskeliDogrula(iz.maskeliNumara),
     /**
-     * Yükseltilen kararda da yazılır. Ret nedeni burada "neden reddedildi"nin değil,
-     * "hangi sinyal bozuktu"nun adıdır; yükseltme kaydında o ad olmazsa denetçi
-     * kademenin NEDEN devreye girdiğini hiç öğrenemez.
+     * Written on an escalated decision too. Here the refusal reason names not "why it was
+     * refused" but "which signal was degraded"; without that name in an escalation record,
+     * an auditor never learns WHY the step-up engaged.
      */
     retNedeniKisa: ag.engel || iz.kademe === "yukseltildi" ? iz.retNedeni : undefined,
     kademeDogrulayan: iz.kademe === "yukseltildi" ? iz.kademeDogrulayan : undefined,
     /**
-     * Boş dizi alanı AÇMAZ: "bakıldı, bozuk sinyal yoktu" ile "hiç bakılmadı" ayrımı
-     * bu dosyanın her yerindeki kuralın aynısıdır — bilinmeyen alan hiç yazılmaz.
+     * An empty array does NOT open the field: the distinction between "we looked and no
+     * signal was degraded" and "we never looked" is the same rule as everywhere else in this
+     * file — an unknown field is not written.
      */
     retNedenleri: iz.retNedenleri?.length ? [...iz.retNedenleri] : undefined,
   };
 }
 
 /**
- * Kaydı JSONL olarak ekler. AEGIS_DECISION_LOG tanımsızsa GÜNLÜK KAPALIDIR:
- * dosya oluşturulmaz, hiçbir yan etki üretilmez.
+ * Appends the record as JSONL. With AEGIS_DECISION_LOG unset the LOG IS OFF: no file is
+ * created and no side effect is produced.
  *
- * Env karar anında okunur (modül yüklenirken değil): tek bir süreçte günlüğü açıp
- * kapatabilmek hem operatör hem test için gerekir.
+ * The environment is read at decision time rather than at module load: being able to switch
+ * the log on and off within a single process is needed by both the operator and the tests.
  */
 /**
- * GÜNLÜK DOSYASININ BAYT TAVANI ve tek yedek kuşağı.
+ * THE LOG FILE'S BYTE CEILING, and its single generation of backup.
  *
- * Kayıt yazmanın hiçbir üst sınırı yoktu: her riskli karar bir satır ekliyor, dosya
- * yalnızca büyüyordu. Tek bir kötü niyetli (ya da hatalı) ajan, onay bile gerektirmeyen
- * — çünkü kapı zaten reddediyor — istek seliyle diski doldurabilirdi. Ve dolu disk bu
- * modülün en kötü arıza biçimidir: yazma hatası akışı düşürmediği için kimse fark
+ * Writing records had no upper bound: every risky decision appended a line and the file only
+ * grew. A single malicious — or merely buggy — agent could fill the disk with a flood of
+ * requests that do not even require approval, because the gate refuses them anyway. And a
+ * full disk is this module's worst failure mode: since a write error does not bring the flow
+ * down, nobody
  * etmez, denetim izi sessizce durur.
  *
- * Tavana ulaşıldığında dosya `<yol>.1` olarak devredilir ve yeni dosya açılır. Tek
- * kuşak bilinçli: iki dosyalık sabit bir tavan, "sınırsız büyüme" ile "hiç iz yok"
- * arasındaki tek dürüst orta noktadır. Uzun süreli saklama operatörün log toplayıcısının
- * işidir, bu modülün değil.
+ * On reaching the ceiling the file is rolled over to `<path>.1` and a new one is opened. A
+ * single generation is deliberate: a fixed two-file ceiling is the only honest middle ground
+ * between "unbounded growth" and "no trail at all". Long-term retention is the job of the
+ * operator's log collector, not of this module.
  */
 const GUNLUK_AZAMI_BAYT = 16 * 1024 * 1024;
 
 /**
- * Tavana ulaşan dosyayı devreder. HATA YUTULMAZ ama YÜKSELTİLMEZ de: devretme
- * başarısız olursa (dosya kilitli, dizin salt-okunur) satır yine de eklenir —
- * "döndüremedim" yüzünden denetim izini kesmek, tavanın çözdüğünden büyük bir sorundur.
+ * Rolls over a file that has reached the ceiling. The error is neither SWALLOWED nor
+ * ESCALATED: if the rollover fails — the file is locked, the directory is read-only — the
+ * line is still appended. Cutting off the audit trail because "I could not rotate" is a
+ * bigger problem than the one the ceiling solves.
  */
 function dosyayiDevret(hedef: string): void {
   try {
     if (statSync(hedef).size < GUNLUK_AZAMI_BAYT) return;
     renameSync(hedef, `${hedef}.1`);
   } catch (e: any) {
-    // ENOENT = dosya henüz yok: devredilecek bir şey de yok, sessiz geçilir.
+    // ENOENT means the file does not exist yet: there is nothing to roll over, so this
+    // passes quietly.
     if (e?.code === "ENOENT") return;
     console.error(
       `[aegis] karar günlüğü devredilemedi (${hedef}): ${e?.message ?? e} — satır yine de eklenecek`
@@ -306,16 +326,16 @@ export function kararYaz(kayit: KararKaydi): void {
   dosyayiDevret(hedef);
   try {
     /**
-     * Alan sırası bilinçli: JSON.stringify undefined alanları düşürür, böylece
-     * "ölçülemedi" ile "boş" karışmaz.
+     * The field order is deliberate: JSON.stringify drops undefined fields, so "could not be
+     * measured" is never confused with "empty".
      *
-     * DİKKAT — bu liste ELLE yazılır ve eksikliği SESSİZDİR: kayıt nesnesinde
-     * bulunan bir alan burada unutulursa satır yine geçerli JSON'dur, hiçbir tip
-     * hatası çıkmaz ve alan diske hiç düşmez. `kademeDogrulayan` tam olarak böyle
-     * kaçmıştı: yükseltmeyi taşıyan kefil halkalar üretiliyor ama yazılmıyordu, yani
-     * "yükseltme olmadı" ile "kefili kaydedilmedi" kalıcı olarak karışıyordu.
-     * test/kararGunlugu.test.ts bu listeyi ÇİFT YÖNLÜ sınar: kayıttaki her dolu alan
-     * satırda da bulunmak zorundadır.
+     * CAREFUL — this list is written BY HAND and its omissions are SILENT: forget a field
+     * that exists on the record object and the line is still valid JSON, no type error
+     * appears, and the field never reaches disk. `kademeDogrulayan` escaped in exactly this
+     * way: the vouching links carrying an escalation were produced but not written, so "there
+     * was no escalation" and "its vouchers went unrecorded" were permanently confused.
+     * test/kararGunlugu.test.ts checks this list IN BOTH DIRECTIONS: every populated field on
+     * the record must also appear in the line.
      */
     const satir = JSON.stringify({
       zaman: kayit.zaman,
@@ -340,8 +360,9 @@ export function kararYaz(kayit: KararKaydi): void {
     appendFileSync(hedef, satir + "\n", "utf8");
   } catch (e: any) {
     /**
-     * Sessiz yutmak da düşürmek kadar kötü olurdu: operatör, denetim izinin
-     * tutulmadığını fark edemezdi. Tek satır, akış etkilenmeden devam eder.
+     * Swallowing this silently would be as bad as dropping it: the operator would have no
+     * way to notice that the audit trail is not being kept. One line, and the flow continues
+     * unaffected.
      */
     console.error(
       `[aegis] karar günlüğü yazılamadı (${hedef}): ${e?.message ?? e} — onay akışı etkilenmedi`
