@@ -1,28 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * AEGIS — ekran kaydı için tasarlanmış CANLI demo.
+ * AEGIS — a LIVE demo designed for screen recording.
  *
- * npm run demo (scripts/demo-senaryo.mjs) operatör provası içindir: ayrıntılı, Türkçe ve
- * hızlıdır. Bu betik BAŞKA bir işi yapar — 2-3 dakikalık bir jüri videosunda okunabilecek
- * kadar yavaş ve az satırla, TEK bir iddiayı kanıtlar:
+ * npm run demo (scripts/demo-senaryo.mjs) is the operator's rehearsal: detailed, in Turkish
+ * and fast. This script does a DIFFERENT job — slowly enough, and with few enough lines, to
+ * be readable in a two-to-three-minute jury video, and it proves ONE claim:
  *
- *   Aynı ajan, aynı istek, aynı kod. Tek fark ŞEBEKENİN cevabı.
+ *   The same agent, the same request, the same code. The only difference is THE NETWORK's
+ *   answer.
  *
- * FARKLAR VE NEDENLERİ:
- *  - SİMÜLASYON YOK. AEGIS_NAC_SIMULATE bilerek TEMİZLENİR; her çağrı Nokia
- *    Network-as-Code'a gerçekten gider. Bir demo videosunda "simüle" etiketi, izleyicinin
- *    aklına gelen ilk soruyu cevapsız bırakır.
- *  - ÖNCE İNGİLİZCE, SONRA HAM ÇIKTI. Jüri uluslararası; anlaşılmayan bir kanıt kanıt
- *    değildir. Ama ürünün kendi Türkçe metni SİLİNMEZ — "raw output" etiketiyle hemen
- *    altında durur. Anlaşılırlığı çeviri, gerçekliği ham çıktı taşır.
- *  - Tempo `--hiz` ile ayarlanır; kayıt sırasında satırların okunacak zamanı olsun diye.
+ * THE DIFFERENCES, AND WHY:
+ *  - NO SIMULATION. AEGIS_NAC_SIMULATE is deliberately CLEARED; every call really goes to
+ *    Nokia Network-as-Code. In a demo video, a "simulated" label leaves the viewer's very
+ *    first question unanswered.
+ *  - ENGLISH FIRST, THEN THE RAW OUTPUT. The jury is international, and evidence that is not
+ *    understood is not evidence. But the product's own Turkish text is NOT DELETED — it sits
+ *    immediately below, labelled "raw output". The translation carries comprehensibility, the
+ *    raw output carries authenticity.
+ *  - The pace is set with `--hiz`, so the lines have time to be read while recording.
  *
- * KULLANIM:
- *   npm run video                 # normal tempo (kayıt için)
- *   npm run video -- --hiz 0      # beklemesiz (CI / hızlı kontrol)
+ * USAGE:
+ *   npm run video                 # normal pace, for recording
+ *   npm run video -- --hiz 0      # no waiting, for CI or a quick check
  *
- * GEREKSİNİM: AEGIS_NAC_TOKEN. Numaralar Nokia'nın KAMUYA AÇIK simülatör hatlarıdır
- * (dokümanlarında yayımlanmıştır), gerçek bir aboneye ait değildir.
+ * REQUIRES: AEGIS_NAC_TOKEN. The numbers are Nokia's PUBLIC simulator lines, published in
+ * their documentation; they belong to no real subscriber.
  */
 import "dotenv/config";
 import readline from "node:readline";
@@ -30,39 +32,40 @@ import { agDogrula } from "../src/networkTrust.js";
 import { nacConfigFromEnv } from "../src/config.js";
 import { INGILIZCE_RET } from "./video-metin.mjs";
 
-/** Nokia simülatör hatları — dokümanlarından, herkese açık. */
+/** Nokia's simulator lines — from their documentation, public to everyone. */
 const TEMIZ_HAT = "+99999991001"; // swapped:false
 const DEGISMIS_HAT = "+99999991000"; // swapped:true
 
 const hizArg = process.argv.indexOf("--hiz");
 const HIZ = hizArg !== -1 ? Number(process.argv[hizArg + 1]) : 1;
 /**
- * ADIM KİPİ — anlatımı betiğe değil, KONUŞANA bağlar.
+ * STEP MODE — it ties the narration to THE SPEAKER rather than to the script.
  *
- * İlk sürüm sabit beklemelerle koşuyordu ve baştan sona 16 saniye sürüyordu: beş halka
- * 350 ms arayla akıyor, üzerine konuşan insan yetişemiyordu. Kayıtta doğru tempo,
- * sunucunun sesiyle ekranın hizasıdır — bunu önceden kestirmek yerine sunucuya bırakmak
- * daha sağlam. `--adim` ile her duraktan sonra Enter beklenir.
+ * The first version ran on fixed waits and took 16 seconds end to end: five links streaming
+ * past 350 ms apart, with no human narrator able to keep up. In a recording, the right pace
+ * is the alignment of the presenter's voice with the screen — and leaving that to the
+ * presenter is sturdier than guessing it in advance. With `--adim`, each stop waits for
+ * Enter.
  */
 const ADIM = process.argv.includes("--adim");
 
 /**
- * Tek satır bekler. `readline` kullanılıyor, ham `stdin.once("data")` değil.
+ * Waits for a single line. It uses `readline`, not a raw `stdin.once("data")`.
  *
- * Ham okumada girdi bir BORU olduğunda (`printf '\n\n' | npm run video -- --adim`) ilk
- * okuma tamponun tamamını yutar ve sonraki bekleyişler hiç tetiklenmez — betik sessizce
- * asılır. readline satır sınırında keser, dolayısıyla hem klavyede hem boruda aynı
- * davranır; bu da adım kipinin testten geçirilebilmesi demektir.
+ * On a raw read, when the input is a PIPE (`printf '\n\n' | npm run video -- --adim`), the
+ * first read swallows the whole buffer and the later waits never fire — the script hangs
+ * silently. readline cuts at line boundaries, so it behaves the same at a keyboard and down a
+ * pipe, which is what makes step mode testable.
  */
 const satirOkuyucu = readline.createInterface({ input: process.stdin });
 
 /**
- * Gelen satırlar KUYRUĞA alınır; `once("line")` yetmez.
+ * Incoming lines are QUEUED; `once("line")` is not enough.
  *
- * readline satırları okuyabildiği hızda yayar. Girdi bir boruysa hepsi ilk anda gelir ve
- * o sırada dinleyici takılı olmadığı için kaybolur — betik üçüncü durakta sessizce asılır
- * (ölçüldü: yedi durağın yalnız ikisi göründü). Kuyruk, erken gelen satırı saklar;
- * klavyede de boruda da aynı çalışır.
+ * readline emits lines as fast as it can read them. If the input is a pipe they all arrive at
+ * once, and because no listener is attached at that moment they are lost — the script hangs
+ * silently at the third stop (measured: only two of seven stops appeared). The queue holds an
+ * early line, and works the same at a keyboard as down a pipe.
  */
 const satirKuyrugu: string[] = [];
 let satirBekleyen: (() => void) | undefined;
@@ -91,7 +94,8 @@ const bekle = async (ms: number): Promise<void> => {
   await new Promise((r) => setTimeout(r, ms * (Number.isFinite(HIZ) ? HIZ : 1)));
 };
 
-/** Anlatımın nefes alacağı yer: adım kipinde Enter, değilse ölçülü bir duraklama. */
+/** Where the narration gets to breathe: Enter in step mode, a measured pause
+ * otherwise. */
 const durak = async (ms: number): Promise<void> => {
   if (ADIM) {
     console.log(gri("\n      [Enter] — anlatımın bittiğinde devam et"));
@@ -115,8 +119,8 @@ function baslik(metin: string): void {
 }
 
 /**
- * Zincirin TAM hâli. Beş halka da açık: video "beşi canlı" diyorsa ekranda beşi
- * koşmalıdır. expectedCountry, konum halkasının çalışması için şart.
+ * The chain in FULL. All five links are on: if the video says "five of them live", five
+ * have to run on screen. expectedCountry is required for the location link to work.
  */
 function ayarKur(numara: string) {
   const temel = nacConfigFromEnv() as any;
@@ -138,7 +142,7 @@ function ayarKur(numara: string) {
   };
 }
 
-/** İzdeki halka durumlarını okunur satırlara çevirir. */
+/** Turns the link statuses in the trace into readable lines. */
 function halkaSatirlari(iz: any): string[] {
   const ad: Record<string, string> = {
     simSwap: "SIM Swap",
@@ -182,18 +186,20 @@ async function sahne(no: string, etiket: string, numara: string): Promise<void> 
 
   if (karar.engel) {
     /**
-     * SIRA BİLİNÇLİ: ÖNCE İNGİLİZCE, SONRA HAM TÜRKÇE ÇIKTI.
+     * THE ORDER IS DELIBERATE: ENGLISH FIRST, THEN THE RAW TURKISH OUTPUT.
      *
-     * İlk sürümde ham çıktı üstteydi ve İngilizce altında küçük duruyordu. Videonun en
-     * kritik anında, Türkçe bilmeyen bir jüri ekranda anlamadığı bir metin duvarı
-     * görüyordu — anlaşılmayan bir kanıt kanıt değildir.
+     * In the first version the raw output was on top and the English sat small beneath it.
+     * At the video's most critical moment, a jury that does not read Turkish was looking at
+     * a wall of text it could not understand — and evidence that is not understood is not
+     * evidence.
      *
-     * Ham çıktı SİLİNMEDİ, aşağı alındı ve "raw output" diye etiketlendi: anlaşılırlığı
-     * İngilizce, gerçekliği Türkçe taşıyor. Ürünün kendi metnini kameraya çevirip
-     * göstermek, ekranda ürünün değil pazarlamanın görünmesi olurdu.
+     * The raw output was NOT DELETED, it was moved down and labelled "raw output": the
+     * English carries comprehensibility and the Turkish carries authenticity. Turning the
+     * product's own text away from the camera would put marketing on screen instead of the
+     * product.
      *
-     * Çeviri elle yazılmıştır ve kayabilir; test/videoCevirisi.test.ts ham ret metninin
-     * hâlâ bu çevirinin anlattığı şeyi söylediğini çiviler.
+     * The translation is written by hand and can drift; test/videoCevirisi.test.ts nails
+     * down that the raw refusal text still says what this translation claims it says.
      */
     console.log("\n  " + kirmizi(kalin("  REFUSED — the approval prompt was never shown  ")));
     console.log("");
@@ -217,7 +223,8 @@ async function sahne(no: string, etiket: string, numara: string): Promise<void> 
   await durak(5000);
 }
 
-/** Uzun ret metnini sabit genişlikte sarmalar (terminal genişliğine bağımlı olmasın). */
+/** Wraps a long refusal text at a fixed width, so it does not depend on the terminal's
+ * width. */
 function sarmala(metin: string, genislik: number): string[] {
   const kelimeler = metin.split(/\s+/);
   const satirlar: string[] = [];

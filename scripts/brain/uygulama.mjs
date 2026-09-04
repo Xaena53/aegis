@@ -1,35 +1,39 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Growth Brain — uygulama (yürütme) adımı.
+ * Growth Brain — the application (execution) step.
  *
- * Onaylı planı MCP yazma araçlarıyla gerçek hesaba işler. Sıra:
- *   create_search_campaign (PAUSED doğar) → add_keywords (yalnız EXACT/BROAD)
+ * It writes the approved plan into a real account through the MCP write tools, in order:
+ *   create_search_campaign (born PAUSED) → add_keywords (EXACT/BROAD only)
  *   → add_campaign_negative_keywords → create_responsive_search_ad
  *
- * Güvenlik değişmezleri:
- *  - uygula() akışında set_campaign_status ve update_campaign_budget KALICI kara
- *    listededir: kurulum yolu hiçbir koşulda kampanyayı yayına almaz, bütçe değiştirmez.
- *  - Yayına alma YALNIZ ayrı yayinaAl() fonksiyonundan çıkabilir (bkz. aşağıdaki
- *    "Yayına alma" bölümü). O fonksiyon guvenliCagirici'yi KULLANMAZ; kendi dar
- *    sarmalayıcısı (yayinCagirici) yalnız set_campaign_status + status='ENABLED'
- *    taşır. Böylece kara liste kurulum yolunda aynen durur ve ENABLED çağrısının
- *    tek çıkış noktası tek bir fonksiyon olur.
- *  - Hiçbir araca `confirm` anahtarı gönderilmez (her iki sarmalayıcı da koşulsuz
- *    siler) — onay gerektiren her işlem sunucu tarafında tasarım gereği reddedilir.
- *    yayinaAl bunu DEĞİŞTİRMEZ: ENABLED çağrısı yapılır, kararı sunucudaki ağ kapısı
- *    ve insan onayı kapısı verir; bu istemci onayı asla uyduramaz.
- *  - Araç argümanları alan alan elle kurulur; plan/kreatif nesneleri asla spread edilmez.
- *  - Negatif kelimeler YALNIZ bu çalıştırmada oluşturulan kampanyaya bağlanır:
- *    campaignId sadece create_search_campaign sonucundan regex ile ayrıştırılır,
- *    plan/kreatif içinde ID/URL/müşteri alanı görülürse baştan hata verilir.
- *  - ID ayrıştırılamazsa ya da sonuçta kırpma işareti varsa kalan TÜM adımlar iptal
- *    edilir; asla "en yeni kampanyayı bul" tahmini yapılmaz.
+ * Security invariants:
+ *  - In the uygula() flow, set_campaign_status and update_campaign_budget are PERMANENTLY
+ *    blacklisted: under no condition does the creation path take a campaign live or change a
+ *    budget.
+ *  - Going live can leave ONLY through the separate yayinaAl() function — see the "going
+ *    live" section below. That function DOES NOT USE guvenliCagirici; its own narrow wrapper,
+ *    yayinCagirici, carries set_campaign_status with status='ENABLED' and nothing else. So
+ *    the blacklist stands untouched on the creation path, and the ENABLED call has exactly
+ *    one exit point.
+ *  - No tool is ever sent a `confirm` key — both wrappers delete it unconditionally — so
+ *    every operation requiring approval is refused on the server side by design. yayinaAl
+ *    DOES NOT CHANGE THAT: the ENABLED call is made, and the decision belongs to the
+ *    server's network gate and human-approval gate; this client can never fabricate an
+ *    approval.
+ *  - Tool arguments are built field by field, by hand; the plan and creative objects are
+ *    never spread.
+ *  - Negative keywords are attached ONLY to the campaign created in this run: campaignId is
+ *    parsed by regex from the create_search_campaign result alone, and if an id, URL or
+ *    customer field is seen inside the plan or the creative, it is an error up front.
+ *  - If the id cannot be parsed, or the result carries a truncation marker, ALL remaining
+ *    steps are cancelled; there is never a "find the newest campaign" guess.
  */
 
-/** mcpBaglan'ın sonuç tavanında bıraktığı işaret (demo-agent.mjs deseni). */
+/** The marker mcpBaglan leaves at its result cap, following the demo-agent.mjs
+ * pattern. */
 const KIRPMA_ISARETI = "[... sonuç kırpıldı ...]";
 
-/** Bu modülün çağırabileceği yazma araçları — sabit izinli liste. */
+/** The write tools this module may call — a fixed allowlist. */
 export const YAZMA_IZINLI = Object.freeze([
   "create_search_campaign",
   "add_keywords",
@@ -37,28 +41,29 @@ export const YAZMA_IZINLI = Object.freeze([
   "create_responsive_search_ad",
 ]);
 
-/** Yalnız idempotenlik ön-kontrolü için izinli okuma aracı. */
+/** The read tool allowed solely for the idempotency pre-check. */
 export const OKUMA_IZINLI = Object.freeze(["run_gaql"]);
 
 /**
- * Kalıcı kara liste: harcama başlatan/artıran araçlar. İzinli listeye ileride
- * yanlışlıkla eklense bile sarmalayıcı önce burayı kontrol eder ve reddeder.
+ * The permanent blacklist: the tools that start or increase spending. Even if one is added
+ * to the allowlist by mistake later, the wrapper checks here first and refuses.
  *
- * DİKKAT: bu liste KURULUM yolunun (uygula → guvenliCagirici) kara listesidir ve
- * gevşetilmemiştir. Yayına alma yolu ayrı bir sarmalayıcı kullanır (yayinCagirici)
- * ve o sarmalayıcı da yalnız TEK aracı, tek statüyle taşır.
+ * NOTE: this is the blacklist of the CREATION path, uygula → guvenliCagirici, and it has not
+ * been loosened. The go-live path uses a separate wrapper, yayinCagirici, and that wrapper in
+ * turn carries a SINGLE tool with a single status.
  */
 export const KARA_LISTE = Object.freeze(["set_campaign_status", "update_campaign_budget"]);
 
-/** Yayına alma yolunun TEK izinli aracı — başka hiçbir araç bu yoldan geçemez. */
+/** The go-live path's ONLY permitted tool — no other tool can pass this way. */
 export const YAYIN_ARACI = "set_campaign_status";
 
-/** Kontrol karakterleri + C1 aralığı (ANSI/terminal enjeksiyonuna karşı). */
+/** Control characters and the C1 range, against ANSI and terminal injection. */
 const KONTROL_KARAKTERI = /[\x00-\x1f\x7f-\x9f]/;
 
 /**
- * Operatör girdisi olmayan nesnelerde (plan/kreatif) bulunması yasak alan adları:
- * kimlik ve hedef değerleri YALNIZ operatörden gelir, LLM çıktısından asla.
+ * Field names forbidden in objects that are not operator input, meaning the plan and the
+ * creative: identity and destination values come ONLY from the operator, never from an LLM's
+ * output.
  */
 const YASAK_ALANLAR = new Set([
   "finalurl",
@@ -70,24 +75,25 @@ const YASAK_ALANLAR = new Set([
   "confirm",
 ]);
 
-/* ── Yardımcılar ─────────────────────────────────────────────────────────────── */
+/* ── Helpers ─────────────────────────────────────────────────────────────────── */
 
-/** Rapor/terminale gidecek özet: ANSI ve kontrol karakterleri sökülür, uzunluk kırpılır. */
+/** A summary bound for the report or the terminal: ANSI and control characters are stripped
+ * and the length is capped. */
 function gorunurOzet(metin, tavan = 400) {
   const temiz = String(metin ?? "")
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "") // ANSI kaçış dizileri
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "") // \n ve \t kalsın
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "") // ANSI escape sequences
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "") // keep \n and \t
     .trim();
   return temiz.length > tavan ? temiz.slice(0, tavan) + "…" : temiz;
 }
 
 /**
- * Sunucunun BAŞARI imzaları — araç araç, src/tools/write.ts'in BUGÜNKÜ metinlerinden.
+ * The server's SUCCESS signatures — tool by tool, taken from write.ts's CURRENT text.
  *
- * Bunlar "başarı" iddiasının TEK dayanağıdır: bir yazmanın gerçekten olduğunu ancak
- * sunucunun kendi olumlu cümlesi söyleyebilir. Metinler değişirse buradaki desenler de
- * değişmeli — o güne kadar adımlar 'tamam' yerine 'belirsiz' damgalanır, yani hata
- * KAPALI tarafa düşer (yarım kalmış bir kurulum yayına alınmaz).
+ * These are the SOLE basis for a claim of "success": only the server's own affirmative
+ * sentence can say that a write really happened. If that text changes, these patterns have to
+ * change with it — and until they do, steps are stamped 'belirsiz' rather than 'tamam', so
+ * the error falls on the CLOSED side and a half-finished setup is not taken live.
  */
 const BASARI_IZLERI = [
   /Kampanya PAUSED olarak oluşturuldu/u, // create_search_campaign
@@ -98,49 +104,50 @@ const BASARI_IZLERI = [
   /^\d+\s+satır/mu, // run_gaql (idempotenlik ön-kontrolü)
 ];
 
-/** Sunucunun isError OLMADAN düz metinle döndürdüğü BİLİNEN ret imzaları. */
+/** The KNOWN refusal signatures the server returns as plain text, WITHOUT isError. */
 const RET_IZLERI = [
   /^(Reddedildi|Araç hatası|Yazma araçları|İşlem yapılmadı)/iu,
   /devre dışı|bulunamadı/iu,
 ];
 
 /**
- * Araç yanıtını ÜÇ değerle sınıflar — ikiye değil, çünkü "başarısız olduğunu
- * biliyorum" ile "ne olduğunu bilmiyorum" aynı şey değildir:
+ * Classifies a tool response with THREE values, not two, because "I know it failed" and "I
+ * do not know what happened" are not the same thing:
  *
- *   'basarisiz' — sunucunun BİLİNEN bir ret metni,
- *   'tamam'     — sunucunun POZİTİF başarı imzası,
- *   'belirsiz'  — ikisi de değil: yazmanın olup olmadığı DOĞRULANAMADI.
+ *   'basarisiz' — a KNOWN refusal text from the server,
+ *   'tamam'     — a POSITIVE success signature from the server,
+ *   'belirsiz'  — neither: whether the write happened COULD NOT BE CONFIRMED.
  *
- * KAPALI ARIZA. Eskiden yalnız "ret desenlerinden biri var mı" diye bakılıyor,
- * eşleşme yoksa adım 'tamam' damgalanıyordu. Yani sunucunun tanımadığımız her
- * cevabı — ham "429", "PERMISSION_DENIED", "Geçersiz kampanya ID", kullanıcının
- * onayı reddettiğinde dönen "İşlem yapılmadı: ..." metni — YAPILMAMIŞ bir yazmayı
- * denetim izine TAMAM diye yazıyordu; süreç 0 ile çıkıyor ve yarım kalmış bir
- * kampanya için --yayinla kapısı açılıyordu. Başarı artık yalnız pozitif imzayla
- * ilan edilir; tanınmayan yanıt bir zafer değil bir bilinmezdir ve kalanı durdurur.
+ * FAILS CLOSED. It used to check only "does one of the refusal patterns match", and with no
+ * match the step was stamped 'tamam'. So every server response we did not recognise — a raw
+ * "429", "PERMISSION_DENIED", "Geçersiz kampanya ID", the "İşlem yapılmadı: ..." text
+ * returned when the user declines approval — wrote a write THAT NEVER HAPPENED into the audit
+ * trail as OK; the process exited 0, and the --yayinla gate opened for a half-finished
+ * campaign. Success is now declared only by a positive signature; an unrecognised response is
+ * not a victory but an unknown, and it stops the rest.
  */
 export function sonucDurumu(metin) {
   const m = String(metin ?? "").trim();
   if (!m || m === "(boş yanıt)") return "basarisiz";
-  // Ret her zaman başarıyı yener: bir metin ikisini birden taşıyorsa o metin bir rettir.
+  // A refusal always beats a success: if one text carries both, that text is a refusal.
   if (RET_IZLERI.some((d) => d.test(m))) return "basarisiz";
   return BASARI_IZLERI.some((d) => d.test(m)) ? "tamam" : "belirsiz";
 }
 
 /**
- * "Bu yanıt BİLİNEN bir ret mi?" — 'belirsiz' burada false döner.
+ * "Is this response a KNOWN refusal?" — 'belirsiz' returns false here.
  *
- * yayinSonucuSinifla tam olarak bu ayrımı ister: yayın yolunda tanınmayan bir yanıt
- * "reddedildi" değil 'hata' olarak sınıflanmalıdır. O yol da kapalı arızadır, çünkü
- * başarıyı kendi pozitif imzasıyla (YAYIN_BASARI_IZI) ilan eder. Adım damgası için
- * sonucDurumu kullanılır; bu yardımcı ondan türetilir.
+ * yayinSonucuSinifla wants exactly that distinction: on the go-live path an unrecognised
+ * response must be classified as 'hata', not as 'reddedildi'. That path fails closed too,
+ * because it declares success by its own positive signature, YAYIN_BASARI_IZI. For the step's
+ * stamp, sonucDurumu is what is used; this helper is derived from it.
  */
 export function sonucBasarisizMi(metin) {
   return sonucDurumu(metin) === "basarisiz";
 }
 
-/** Kimlikler yalnız create_search_campaign sonuç metninden, tam yol regex'iyle ayrıştırılır. */
+/** Identifiers are parsed only from the create_search_campaign result text, with a
+ * full-path regex. */
 export function kimlikAyikla(metin) {
   const m = String(metin ?? "");
   return {
@@ -150,11 +157,12 @@ export function kimlikAyikla(metin) {
 }
 
 /**
- * cagir sarmalayıcısı — savunma derinliği:
- *  - kara listedeki araçlar her koşulda Türkçe hatayla reddedilir,
- *  - izinli liste dışındaki her araç adı reddedilir,
- *  - `confirm` anahtarı koşulsuz silinir (insan onayı bayrağı istemciden gönderilmez),
- *  - dönüş her zaman string'e çevrilir.
+ * The cagir wrapper — defence in depth:
+ *  - a blacklisted tool is refused with an error under every condition,
+ *  - any tool name outside the allowlist is refused,
+ *  - the `confirm` key is deleted unconditionally, so the human-approval flag is never sent
+ *    from this client,
+ *  - the return value is always coerced to a string.
  */
 export function guvenliCagirici(cagir) {
   if (typeof cagir !== "function") {
@@ -178,7 +186,8 @@ export function guvenliCagirici(cagir) {
   };
 }
 
-/** plan/kreatif içinde yasak alan taraması (iç içe nesneler dahil, sınırlı derinlik). */
+/** A scan for forbidden fields inside the plan and the creative, nested objects included,
+ * to a bounded depth. */
 function yasakAlanTara(deger, kaynak, derinlik = 0) {
   if (derinlik > 6 || deger === null || typeof deger !== "object") return;
   for (const [anahtar, alt] of Object.entries(deger)) {
@@ -191,7 +200,7 @@ function yasakAlanTara(deger, kaynak, derinlik = 0) {
   }
 }
 
-/** Zorunlu, kontrol karakterinden arınmış metin alanı; kırpılmış (trim) halini döndürür. */
+/** A required text field, free of control characters; the trimmed value is returned. */
 function guvenliDize(deger, alanAdi, { max } = {}) {
   if (typeof deger !== "string") throw new Error(`${alanAdi} metin (string) olmalı.`);
   if (KONTROL_KARAKTERI.test(deger)) throw new Error(`${alanAdi} kontrol karakteri içeremez.`);
@@ -203,7 +212,8 @@ function guvenliDize(deger, alanAdi, { max } = {}) {
   return d;
 }
 
-/** Anahtar kelime doğrulama: metin, ≤80 karakter, URL ve kontrol karakteri yok. */
+/** Keyword validation: a string of at most 80 characters, with no URL and no control
+ * characters. */
 function kelimeDogrula(kelime, kaynak) {
   const k = guvenliDize(kelime, `${kaynak} anahtar kelimesi`, { max: 80 });
   if (/https?:\/\//i.test(k)) throw new Error(`${kaynak} anahtar kelimesi URL içeremez: '${gorunurOzet(k, 60)}'`);
@@ -222,24 +232,26 @@ function tekrarsiz(liste) {
   return sonuc;
 }
 
-/** GAQL string sabiti kaçışı (idempotenlik sorgusu için). */
+/** Escaping for a GAQL string literal, used by the idempotency query. */
 function gaqlKacir(s) {
   return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-/** Çalıştırma damgası: aynı planın tekrar koşulması yeni ad üretir, çakışma erken yakalanır. */
+/** A run stamp: running the same plan again produces a new name, so a clash is caught
+ * early. */
 function calistirmaDamgasi(simdi = new Date()) {
   const p = (n, hane = 2) => String(n).padStart(hane, "0");
   return `GB-${simdi.getFullYear()}${p(simdi.getMonth() + 1)}${p(simdi.getDate())}-${p(simdi.getHours())}${p(simdi.getMinutes())}`;
 }
 
-/* ── Ana akış ────────────────────────────────────────────────────────────────── */
+/* ── The main flow ───────────────────────────────────────────────────────────── */
 
 /**
- * Planı ve kreatifi gerçek hesaba uygular.
- * Dönüş: { kampanyaId?, adGrubuId?, basari, adimlar:[{arac, ozet, sonucOzeti, durum}],
+ * Applies the plan and the creative to a real account.
+ * Returns { kampanyaId?, adGrubuId?, basari, adimlar:[{arac, ozet, sonucOzeti, durum}],
  *          uyarilar:[..], eksikAdimlar:[..] }
- * Hiçbir koşulda set_campaign_status(ENABLED) veya update_campaign_budget çağırmaz.
+ * Under no condition does it call set_campaign_status(ENABLED) or
+ * update_campaign_budget.
  */
 export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) {
   const guvenliCagir = guvenliCagirici(cagir);
@@ -247,7 +259,7 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
   const adimlar = [];
   const eksikAdimlar = [];
 
-  /* 1) Operatör girdisi doğrulaması — finalUrl ve musteriId YALNIZ buradan gelir. */
+  /* 1) Validating operator input — finalUrl and musteriId come ONLY from here. */
   const musteri = guvenliDize(musteriId, "musteriId", { max: 20 });
   if (!/^[0-9-]+$/.test(musteri)) {
     throw new Error("musteriId yalnız rakam ve tire içerebilir (örn. 1234567890).");
@@ -257,13 +269,14 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     throw new Error("finalUrl yalnız http/https ile başlayabilir.");
   }
 
-  /* 2) Köken güvenliği: plan/kreatif kimlik veya hedef alanı taşıyamaz. */
+  /* 2) Provenance safety: the plan and the creative may carry no identity or destination
+     field. */
   if (!plan || typeof plan !== "object") throw new Error("plan nesnesi zorunlu.");
   if (!kreatif || typeof kreatif !== "object") throw new Error("kreatif nesnesi zorunlu.");
   yasakAlanTara(plan, "plan");
   yasakAlanTara(kreatif, "kreatif");
 
-  /* 3) Plan içerik doğrulaması (planDogrula'nın üstüne ikinci kemer, fail-closed). */
+  /* 3) Validating the plan's content — a second belt on top of planDogrula, fail-closed. */
   const planAdi = guvenliDize(plan.kampanyaAdi, "plan.kampanyaAdi", { max: 200 });
   const butce = plan.butceGunlukTL;
   if (!(typeof butce === "number" && Number.isFinite(butce) && butce > 0)) {
@@ -320,7 +333,7 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     }
   }
 
-  /* 4) Kreatif doğrulaması (kreatifDogrula'nın üstüne ikinci kemer). */
+  /* 4) Validating the creative — a second belt on top of kreatifDogrula. */
   if (!Array.isArray(kreatif.basliklar)) throw new Error("kreatif.basliklar bir dizi olmalı.");
   const basliklar = tekrarsiz(kreatif.basliklar.map((b, i) => guvenliDize(b, `kreatif.basliklar[${i}]`, { max: 30 })));
   if (basliklar.length < 3 || basliklar.length > 15) {
@@ -337,20 +350,21 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     if (/https?:\/\//i.test(metin)) throw new Error("Başlık/açıklama içinde URL olamaz.");
   }
 
-  /* 5) İdempotenlik: damgalı kampanya adı + aynı adlı kampanya ön-kontrolü. */
+  /* 5) Idempotency: a stamped campaign name plus a pre-check for a campaign of the same
+     name. */
   const kampanyaAdi = `${calistirmaDamgasi()} — ${planAdi}`.slice(0, 255);
   let kampanyaId;
   let adGrubuId;
   let basari = true;
   let devam = true;
   /**
-   * Bir araç yanıtı sonuç tavanına takıldı mı? Rapor katmanı bu bayrağı okuyup
-   * "⚠ YARIM OLABİLİR" damgasını basar (rapor.mjs · uygulamaSonucu.kirpik).
+   * Did a tool response hit the result cap? The reporting layer reads this flag and prints
+   * the "⚠ YARIM OLABİLİR" stamp — see rapor.mjs and uygulamaSonucu.kirpik.
    *
-   * Alan buraya SONRADAN eklendi ve eksikliği sessizdi: rapor tarafı yıllardır
-   * `uygulamaSonucu?.kirpik` okuyordu, üreten taraf onu HİÇ yazmıyordu. Yani
-   * belgelenen değişmez üretimde hiç ateşlenemiyordu — 94 bin karakterlik bir
-   * yanıtta bile damga basılmıyor, adım TAMAM görünüyordu.
+   * The field was added here AFTERWARDS, and its absence was silent: the report side had
+   * long been reading `uygulamaSonucu?.kirpik` while the producing side NEVER wrote it. So a
+   * documented invariant could never fire in production — even on a response of 94,000
+   * characters the stamp was not printed and the step looked OK.
    */
   let kirpikVar = false;
 
@@ -386,7 +400,7 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     uyarilar.push("İdempotenlik kontrolü yapılamadı — damgalı ad benzersiz varsayılarak devam edildi.");
   }
 
-  /* 6) Yazma adımları — argümanlar alan alan elle kurulur, asla spread edilmez. */
+  /* 6) The write steps — arguments are built field by field, never spread. */
   const grupAdi =
     typeof gruplar[0]?.ad === "string" && gruplar[0].ad.trim() && !KONTROL_KARAKTERI.test(gruplar[0].ad)
       ? gruplar[0].ad.trim().slice(0, 255)
@@ -432,7 +446,7 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     kuyruk.push({
       arac: "add_campaign_negative_keywords",
       ozet: `${negatifler.length} negatif kelime (kampanya seviyesi)`,
-      // campaignId YALNIZ create_search_campaign sonucundan ayrıştırılan değerdir.
+      // campaignId is ONLY the value parsed out of the create_search_campaign result.
       args: () => ({ customerId: musteri, campaignId: kampanyaId, keywords: negatifler, matchType: "PHRASE" }),
     });
   }
@@ -471,8 +485,9 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     }
     const kirpik = metin.includes(KIRPMA_ISARETI);
     /**
-     * Kırpılmış yanıt her hâlükârda 'belirsiz'dir: kırpma işareti metnin SONUNDADIR,
-     * yani başarı imzası görünse bile geri kalanı okunmamıştır.
+     * A truncated response is 'belirsiz' in every case: the truncation marker sits at the
+     * END of the text, so even when a success signature is visible, the rest went
+     * unread.
      */
     const ham = sonucDurumu(metin);
     const durum = ham === "basarisiz" ? "basarisiz" : kirpik ? "belirsiz" : ham;
@@ -485,9 +500,10 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     });
     if (durum !== "tamam") {
       /**
-       * 'basarisiz' de 'belirsiz' de kalan adımları iptal eder — fail-closed. Ayrımı
-       * yalnız damga ve uyarı metni taşır: biri "olmadığını biliyoruz", diğeri
-       * "olup olmadığını bilmiyoruz" der ve ikisi de "oldu" DEĞİLDİR.
+       * Both 'basarisiz' and 'belirsiz' cancel the remaining steps — fail-closed. The
+       * distinction is carried only by the stamp and the warning text: one says "we know it
+       * did not happen", the other "we do not know whether it happened", and neither of
+       * them is "it happened".
        */
       eksikAdimlar.push(adim.arac);
       devam = false;
@@ -510,18 +526,18 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
   return { kampanyaId, adGrubuId, basari, kirpik: kirpikVar, adimlar, uyarilar, eksikAdimlar };
 }
 
-/* ── Yayına alma (YALNIZ growth-brain.mjs --yayinla yolundan) ────────────────── */
+/* ── Going live (ONLY from growth-brain.mjs's --yayinla path) ────────────────── */
 
 /**
- * Yayına alma yolunun dar sarmalayıcısı. guvenliCagirici'nin AKRABASI DEĞİL:
- * kurulum yolundaki kara liste orada aynen durur, burada ise izin verilen küme
- * tek elemanlıdır.
+ * The go-live path's narrow wrapper. It is NOT A RELATIVE of guvenliCagirici: the creation
+ * path's blacklist stands untouched over there, while here the permitted set has exactly one
+ * member.
  *
- *  - Araç adı YALNIZ set_campaign_status olabilir; başka her ad reddedilir.
- *  - status YALNIZ 'ENABLED' olabilir: bu sarmalayıcı "duraklat" için de bir yol
- *    açsaydı, tek amaçlı olduğu iddiası kod düzeyinde doğrulanamazdı.
- *  - `confirm` anahtarı koşulsuz silinir — insan onayını bu istemci uyduramaz;
- *    kararı sunucudaki ağ kapısı ve onay kapısı verir.
+ *  - The tool name may ONLY be set_campaign_status; every other name is refused.
+ *  - The status may ONLY be 'ENABLED': if this wrapper also opened a path for "pause", its
+ *    claim to serve a single purpose could not be verified at the level of the code.
+ *  - The `confirm` key is deleted unconditionally — this client cannot fabricate human
+ *    approval; the decision belongs to the server's network gate and approval gate.
  */
 export function yayinCagirici(cagir) {
   if (typeof cagir !== "function") {
@@ -546,36 +562,36 @@ export function yayinCagirici(cagir) {
 }
 
 /**
- * Sunucunun ENABLED yanıtındaki başarı imzası (write.ts'in bugünkü metni).
- * Başarı YALNIZ bu imzayla ilan edilir; "ret metni bulamadım, demek ki olmuştur"
- * çıkarımı yapılmaz (kapalı arıza).
+ * The success signature in the server's ENABLED response, per write.ts's current text.
+ * Success is declared ONLY by this signature; the inference "I found no refusal text, so it
+ * must have worked" is never made — it fails closed.
  */
 const YAYIN_BASARI_IZI = /YAYINDA \(ENABLED\)/;
 
 /**
- * İnsan onayı kapısının imzaları. ÖNCE bunlara bakılır: ağ kapısı TEMİZ geçtiğinde
- * kanıt satırları (içinde AEGIS_NAC_SIMULATE gibi ipuçları geçebilir) onay
- * kapısının ret metnine eklenir — sıra ters olsaydı temiz bir geçiş "ağ reddetti"
- * diye yanlış sunulurdu.
+ * The human-approval gate's signatures. These are checked FIRST: when the network gate
+ * passes CLEANLY, its evidence lines — which can mention things like AEGIS_NAC_SIMULATE — are
+ * appended to the approval gate's refusal text, and in the opposite order a clean pass would
+ * be misreported as "the network refused".
  */
 const INSAN_KAPISI_IZLERI = [/confirm=true ile tekrar çağır/i, /^İşlem yapılmadı:/mu];
 
 /**
- * Ağ kapısının (networkTrust.ts + approval.ts risk dalı) ret imzaları.
- * Liste kasıtlı olarak dar: eşleşme yoksa "ağ reddetti" İDDİA EDİLMEZ, ret
- * "sunucu reddetti" olarak dürüstçe sınıflanır.
+ * The refusal signatures of the network gate — networkTrust.ts plus approval.ts's risk
+ * branch. The list is deliberately narrow: with no match we do NOT CLAIM "the network
+ * refused", and the refusal is honestly classified as "the server refused".
  */
 const AG_KAPISI_IZLERI = [
   /AĞ DOĞRULAMASI BAŞARISIZ/u,
   /NUMARA DOĞRULAMASI BAŞARISIZ/u,
   /CİHAZ ERİŞİLEBİLİRLİĞİ ANORMAL/u,
   /KONUM BEKLENMEDİK/u,
-  // 5. ve 6. halkanın SİMÜLE ret başlıkları. Eksiklerdi: gerçek kanalın reti
-  // "AĞ DOĞRULAMASI BAŞARISIZ" ile başladığı için yakalanıyor, simüle ret ise
-  // KENDİ başlığını taşıdığından hiçbir desene uymuyordu — cihaz değişimi ve çağrı
-  // yönlendirme retleri "ag-retti" yerine "reddedildi" sınıflanıyor, rapor
-  // "GÜVENLİK KAPISI ÇALIŞTI" bloğunu hiç basmıyordu (ağ kapısının yaptığı iş
-  // sıradan bir sunucu reddi gibi görünüyordu).
+  // The SIMULATED refusal headings of links 5 and 6. They were missing: the real channel's
+  // refusal is caught because it begins with "AĞ DOĞRULAMASI BAŞARISIZ", while the simulated
+  // refusal carries its OWN heading and matched no pattern — so device-swap and
+  // call-forwarding refusals were classified as "reddedildi" instead of "ag-retti", and the
+  // report never printed its "GÜVENLİK KAPISI ÇALIŞTI" block. The work the network gate did
+  // looked like an ordinary server refusal.
   /CİHAZ DEĞİŞİMİ SAPTANDI/u,
   /ÇAĞRI YÖNLENDİRME AÇIK/u,
   /ağ doğrulaması tamamlanamadı/iu,
@@ -587,14 +603,15 @@ const AG_KAPISI_IZLERI = [
   /cihaz değişimi kontrolü/iu,
   /çağrı yönlendirme kontrolü/iu,
   /simülasyon kanalı aktif/iu,
-  // Halka adları BURAYA da eklenir: yeni halkanın env'i desende yoksa o halkanın
-  // yapılandırma/çelişki retleri (metinleri env adından başka ağ izi taşımaz)
-  // sınıflandırıcının dışında kalır. DEVICESWAP|CALLFWD tam da böyle kaçmıştı.
+  // A new link's name is added HERE as well: if its environment variable is missing from
+  // the pattern, that link's configuration and contradiction refusals fall outside the
+  // classifier, since their text carries no network trace other than the variable's name.
+  // DEVICESWAP and CALLFWD escaped in exactly that way.
   /AEGIS_(NAC|NV|REACH|LOC|DEVICESWAP|CALLFWD)_[A-Z_]+/u,
   /AEGIS_(APPROVER_PHONE|EXPECTED_COUNTRY)/u,
 ];
 
-/** Onay özetinin madde satırları (ağ kanıtı bu satırlarda taşınır). */
+/** The bullet lines of the approval summary — the network evidence travels in them. */
 function maddeSatirlari(metin) {
   return String(metin ?? "")
     .split("\n")
@@ -602,7 +619,8 @@ function maddeSatirlari(metin) {
     .filter((s) => s.startsWith("•"));
 }
 
-/** Madde satırları çıkarılmış gövde — ağ izleri YALNIZ gövdede aranır. */
+/** The body with the bullet lines removed — network traces are looked for in the body
+ * ONLY. */
 function maddesizGovde(metin) {
   return String(metin ?? "")
     .split("\n")
@@ -611,52 +629,57 @@ function maddesizGovde(metin) {
 }
 
 /**
- * ENABLED yanıtını dürüstçe sınıflandırır:
- *  'basarili'            — kampanya gerçekten yayına alındı,
- *  'ag-retti'            — ağ kapısı reddetti (demo vitrini: güvenlik çalıştı),
- *  'insan-onayi-gerekli' — ağ geçti/kapalıydı, DOĞRULANMIŞ insan onayı olmadığı için
- *                          sunucu reddetti (bu istemci onayı yapısal olarak uyduramaz),
- *  'reddedildi'          — başka bir sunucu reddi (bütçe tavanı, yayınlanabilir reklam
- *                          yok, kampanya bulunamadı, yazma kapalı…),
- *  'hata'                — boş/anlaşılmaz yanıt ya da araç hatası.
+ * Classifies the ENABLED response honestly:
+ *  'basarili'            — the campaign really was taken live,
+ *  'ag-retti'            — the network gate refused; the demo's showcase, security worked,
+ *  'insan-onayi-gerekli' — the network passed or was off, and the server refused for want of
+ *                          VERIFIED human approval, which this client structurally cannot
+ *                          fabricate,
+ *  'reddedildi'          — some other server refusal: the budget ceiling, no servable ad, the
+ *                          campaign not found, writes disabled, and so on,
+ *  'hata'                — an empty or unintelligible response, or a tool error.
  */
 export function yayinSonucuSinifla(metin, kampanyaAdi) {
   const m = String(metin ?? "").trim();
   if (!m || m === "(boş yanıt)") return "hata";
 
   /**
-   * MODELİN SEÇTİĞİ KAMPANYA ADI SINIFLANDIRMADAN ÇIKARILIR.
+   * THE CAMPAIGN NAME THE MODEL CHOSE IS REMOVED FROM THE CLASSIFICATION.
    *
-   * Sunucu ret metinlerine kampanya adını koyar ("Reddedildi: \"X\" kampanyası…") ve o
-   * adı MODEL üretir. Yani aşağıdaki desenlerin eşleştiği metnin bir parçası, kapının
-   * kendi çıktısı değil, modelin yazdığı serbest metindir. Adına "AĞ DOĞRULAMASI
-   * BAŞARISIZ" ya da "AEGIS_NAC_SIMULATE" geçen bir kampanya kurulduğunda, sıradan
-   * bir sunucu reddi (bütçe tavanı, yayınlanabilir reklam yok) 'ag-retti' sınıflanıyor
-   * ve rapor HİÇ ÇALIŞMAMIŞ bir CAMARA kapısı için "GÜVENLİK KAPISI ÇALIŞTI" basıyordu.
-   * Demoda bu, kapının çalıştığını kanıtlaması gereken anın uydurulabilir olması demek.
+   * The server puts the campaign's name into its refusal text — `Reddedildi: "X"
+   * kampanyası…` — and that name was produced by the MODEL. So part of the text these
+   * patterns match against is not the gate's own output but free text the model wrote. Create
+   * a campaign whose name contains "AĞ DOĞRULAMASI BAŞARISIZ" or "AEGIS_NAC_SIMULATE", and an
+   * ordinary server refusal — the budget ceiling, no servable ad — was classified as
+   * 'ag-retti', with the report printing "GÜVENLİK KAPISI ÇALIŞTI" for a CAMARA gate THAT
+   * NEVER RAN. In a demo that means the very moment meant to prove the gate works is
+   * fabricable.
    *
-   * Ad, sınıflandırılan metinden silinir — rapora giden `sonucMetni` DEĞİŞMEZ, orada
-   * sunucunun cevabı aynen durur. Silinen yalnız desen aramasının gördüğü kopyadır.
+   * The name is stripped from the text being classified — the `sonucMetni` that goes to the
+   * report is UNCHANGED, and the server's answer stands there verbatim. What is stripped is
+   * only the copy the pattern search sees.
    */
   const temiz = kampanyaAdi ? m.split(String(kampanyaAdi)).join(" ") : m;
 
   /**
-   * BAŞARI İMZASI EN SONA BAKILIR — sıra bir üslup tercihi değil.
+   * THE SUCCESS SIGNATURE IS CHECKED LAST — the order is not a matter of style.
    *
-   * Başarı imzası önce bakıldığında, İÇİNDE o imzayı taşıyan bir RET "basarili" çıkar.
-   * Bu kuramsal değil: ret metnine kampanya ADI giriyor (sunucu onu onay özetine koyar)
-   * ve kampanya adını MODEL seçiyor — yani "YAYINDA" gibi bir ifadeyi ret metninin
-   * içine sokan bir ad üretilebilir. Sonuç, raporun "⚠ KAMPANYA YAYINDA — GERÇEK HARCAMA
-   * BAŞLADI" basması ve "GÜVENLİK KAPISI ÇALIŞTI" bloğunun HİÇ basılmamasıdır: yani
-   * kapının çalıştığı an, kapının çalışmadığı an gibi raporlanır.
+   * Check the success signature first and a REFUSAL that happens to CONTAIN that signature
+   * comes out as 'basarili'. This is not theoretical: the campaign's NAME enters the refusal
+   * text, because the server puts it into the approval summary, and the campaign's name is
+   * chosen by the MODEL — so a name can be produced that slips a phrase like "YAYINDA" inside
+   * the refusal. The result is the report printing "⚠ KAMPANYA YAYINDA — GERÇEK HARCAMA
+   * BAŞLADI" and NEVER printing its "GÜVENLİK KAPISI ÇALIŞTI" block: the moment the gate
+   * worked is reported as the moment it did not.
    *
-   * Ret her zaman başarıyı yener. Bir metin hem ret hem başarı işareti taşıyorsa, o
-   * metin bir rettir.
+   * A refusal always beats a success. If one text carries both a refusal and a success
+   * marker, that text is a refusal.
    *
-   * Ret türleri arasındaki sıra (insan → ağ) BİLEREK korundu: yukarıdaki
-   * INSAN_KAPISI_IZLERI açıklamasının anlattığı gibi, temiz geçen bir ağ kapısının
-   * kanıt satırları onay kapısının ret metnine ekleniyor. Bu düzeltme yalnız başarı
-   * imzasını sona taşır; ret türlerinin birbirine göre sırasına dokunmaz.
+   * The order among the refusal kinds, human before network, was kept DELIBERATELY: as the
+   * note on INSAN_KAPISI_IZLERI above explains, the evidence lines of a network gate that
+   * passed cleanly are appended to the approval gate's refusal text. This fix only moves the
+   * success signature to the end; it does not touch the refusal kinds' order relative to one
+   * another.
    */
   if (INSAN_KAPISI_IZLERI.some((d) => d.test(temiz))) return "insan-onayi-gerekli";
   const govde = maddesizGovde(temiz);
@@ -666,7 +689,8 @@ export function yayinSonucuSinifla(metin, kampanyaAdi) {
   return "hata";
 }
 
-/** Ağ kanıtı / onay özeti satırları (madde işareti sökülmüş, temizlenmiş). */
+/** The network-evidence and approval-summary lines, with the bullet stripped and the text
+ * cleaned. */
 export function kanitSatirlariniAyikla(metin) {
   return maddeSatirlari(metin)
     .map((s) => gorunurOzet(s.replace(/^•\s*/u, ""), 300))
@@ -674,21 +698,22 @@ export function kanitSatirlariniAyikla(metin) {
 }
 
 /**
- * Kurulmuş (PAUSED) kampanyayı YAYINA ALMAYI dener — set_campaign_status → ENABLED.
- * Bu çağrı sunucuda HIGH risk etiketlidir: ağ kapısı (CAMARA SIM-swap zinciri) İLK
- * çalışır, insan onayı kapısı ondan sonra gelir.
+ * ATTEMPTS TO TAKE a created (PAUSED) campaign LIVE — set_campaign_status → ENABLED.
+ * The call is labelled HIGH risk on the server: the network gate, the CAMARA SIM-swap chain,
+ * runs FIRST, and the human-approval gate comes after it.
  *
- * Bu fonksiyon yalnız growth-brain.mjs'in --yayinla yolundan, operatörün AYRI ve
- * açık ikinci 'Evet' onayından SONRA çağrılır. Onay bu istemciden sunucuya
- * gönderilemez (confirm silinir, elicitation ilan edilmez); dolayısıyla temiz bir
- * ağ sinyalinde bile sunucu 'insan-onayi-gerekli' ile reddedebilir — bu bir hata
- * değil, "Growth Brain kendiliğinden yayına almaz" değişmezinin kanıtıdır.
+ * This function is called only from growth-brain.mjs's --yayinla path, and only AFTER the
+ * operator's separate, explicit second 'Evet'. That approval cannot be sent from this client
+ * to the server — confirm is deleted and elicitation is not advertised — so even on a clean
+ * network signal the server may refuse with 'insan-onayi-gerekli'. That is not a bug, it is
+ * the proof of the invariant that the Growth Brain never goes live on its own.
  *
- * kampanyaId YALNIZ uygula() sonucundan (create_search_campaign çıktısından
- * ayrıştırılmış değer) gelmelidir; plandan/modelden gelen ID kabul edilmez.
+ * kampanyaId must come ONLY from uygula()'s result, as the value parsed out of
+ * create_search_campaign's output; an id from the plan or the model is not accepted.
  *
- * Dönüş: { denendi, kampanyaId, durum, sonucMetni, kanitSatirlari }
- * Fırlatmaz — araç hatası da 'hata' durumu olarak sınıflanır (rapor yalan söylemesin).
+ * Returns { denendi, kampanyaId, durum, sonucMetni, kanitSatirlari }
+ * It does not throw — a tool error is classified as the 'hata' status too, so the report
+ * cannot lie.
  */
 export async function yayinaAl({ kampanyaId, musteriId, kampanyaAdi }, { cagir }) {
   const yayinCagir = yayinCagirici(cagir);
@@ -725,8 +750,9 @@ export async function yayinaAl({ kampanyaId, musteriId, kampanyaAdi }, { cagir }
     denendi: true,
     kampanyaId: kampanya,
     durum: yayinSonucuSinifla(metin, kampanyaAdi),
-    // Sunucunun cevabı AYNEN taşınır (yalnız ANSI/kontrol karakteri sökülür):
-    // ret metni demonun vitrin anıdır, özetlenip yumuşatılmaz.
+    // The server's answer is carried VERBATIM, with only ANSI and control characters
+    // stripped: the refusal text is the demo's showcase moment, and it is neither summarised
+    // nor softened.
     sonucMetni: gorunurOzet(metin, 2000),
     kanitSatirlari: kanitSatirlariniAyikla(metin),
   };
