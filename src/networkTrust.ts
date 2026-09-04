@@ -50,158 +50,169 @@
  * The second link runs ONLY on the "high" tier (go-live and changes to a serving
  * campaign) — the demo narrative is "go-live gets the full chain".
  *
- * ── Halka 3: Device Reachability (GERÇEK sorgu yapılabilir) ───────────────────
+ * ── Link 3: Device Reachability (a REAL query is possible) ────────────────────
  *
- * Sorduğu soru: "onaylayıcının hattı şu an ağdan erişilebilir durumda mı?".
- * CAMARA Device Status / Reachability uç noktası bunu sunucudan cevaplayabilir —
- * tek tanımlayıcı olarak telefon numarası yeter, cihaz-taraflı akış GEREKMEZ.
- * Bu yüzden NV'nin aksine burada gerçek SDK kanalı VARDIR; simülasyon kanalı
- * (AEGIS_REACH_SIMULATE) yalnızca token'sız demo içindir.
+ * The question it asks: "is the approver's line reachable on the network right now?".
+ * The CAMARA Device Status / Reachability endpoint can answer that from a server — a
+ * phone number is enough as the sole identifier, and no device-side flow is REQUIRED.
+ * So unlike NV there IS a real SDK channel here; the simulation channel
+ * (AEGIS_REACH_SIMULATE) exists only for a demo without a token.
  *
- * DÜRÜST TAKAS — bilerek yazıyoruz: erişilebilirlik MEŞRU olarak dalgalanır
- * (uçak modu, kapsama boşluğu, kapalı telefon). Kapalı arıza ilkesi gereği
- * "erişilemez" yanıtı RET üretir; fikir başvurusundaki "kademeli doğrulama"nın
- * bu kapıdaki karşılığı budur, çünkü stdio MCP sunucusunun ikinci bir doğrulama
- * kanalı yoktur ve belirsizlikte harcama YAPILMAZ. Yanlış-pozitif riski iki
- * biçimde sınırlanır: (1) halka YALNIZ "high" katmanda koşar, (2) gerçek kanal
- * OPT-IN'dir — AEGIS_REACH_CHECK açıkça açılmadıkça, NaC token'ı olsa bile
- * sorgu yapılmaz ve iz "kapali" yazar. Böylece SIM-Swap için token tanımlayan
- * bir operatör, hiç istemediği bir erişilebilirlik retiyle karşılaşmaz.
+ * AN HONEST TRADE, written down deliberately: reachability fluctuates LEGITIMATELY —
+ * flight mode, a coverage gap, a phone that is switched off. Under the fail-closed
+ * principle an "unreachable" answer produces a REFUSAL; that is what the idea
+ * submission's "step-up verification" amounts to at this gate, because a stdio MCP
+ * server has no second verification channel and spending does NOT happen under
+ * uncertainty. The false-positive risk is bounded in two ways: (1) the link runs ONLY
+ * on the "high" tier, and (2) the real channel is OPT-IN — unless AEGIS_REACH_CHECK is
+ * switched on explicitly, no query runs even with a NaC token present and the trace
+ * records "kapali". An operator who configured a token for SIM Swap alone therefore
+ * never meets a reachability refusal they did not ask for.
  *
- * ── Halka 4: Location Verification (beklenen ülke) ────────────────────────────
+ * ── Link 4: Location Verification (the expected country) ──────────────────────
  *
- * Sorduğu soru: "onaylayıcının hattı beklenen ülkenin DIŞINDA bir ülkede mi?".
- * Ölçüt "beklenen ülke ağın bildirdiği kümede VAR MI" değil, "hat YALNIZCA beklenen
- * ülkede mi görüldü"dür: {NL, TR} gibi ÇELİŞKİLİ bir küme, TR'yi içerse bile RET
- * üretir (gerekçe ve dürüst takas: konumKatmani içindeki karşılaştırma yorumu).
- * Beklenti UYDURULMAZ: AEGIS_EXPECTED_COUNTRY (ISO 3166-1 alpha-2) tanımlı
- * değilse halka hiç koşmaz ve izine "kapali" yazar. "Bugünün değeri" tipi bir
- * varsayılan üretmek, cevabı her zaman "temiz" çıkaran sessiz bir güvenlik kaybı
- * olurdu.
+ * The question it asks: "is the approver's line in a country OUTSIDE the expected one?".
+ * The criterion is not "is the expected country PRESENT in the set the network reports"
+ * but "was the line seen ONLY in the expected country": a CONTRADICTORY set such as
+ * {NL, TR} produces a REFUSAL even though it contains TR (the reasoning and the honest
+ * trade are in the comparison comment inside konumKatmani).
+ * The expectation is never INVENTED: with AEGIS_EXPECTED_COUNTRY (ISO 3166-1 alpha-2)
+ * unset, the link does not run and records "kapali" in its trace. Producing a default of
+ * the "today's value" kind would be a silent loss of security that always makes the
+ * answer come out clean.
  *
- * NEDEN ROAMING ÜLKESİ, NEDEN CAMARA Location Verification DEĞİL: SDK'nın
- * ürettiği `Area` tipi yalnızca `{ areaType: "CIRCLE" }` taşır — merkez koordinatı
- * ve yarıçap alanları tip tanımlarında HİÇ YOK. Sorgulanacak alanı tip güvenli
- * kuramadığımız için o uç nokta bilerek ERTELENDİ (`as any` ile şema uydurmak,
- * yanlış gövdeyle 400 alıp halkayı kalıcı RET'e çevirirdi). Ülke sorusunu tip
- * güvenli cevaplayan uç nokta Device Status / Roaming'dir: `roaming` boolean'ı
- * ve MCC'den eşlenen ISO-2 ülke listesi. Halkanın kapsamı bu yüzden "ülke
- * düzeyi"dir; şehir/yarıçap düzeyi coğrafya bu kapının BUGÜN vaadi değildir.
+ * WHY THE ROAMING COUNTRY AND NOT CAMARA Location Verification: the `Area` type the SDK
+ * generates carries only `{ areaType: "CIRCLE" }` — there are NO centre-coordinate or
+ * radius fields in the type definitions at all. Because the area to query cannot be built
+ * type-safely, that endpoint was deliberately DEFERRED (inventing a schema with `as any`
+ * would mean a 400 on a wrong body, turning the link into a permanent refusal). The
+ * endpoint that answers the country question type-safely is Device Status / Roaming: a
+ * `roaming` boolean plus the ISO-2 country list mapped from the MCC. The link's scope is
+ * therefore "country level"; city or radius geography is not what this gate promises
+ * TODAY.
  *
- * HAM DEĞER YANKILANMAZ: operatörün bildirdiği ülke listesi (upstream veri)
- * ne kanıt satırına ne ret metnine ne de ize girer. Dışarı çıkan tek şey
- * TÜRETİLMİŞ karardır ("beklenen ülkede" / "beklenen ülke dışında") ve
- * yapılandırmadan gelen, doğrulanmış-normalize edilmiş beklenen ülke kodudur.
+ * THE RAW VALUE IS NEVER ECHOED: the country list the operator reports — upstream data —
+ * enters neither the evidence lines, nor the refusal text, nor the trace. The only things
+ * that leave are the DERIVED decision ("in the expected country" / "outside the expected
+ * country") and the validated, normalised expected-country code that came from
+ * configuration.
  *
- * ── Halka 5: Device Swap (SIM Swap'ın YAPISAL İKİZİ) ─────────────────────────
+ * ── Link 5: Device Swap (SIM Swap's STRUCTURAL TWIN) ─────────────────────────
  *
- * Sorduğu soru: "hat son N saatte YENİ BİR CİHAZA mı taşındı?". SIM Swap kartın,
- * bu halka CİHAZIN değişimini görür: saldırgan kartı taşımadan hattı kendi
- * telefonuna aldıysa 1. halka temiz cevap verir, bu halka vermez.
+ * The question it asks: "did the line move to a NEW HANDSET in the last N hours?". SIM
+ * Swap sees the card change, this link sees the DEVICE change: if the attacker took the
+ * line onto their own phone without moving the card, link 1 answers clean and this one
+ * does not.
  *
- * `deviceSwap.check` SIM Swap'ın ikizidir: aynı auth, aynı gövde şekli
- * ({ phoneNumber, maxAge }), saat bazlı pencere, tek boolean çıktı ({ swapped }).
- * Bu yüzden pencere hesabı aynı koddan (pencereSec) geçer ve aynı CAMARA aralığına
- * (1–2400 saat) kelepçelenir; ayrı bir pencere değişkeni UYDURULMAZ, halka
- * AEGIS_SIMSWAP_WINDOW_HOURS'u paylaşır.
+ * `deviceSwap.check` is SIM Swap's twin: the same auth, the same body shape
+ * ({ phoneNumber, maxAge }), an hour-based window, one boolean out ({ swapped }). So the
+ * window calculation goes through the same code (pencereSec) and is clamped to the same
+ * CAMARA range of 1-2400 hours; no separate window variable is INVENTED, and the link
+ * shares AEGIS_SIMSWAP_WINDOW_HOURS.
  *
- * Tek DÜRÜST FARK: yanıt okunamazsa "değişmedi" varsayılmaz. Tipte `swapped`
- * zorunlu boolean'dır ama tip garantisi çalışma zamanı garantisi değildir; okunamayan
- * alan sessiz gevşeme değil, kapalı arızadır (halka 3'teki aynı gerekçe).
+ * The one HONEST DIFFERENCE: an unreadable answer is not assumed to mean "did not
+ * change". `swapped` is a required boolean in the type, but a type guarantee is not a
+ * runtime guarantee; an unreadable field is not a quiet loosening but a fail-closed (the
+ * same reasoning as link 3).
  *
- * ── Halka 6: Call Forwarding (koşulsuz çağrı yönlendirme) ────────────────────
+ * ── Link 6: Call Forwarding (unconditional call forwarding) ──────────────────
  *
- * Sorduğu soru: "onaylayıcının hattında KOŞULSUZ çağrı yönlendirme açık mı?".
- * Açık yönlendirme, OTP/sesli doğrulamayı ele geçirmenin klasik yoludur: hat
- * sahibinde kalır, SIM değişmez, cihaz değişmez — ama doğrulama çağrısı saldırgana
- * gider. Önceki beş halkanın hiçbiri bu senaryoyu göremez.
+ * The question it asks: "is UNCONDITIONAL call forwarding active on the approver's
+ * line?". Active forwarding is the classic way to intercept an OTP or a voice
+ * verification: the line stays with its owner, the SIM does not change, the device does
+ * not change — but the verification call goes to the attacker. None of the previous five
+ * links can see that scenario.
  *
- * Yanıtta PII YOKTUR: uç nokta yalnız `active` boolean'ı döner — yönlendirmenin
- * HANGİ numaraya yapıldığı sorulmaz, alınmaz, hiçbir metne yazılmaz.
+ * THERE IS NO PII IN THE ANSWER: the endpoint returns only an `active` boolean — WHICH
+ * number the forwarding points to is never asked for, never received, and never written
+ * into any text.
  *
- * İKİ KAPALI ARIZA TUZAĞI, tip tanımlarından okunarak baştan kapatıldı:
- *   (1) `active` tipte OPSİYONELDİR (`active?: boolean`). Okunamayan alan
- *       "yönlendirme yok" DEĞİL "bilinmiyor"dur ve RET üretir.
- *   (2) SDK belgesi kardeş uç nokta için "501 dönebilir" diyor; her fırlatma
- *       (NotImplementedError dahil) kapalı arızaya, yani RET'e gider.
+ * TWO FAIL-CLOSED TRAPS, closed up front by reading the type definitions:
+ *   (1) `active` is OPTIONAL in the type (`active?: boolean`). An unreadable field means
+ *       "unknown", NOT "no forwarding", and produces a REFUSAL.
+ *   (2) The SDK documentation says the sibling endpoint "may return 501"; every throw,
+ *       NotImplementedError included, goes to the fail-closed side, that is, to a refusal.
  *
- * ── Halka sayısı ve GECİKME (her halka kendi anahtarını ister) ────────────────
+ * ── The number of links and LATENCY (each link asks for its own switch) ───────
  *
- * Zincir uzadıkça HIGH katmandaki her onay, koşan her gerçek halka için bir CAMARA
- * gidiş-dönüşü daha bekler (halka başına 10 sn timeout). Bu yüzden HİÇBİR halka
- * varsayılan olarak açılmaz: 3., 5. ve 6. halkaların gerçek kanalları AYRI AYRI
- * opt-in anahtarlar (AEGIS_REACH_CHECK / AEGIS_DEVICESWAP_CHECK /
- * AEGIS_CALLFWD_CHECK) ister, 4. halka beklenen ülke tanımını ister. Yalnızca
- * SIM-Swap için token tanımlayan bir operatör, ne istemediği gecikmeyi ne de
- * istemediği yanlış-pozitif retleri üstlenir; kapalı halka sorgu yapmaz ve izine
- * "kapali" yazar.
+ * As the chain grows, every approval on the HIGH tier waits for one more CAMARA round
+ * trip per real link that runs (a 10-second timeout each). That is why NO link is enabled
+ * by default: the real channels of links 3, 5 and 6 each require their own opt-in switch
+ * (AEGIS_REACH_CHECK / AEGIS_DEVICESWAP_CHECK / AEGIS_CALLFWD_CHECK), and link 4 requires
+ * an expected country to be configured. An operator who configured a token for SIM Swap
+ * alone takes on neither the latency nor the false-positive refusals they did not ask
+ * for; a disabled link runs no query and records "kapali" in its trace.
  *
- * ── Yapısal denetim izi (AgIz) ────────────────────────────────────────────────
+ * ── The structured audit trace (AgIz) ─────────────────────────────────────────
  *
- * Her karar, metinlerinin yanında MAKİNE OKUNUR bir iz taşır: hangi halka koştu,
- * gerçek miydi simüle miydi, hangi pencereyle sorguldu, ret nedeni hangi sabit kod.
- * Aşağı akıştaki denetim günlüğü bunları ret/kanıt metnini koklayarak TAHMİN ETMEZ —
- * kapının kendi beyanını yazar. Metin koklamak iki halkanın metnini tek dizede
- * birleştirdiği için "SIM-Swap kapalı + NV simülasyon" ile "gerçek sorgu + NV
- * simülasyon" ayrımını kaybediyordu; iz o ayrımı taşıyan tek yapıdır.
+ * Alongside its text, every decision carries a MACHINE-READABLE trace: which link ran,
+ * whether it was real or simulated, which window it queried, and which fixed code the
+ * refusal reason was. The audit log downstream does not GUESS these by sniffing the
+ * refusal and evidence text — it writes down the gate's own declaration. Sniffing text
+ * merged two links' words into a single string and so lost the distinction between "SIM
+ * Swap disabled plus an NV simulation" and "a real query plus an NV simulation"; the trace
+ * is the only structure that carries it.
  */
 
 /**
  * The single network capability this gate needs; the SDK client is adapted to it.
  *
- * Dönüş BİLEREK `boolean | undefined` — zincirin diğer beş halkasıyla AYNI sözleşme
- * (bkz. ErisilebilirlikKanali, CihazDegisimKanali): `undefined` "yanıt okunamadı"
- * demektir ve "SIM değişmemiş" ile ASLA aynı şey değildir. Çağıran onu kapalı arızaya
- * (RET) çevirir; tip garantisi bir ÇALIŞMA ZAMANI garantisi değildir.
+ * The return type is DELIBERATELY `boolean | undefined` — the SAME contract as the chain's
+ * other five links (see ErisilebilirlikKanali, CihazDegisimKanali): `undefined` means "the
+ * answer could not be read" and is NEVER the same thing as "the SIM did not change". The
+ * caller turns it into a fail-closed REFUSAL; a type guarantee is not a RUNTIME guarantee.
  */
 export interface SimSwapKanali {
   /**
    * True when the SIM changed within the last `maxAgeHours` hours; false when the
    * operator says it demonstrably did not; `undefined` when the answer could not be
-   * read (unreadable body, missing or mistyped field) — "bilmiyorum", "temiz" DEĞİL.
+   * read — an unreadable body, a missing field, a field of the wrong type. That is "I do
+   * not know", NOT "clean".
    */
   verifySimSwap(maxAgeHours: number): Promise<boolean | undefined>;
 }
 
 /**
- * Halka 3'ün ihtiyacı: onaylayıcının cihazı şu an ağdan erişilebilir mi?
+ * What link 3 needs: is the approver's device reachable on the network right now?
  *
- * `undefined` bilerek vardır ve "hayır" ile aynı şey DEĞİLDİR: CAMARA yanıtı gelip de
- * alan okunamadıysa (tip garantisine rağmen boş/başka tipte geldiyse) karar "erişilemez"
- * değil "yanıt okunamadı"dır — ikisi ayrı ret kodlarına gider, ikisi de kapalı arızadır.
+ * `undefined` is there on purpose and is NOT the same as "no": if the CAMARA response
+ * arrives but the field cannot be read — empty, or of another type despite the type
+ * guarantee — the verdict is "the answer could not be read" rather than "unreachable". The
+ * two go to different refusal codes, and both fail closed.
  */
 export interface ErisilebilirlikKanali {
   cihazErisilebilirMi(): Promise<boolean | undefined>;
 }
 
 /**
- * Halka 4'ün ihtiyacı: hattın şu an hangi ülkede olduğu.
+ * What link 4 needs: which country the line is in right now.
  *
- * `yurtDisinda` CAMARA'nın roaming boolean'ı, `ulkeler` MCC'den eşlenen ISO-2 listesidir.
- * Her iki alan da opsiyoneldir çünkü SDK tipinde öyledir; okunamayan alan kapalı arızaya
- * gider (bkz. ErisilebilirlikKanali'ndeki aynı gerekçe).
+ * `yurtDisinda` is CAMARA's roaming boolean and `ulkeler` is the ISO-2 list mapped from the
+ * MCC. Both fields are optional because they are optional in the SDK's own type; a field
+ * that cannot be read fails closed (the same reasoning as in ErisilebilirlikKanali).
  */
 export interface KonumKanali {
   ulkeDurumu(): Promise<{ yurtDisinda?: boolean; ulkeler?: string[] }>;
 }
 
 /**
- * Halka 5'in ihtiyacı: hat son `maxAgeHours` saatte yeni bir cihaza taşındı mı?
+ * What link 5 needs: did the line move to a new handset in the last `maxAgeHours` hours?
  *
- * SimSwapKanali'nin ikizi ama dönüşü BİLEREK `boolean | undefined`: SDK tipinde
- * `swapped` zorunlu boolean olsa da okunamayan bir alanı "değişmedi" saymak sessiz
- * gevşeme olurdu (bkz. ErisilebilirlikKanali'ndeki aynı gerekçe).
+ * The twin of SimSwapKanali, but its return type is DELIBERATELY `boolean | undefined`:
+ * even though `swapped` is a required boolean in the SDK's type, treating an unreadable
+ * field as "did not change" would be a silent loosening (the same reasoning as in
+ * ErisilebilirlikKanali).
  */
 export interface CihazDegisimKanali {
   cihazDegistiMi(maxAgeHours: number): Promise<boolean | undefined>;
 }
 
 /**
- * Halka 6'nın ihtiyacı: hatta koşulsuz çağrı yönlendirme açık mı?
+ * What link 6 needs: is unconditional call forwarding active on the line?
  *
- * `undefined` burada tipin KENDİSİNDEN gelir — CAMARA yanıtında `active` opsiyoneldir
- * ve "bilinmiyor" demektir; "kapalı" ile ASLA aynı şey değildir, ikisi ayrı ret
- * kodlarına gider.
+ * Here `undefined` comes from the TYPE ITSELF — `active` is optional in the CAMARA response
+ * and means "unknown". It is NEVER the same as "off", and the two go to different refusal
+ * codes.
  */
 export interface CagriYonlendirmeKanali {
   kosulsuzYonlendirmeAcikMi(): Promise<boolean | undefined>;
@@ -210,53 +221,59 @@ export interface CagriYonlendirmeKanali {
 export type AgRisk = "medium" | "high";
 
 /**
- * SIM-Swap halkasının İZİ — ne olduğunu KARAR NOKTASI söyler, metin değil.
+ * The SIM Swap link's TRACE — what happened is stated by the DECISION POINT, not by text.
  *
- * "gercek"     : CAMARA sorgusu gerçekten yapıldı (ya da denendi ve yanıtsız kaldı).
- * "simulasyon" : simüle kanal karar verdi; hiçbir ağ sorgusu yapılmadı.
- * "kapali"     : katman BİLEREK devre dışı (token yok) — yapılandırma hatası değil.
- * "calismadi"  : yapılandırma hatası yüzünden sorgu HİÇ yapılamadı.
+ * "gercek"     : a CAMARA query really was made (or attempted and left unanswered).
+ * "simulasyon" : the simulated channel decided; no network query was made at all.
+ * "kapali"     : the layer is DELIBERATELY disabled (no token) — not a configuration fault.
+ * "calismadi"  : a configuration fault meant no query could be made AT ALL.
  */
 export type SimSwapIzi = "gercek" | "simulasyon" | "kapali" | "calismadi";
 
 /**
- * Number Verification halkasının izi. Gerçek CAMARA NV cihaz-taraflı OIDC ister
- * (bkz. dosya başı), bu yüzden "gercek" değeri BİLEREK yoktur: halka ya simüle
- * karar verir ya da yapılandırma hatasıyla hiç çalışamaz.
+ * The Number Verification link's trace. Real CAMARA NV requires a device-side OIDC flow
+ * (see the file header), so there is DELIBERATELY no "gercek" value: the link either decides
+ * through simulation, or cannot run at all because of a configuration fault.
  */
 export type NvIzi = "simulasyon" | "calismadi";
 
 /**
- * Halka 3 (Reachability), 4 (Location), 5 (Device Swap) ve 6 (Call Forwarding) izi.
- * Değer kümesi SIM-Swap ile aynıdır çünkü dördünün de gerçek SDK kanalı VARDIR
- * (NV'nin aksine — bkz. dosya başı):
+ * The trace for links 3 (Reachability), 4 (Location), 5 (Device Swap) and 6 (Call
+ * Forwarding). The value set is the same as SIM Swap's because all four DO have a real SDK
+ * channel — unlike NV (see the file header):
  *
- * "gercek"     : CAMARA sorgusu gerçekten yapıldı (ya da denendi ve yanıtsız kaldı).
- * "simulasyon" : simüle kanal karar verdi; hiçbir ağ sorgusu yapılmadı.
- * "kapali"     : halka BİLEREK koşmadı — reach için AEGIS_REACH_CHECK, devSwap için
- *                AEGIS_DEVICESWAP_CHECK, callFwd için AEGIS_CALLFWD_CHECK
- *                açılmamış; loc için AEGIS_EXPECTED_COUNTRY tanımsız. Yapılandırma hatası
- *                DEĞİLDİR (o "calismadi"dir) ve ret de üretmez; kapının "sormadım"
- *                beyanıdır — sessiz kalmak, denetimde "sordum ve geçti" ile karışırdı.
- * "calismadi"  : yapılandırma hatası yüzünden sorgu HİÇ yapılamadı (ret eşlik eder).
+ * "gercek"     : a CAMARA query really was made (or attempted and left unanswered).
+ * "simulasyon" : the simulated channel decided; no network query was made at all.
+ * "kapali"     : the link DELIBERATELY did not run — AEGIS_REACH_CHECK for reach,
+ *                AEGIS_DEVICESWAP_CHECK for devSwap and AEGIS_CALLFWD_CHECK for callFwd were
+ *                not switched on; for loc, AEGIS_EXPECTED_COUNTRY is unset. This is NOT a
+ *                configuration fault (that is "calismadi") and produces no refusal; it is
+ *                the gate declaring "I did not ask" — staying silent would be confused in an
+ *                audit with "I asked and it passed".
+ * "calismadi"  : a configuration fault meant no query could be made AT ALL, and a refusal
+ *                accompanies it.
  *
- * Halka hiç YAPILANDIRILMAMIŞSA (ne simülasyon ne token) alan HİÇ YAZILMAZ: "kapali"
- * bilinçli bir kapatma beyanıdır, hiç istenmemiş bir halkanın sessizliği değil.
+ * If the link is not CONFIGURED at all — neither simulation nor token — the field is NOT
+ * WRITTEN: "kapali" is a deliberate declaration that it was switched off, not the silence of
+ * a link nobody ever asked for.
  */
 export type HalkaIzi = "gercek" | "simulasyon" | "kapali" | "calismadi";
 
 /**
- * Ret nedenleri SABİT sözlük. Upstream metin (SDK hata gövdesi, env değeri, CAMARA
- * yanıtı) bu kümeye ASLA giremez: denetim izi serbest metin taşımaz, kod taşır.
+ * The refusal reasons are a FIXED vocabulary. Upstream text — an SDK error body, an
+ * environment value, a CAMARA response — can NEVER enter this set: the audit trace carries
+ * codes, not free text.
  */
 export type RetNedeni =
   | "sim-degisti"
   | "nv-uyusmadi"
   | "cihaz-erisilemez"
   | "konum-beklenmedik"
-  /** Halka 5: hat pencerede YENİ BİR CİHAZA taşınmış. "sim-degisti" ile karıştırılamaz. */
+  /** Link 5: the line moved to a NEW HANDSET within the window. Not to be confused with
+   * "sim-degisti". */
   | "cihaz-degisti"
-  /** Halka 6: hatta koşulsuz çağrı yönlendirme AÇIK (OTP/sesli doğrulama ele geçirme yolu). */
+  /** Link 6: unconditional call forwarding is ACTIVE on the line — the route for
+   * intercepting an OTP or a voice verification. */
   | "cagri-yonlendirme-acik"
   | "beklenen-ulke-gecersiz"
   | "ag-yanitsiz"
@@ -266,117 +283,126 @@ export type RetNedeni =
   | "ag-ayari-kapiya-ulasmadi";
 
 /**
- * YAPISAL DENETİM İZİ. Kararın nasıl oluştuğunu kapının KENDİSİ bildirir; aşağı akışta
- * hiç kimse (özellikle karar günlüğü) ret/kanıt metnini koklayarak bunu tahmin etmez.
+ * THE STRUCTURED AUDIT TRACE. How the decision came about is declared by the gate ITSELF;
+ * nothing downstream — the decision log least of all — guesses it by sniffing the refusal or
+ * evidence text.
  *
- * İki halka ASLA tek alana ezilmez: `simSwap` ve `nv` ayrı ayrı yazılır, çünkü
- * "gerçek SIM-Swap sorgusu + NV simülasyonu" ile "her ikisi de simülasyon" farklı
- * güven seviyeleridir ve denetim izinin tek işi bu ayrımı kanıtlamaktır.
+ * Two links are NEVER collapsed into one field: `simSwap` and `nv` are written separately,
+ * because "a real SIM Swap query plus an NV simulation" and "both simulated" are different
+ * levels of confidence, and proving that distinction is the audit trace's whole job.
  */
 export interface AgIz {
   simSwap: SimSwapIzi;
-  /** Halka hiç koşmadıysa (medium katman ya da AEGIS_NV_SIMULATE yok) alan YOKTUR. */
+  /** If the link never ran — the medium tier, or no AEGIS_NV_SIMULATE — the field is
+   * ABSENT. */
   nv?: NvIzi;
   /**
-   * Halka 3 (Device Reachability). Medium katmanda ya da halka hiç yapılandırılmamışsa
-   * alan YOKTUR; token varken AEGIS_REACH_CHECK kapalıysa "kapali" yazar.
+   * Link 3 (Device Reachability). On the medium tier, or when the link is not configured at
+   * all, the field is ABSENT; with a token present but AEGIS_REACH_CHECK off, it records
+   * "kapali".
    */
   reach?: HalkaIzi;
   /**
-   * Halka 4 (Location / beklenen ülke). Medium katmanda ya da halka hiç
-   * yapılandırılmamışsa alan YOKTUR; AEGIS_EXPECTED_COUNTRY tanımsızsa "kapali" yazar.
+   * Link 4 (Location / expected country). On the medium tier, or when the link is not
+   * configured at all, the field is ABSENT; with AEGIS_EXPECTED_COUNTRY unset, it records
+   * "kapali".
    */
   loc?: HalkaIzi;
   /**
-   * Halka 5 (Device Swap). Medium katmanda ya da halka hiç yapılandırılmamışsa alan
-   * YOKTUR; token varken AEGIS_DEVICESWAP_CHECK kapalıysa "kapali" yazar.
+   * Link 5 (Device Swap). On the medium tier, or when the link is not configured at all,
+   * the field is ABSENT; with a token present but AEGIS_DEVICESWAP_CHECK off, it records
+   * "kapali".
    */
   devSwap?: HalkaIzi;
   /**
-   * Halka 6 (Call Forwarding). Medium katmanda ya da halka hiç yapılandırılmamışsa alan
-   * YOKTUR; token varken AEGIS_CALLFWD_CHECK kapalıysa "kapali" yazar.
+   * Link 6 (Call Forwarding). On the medium tier, or when the link is not configured at
+   * all, the field is ABSENT; with a token present but AEGIS_CALLFWD_CHECK off, it records
+   * "kapali".
    */
   callFwd?: HalkaIzi;
-  /** YALNIZ SIM-Swap halkasının geriye bakış penceresi (saat); sorgu yoksa yok. */
+  /** The look-back window of the SIM Swap link ONLY, in hours; absent when no query
+   * ran. */
   pencereSaat?: number;
   /**
-   * Halka 5'in KENDİ geriye bakış penceresi (saat).
+   * Link 5's OWN look-back window, in hours.
    *
-   * `pencereSaat`e YAZILMAZ, çünkü iki halka tek alana ezilmez: SIM-Swap katmanı
-   * kapalıyken (token yok, simülasyon yok) `pencereSaat` boştur ve oraya cihaz-değişim
-   * penceresini yazmak, denetçiye hiç yapılmamış bir SIM-Swap sorgusunun penceresi gibi
-   * okunurdu. Değer aynı yapılandırmadan (AEGIS_SIMSWAP_WINDOW_HOURS) türese bile
-   * hangi halkanın sorusuna ait olduğu ayrı durur.
+   * It is NOT written into `pencereSaat`, because two links are never collapsed into one
+   * field: when the SIM Swap layer is disabled — no token, no simulation — `pencereSaat` is
+   * empty, and putting the device-swap window there would read to an auditor as the window
+   * of a SIM Swap query that never happened. Even though the value derives from the same
+   * setting (AEGIS_SIMSWAP_WINDOW_HOURS), which link's question it belongs to stays
+   * separate.
    */
   devSwapPencereSaat?: number;
-  /** maskele() çıktısı; numarayı gerçekten değerlendiren bir halka koştuysa vardır. */
+  /** maskele() output; present when a link that actually evaluated the number ran. */
   maskeliNumara?: string;
   retNedeni?: RetNedeni;
   /**
-   * ZİNCİR BOYUNCA ÜRETİLEN HER RET NEDENİ — yalnız kararı VEREN değil
-   * (sıra: ilk bozulan önce).
+   * EVERY REFUSAL REASON PRODUCED ALONG THE CHAIN — not only the one that MADE the
+   * decision, ordered with the first degraded signal first.
    *
-   * `retNedeni` TEK yuvadır ve zincir boyunca üzerine yazılır. Kademe açıkken SIM
-   * değişimi saptanıp beklemeye alınır, sonra başka bir halka da bozuk çıkarsa ize
-   * yalnız İKİNCİSİ düşer: saptanmış SIM DEĞİŞİMİ izden tamamen silinir ve satır,
-   * "simSwapKanali":"gercek" + "pencereSaat":72 ile birlikte, hiç sorun çıkmamış temiz
-   * bir sorgu gibi okunur. "sim-degisti" diye sayan denetçi olayı hiç göremez.
+   * `retNedeni` is a SINGLE slot and is overwritten as the chain proceeds. With step-up on,
+   * a SIM change is detected and held pending; if another link then degrades too, only the
+   * SECOND reaches the trace: the detected SIM CHANGE is erased entirely, and the record —
+   * carrying "simSwapKanali":"gercek" and "pencereSaat":72 — reads like a clean query where
+   * nothing went wrong. An auditor counting "sim-degisti" never sees the event.
    *
-   * Bu dizi o ayrımı taşır: iki bozuk sinyalli bir ret, tek bozuk sinyalli bir retten
-   * ayırt edilebilir olmak ZORUNDADIR. Hiç bozuk sinyal yoksa alan HİÇ yazılmaz —
-   * boş dizi, "bakıldı bozuk yoktu" ile "hiç bakılmadı"yı birbirine karıştırırdı.
+   * This array carries that distinction: a refusal with two degraded signals MUST be
+   * distinguishable from one with a single degraded signal. With no degraded signal at all
+   * the field is NOT written — an empty array would confuse "we looked and found nothing"
+   * with "we never looked".
    *
-   * Yükseltilen (kademeli) kararda da dolar: orada neden "niçin reddedildi"nin değil,
-   * "hangi sinyal bozuktu"nun adıdır — retNedeni alanının kendi kuralıyla aynı.
+   * It is populated on an escalated decision too: there the reason names not "why it was
+   * refused" but "which signal was degraded" — the same rule as the retNedeni field's own.
    */
   retNedenleri?: RetNedeni[];
   /**
-   * KADEMELİ DOĞRULAMA İZİ — karar düz bir "geçti" değilse burada görünür.
+   * THE STEP-UP TRACE — it appears here whenever the verdict is not a plain "passed".
    *
-   * "yukseltildi": bir halka bozuk sinyal verdi ama zincir onu reddetmek yerine
-   * KADEMEYİ YÜKSELTTİ — kalan bütün halkalar gerçek kanaldan temiz döndüğü için
-   * işlem, bozulan sinyali açıkça adlandıran daha güçlü bir insan doğrulamasına ve
-   * düşürülmüş bir tavana bağlandı.
+   * "yukseltildi": a link produced a degraded signal, and instead of refusing it the chain
+   * ESCALATED — because the remaining links came back clean over a real channel, the action
+   * was bound to a stronger human verification that names the degraded signal explicitly,
+   * and to a lowered ceiling.
    *
-   * Denetçi için bu ayrım kritiktir: "temiz geçti" ile "bozuk sinyale rağmen
-   * yükseltilerek geçti" aynı şey değildir ve tek bir 'gecti' etiketi ikisini
-   * birbirine karıştırırdı. Yükseltmeye sebep olan sinyal `retNedeni` alanında,
-   * doğrulayan halkalar `kademeDogrulayan` alanında durur.
+   * For an auditor the distinction is critical: "passed clean" and "passed by escalation
+   * despite a degraded signal" are not the same thing, and a single 'gecti' label would
+   * confuse them. The signal that caused the escalation sits in `retNedeni`, and the links
+   * that vouched for it in `kademeDogrulayan`.
    */
   kademe?: "yukseltildi";
-  /** Yükseltmeyi taşıyan halkaların id'leri — hangi sinyallerin temiz geldiği. */
+  /** The ids of the links carrying the escalation — which signals came back clean. */
   kademeDogrulayan?: string[];
 }
 
 /**
- * KADEMELİ DOĞRULAMAYA UYGUN RET NEDENLERİ.
+ * THE REFUSAL REASONS ELIGIBLE FOR STEP-UP VERIFICATION.
  *
- * Mentör geri bildirimi (Aleksi Puranen, Nokia, 31.08.2026): "Meşru SIM ve cihaz
- * değişimleri her gün oluyor. Sert kapalı-arıza kapısıyla bu kullanıcıların her biri,
- * ileri gidecek hiçbir yol olmadan reddediliyor."
+ * Mentor feedback (Aleksi Puranen, Nokia, 31 August 2026): "Legitimate SIM and device
+ * changes happen every day. With a hard fail-closed gate, every one of those users is
+ * refused with no way forward."
  *
- * Buradaki nedenler "kullanıcının başına gelen olağan şeyler"dir: telefonunu
- * değiştirmiştir, SIM'ini yenilemiştir, seyahattedir, telefonu kapalıdır ya da ağ
- * cevap vermemiştir. Hiçbiri tek başına saldırı KANITI değildir; hepsi "bu sinyal
- * artık kimlik kanıtı olarak kullanılamaz" demektir. Doğru cevap kapıyı kapatmak
- * değil, daha güçlü bir kanıt istemektir.
+ * The reasons here are the ordinary things that happen to people: they replaced their
+ * phone, renewed their SIM, they are travelling, their phone is switched off, or the
+ * network did not answer. None of them is PROOF of an attack on its own; each of them means
+ * "this signal can no longer serve as evidence of identity". The right answer is not to
+ * close the gate but to ask for stronger evidence.
  */
 /**
- * RİSK → HANGİ HALKALAR KOŞAR. Tek tablo, tek yer.
+ * RISK -> WHICH LINKS RUN. One table, one place.
  *
- * Mentör önerisi (Aleksi Puranen, Nokia, 31.08.2026): "İlk yayına alma üç turu da
- * alsın, kapının zaten temizlediği bir örüntüdeki bütçe artışı bir tur alsın.
- * Eşlemeyi basit ve açık tut."
+ * Mentor suggestion (Aleksi Puranen, Nokia, 31 August 2026): "Let the first go-live take
+ * all three rounds, and a budget increase on a pattern the gate has already cleared take
+ * one. Keep the mapping simple and explicit."
  *
- * Eşleme daha önce de böyleydi ama GÖRÜNMÜYORDU: beş ayrı katmanın içine serpiştirilmiş
- * `if (risk !== "high") return undefined` satırlarından ibaretti. O hâlde "bu işlemde
- * hangi halkalar koşuyor?" sorusunun cevabı ancak beş fonksiyon okunarak veriliyordu ve
- * bir katmanın koşulunu değiştirmek, kimsenin göremediği bir politika değişikliğiydi.
+ * The mapping worked this way before, but it was INVISIBLE: it consisted of
+ * `if (risk !== "high") return undefined` lines scattered through five separate layers. In
+ * that state, answering "which links run for this operation?" required reading five
+ * functions, and changing one layer's condition was a policy change nobody could see.
  *
- * Her açık halka, HIGH katmandaki onaya bir CAMARA gidiş-dönüşü ve meşru bir harcamayı
- * reddetmenin bir yolunu daha ekler. Bu yüzden bütçe artışı (medium) tek güçlü sinyalle
- * yetinir: SIM değişimi, hesabı ele geçirenin onay istemini cevaplamasını engelleyen
- * asıl sorudur. Yayına alma (high) — ilk gerçek harcamanın başladığı an — zincirin
+ * Every enabled link adds a CAMARA round trip to an approval on the HIGH tier, and one more
+ * way to refuse a legitimate spend. So a budget increase (medium) settles for the single
+ * strongest signal: a SIM change is the question that stops whoever took the account over
+ * from answering the approval prompt. Going live (high) — the moment real spending starts —
  * tamamını ister.
  */
 export const RISK_HALKA_ESLEMESI: Readonly<Record<AgRisk, readonly string[]>> = Object.freeze({
