@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# AdsPilot — hosted (HTTP) sunucu imajı
+# Aegis — hosted (HTTP) sunucu imajı
 #
 # Node 22.13+ ZORUNLU: hosted mod `node:sqlite` kullanır ve bu modül Node 22.5'te
 # geldi, 22.13'te bayraksız hale geldi. Node 18/20 ile ilk import'ta çöker.
@@ -26,8 +26,8 @@ FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 # Port, deponun her yerindeki varsayılanla AYNI olmalı: .env.example, src/http.ts
-# yedeği ve ADSPILOT_PUBLIC_URL örnekleri 8787 der. Farklı bir imaj portu, kopyalanan
-# .env'deki ADSPILOT_PUBLIC_URL ile uyuşmayınca her /mcp isteğini 403'e düşürür.
+# yedeği ve AEGIS_PUBLIC_URL örnekleri 8787 der. Farklı bir imaj portu, kopyalanan
+# .env'deki AEGIS_PUBLIC_URL ile uyuşmayınca her /mcp isteğini 403'e düşürür.
 ENV PORT=8787
 
 # package.json çalışma anında da gerekli: "type": "module" olmadan Node,
@@ -40,7 +40,7 @@ COPY --from=derleme /app/dist ./dist
 # WAL modu .db-wal ve .db-shm yan dosyaları üretir; üçü birlikte yedeklenmeli.
 RUN mkdir -p /data && chown -R node:node /data
 VOLUME ["/data"]
-ENV ADSPILOT_DB=/data/adspilot.db
+ENV AEGIS_DB=/data/aegis.db
 
 # Kök olarak çalıştırma
 USER node

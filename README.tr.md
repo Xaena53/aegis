@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-# AdsPilot
+# Aegis
 
 **Yapay zekâ ajanının gerçek Google Ads kampanyalarını yönetmesini sağlayan MCP sunucusu — paranı denetimsiz harcamasına izin vermeden.**
 
@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-972-brightgreen.svg)](test/)
+[![Test](https://img.shields.io/badge/test-975-brightgreen.svg)](test/)
 [![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-89.95%25-brightgreen.svg)](#test-metrikleri)
 
 🇬🇧 [English README](README.md)
@@ -20,7 +20,7 @@ bütçenin yerinde durduğundan emin olmaktır. Yazma yetkisi olan entegrasyonla
 bunu "ajan onaylasın" diyerek çözer — yani insana danışılıp danışılmadığına *ajan*
 karar verir.
 
-AdsPilot bu kararı ajanın elinden alır. MCP istemcin
+Aegis bu kararı ajanın elinden alır. MCP istemcin
 [elicitation](https://modelcontextprotocol.io) destekliyorsa sunucu **doğrudan sana**
 sorar ve ajanın kendi `confirm` bayrağı hiç dikkate alınmaz. Onay, ajanın anlattığı
 bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşür.
@@ -29,7 +29,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %89.95 satır kapsamıyla 972 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %89.95 satır kapsamıyla 975 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz — bekleyen bir iş değil, mimari bir hüküm) · CAMARA çağrılarının arkasında gerçek bir abone şebekesi (hesap Simulator kipinde) |
 
 ## İçindekiler
@@ -46,8 +46,8 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 **Node ≥ 22.13** gerekir — barındırılan mod yerleşik `node:sqlite` kullanır.
 
 ```bash
-git clone https://github.com/Xaena53/google-ads-mcp.git adspilot
-cd adspilot
+git clone https://github.com/Xaena53/google-ads-mcp.git aegis
+cd aegis
 npm ci && npm run build && npm test
 ```
 
@@ -57,7 +57,7 @@ olarak kopyalayıp doldur, ardından:
 
 ```bash
 npm run auth                      # tarayıcı açılır, refresh token .env'e yazılır
-claude mcp add adspilot -- node /mutlak/yol/adspilot/dist/index.js
+claude mcp add aegis -- node /mutlak/yol/aegis/dist/index.js
 ```
 
 Bağlantıyı doğrulamak için Claude'a *"Google Ads hesaplarımı listele"* de.
@@ -76,7 +76,7 @@ penceresinin aynısını devralır ve onu en az sahibi kadar ikna edici biçimde
 Mobil ağ, uygulama katmanının uyduramayacağı bir kanıt tutar. GSMA Open Gateway / CAMARA
 API'leri üzerinden — Nokia Network-as-Code platformuyla — operatör *bu hattın SIM kartı son
 24 saatte değişti mi* gibi soruları cevaplayabilir; bu, hesap ele geçirme dolandırıcılığının
-imza hareketidir. AdsPilot (kapının adı **Aegis**) bu soruyu harcamayı artıran her işlemin
+imza hareketidir. Aegis (kapının adı **Aegis**) bu soruyu harcamayı artıran her işlemin
 önüne koyar: **ağa, insan istemi gösterilmeden önce sorulur.** Değişmiş bir SIM, hattı artık
 elinde tutan kişiye nazikçe sunulmak yerine doğrudan reddedilir ve ajanın kendi `confirm`
 bayrağı her yolda yok sayılır. Risk kademelidir: bütçe artışı *orta* seviyedir ve 24 saatlik
@@ -88,7 +88,7 @@ tanınmayan bir yapılandırma değeri, çelişkili yapılandırma ya da 10 sani
 bir uç nokta — hepsi retle biter, hiçbiri sessiz geçişle. Ham değerler ajana ulaşmaz: kanıt
 satırı maskeli numara taşır, ret nedenleri sabit bir sözlükten gelir, upstream hata metni
 yalnız stderr'e gider. Risk etiketli her karar — retler *ve* geçişler — JSONL denetim izine
-yazılabilir (`ADSPILOT_DECISION_LOG`) ve iz, **her zincir halkası için ayrı bir kanal alanı**
+yazılabilir (`AEGIS_DECISION_LOG`) ve iz, **her zincir halkası için ayrı bir kanal alanı**
 tutar; böylece "gerçek sorgu" ile "simülasyon" birbirine karışamaz.
 
 ### Zincirin bugünkü dürüst durumu
@@ -99,15 +99,15 @@ tasarımın kendisinden daha önemlidir.
 | # | CAMARA sinyali | Sorduğu soru | Bu depodaki durumu |
 |---|---|---|---|
 | 1 | `simSwap.check` | Onaylayıcının hattı yakın zamanda ele geçirildi mi? | **Gerçek yol yazılı** — canlı SDK kanalı + simülasyon kanalı + test dikişi. Risk etiketli her işlemde koşar |
-| 2 | `numberVerification.*` | Onay, sahibin kendi cihazından mı geliyor? | **Şimdilik kalıcı olarak yalnız simülasyon** (`ADSPILOT_NV_SIMULATE`) — cihaz-taraflı OIDC akışıdır, hiçbir arka uç onu çağıramaz. İz tipinde "gerçek" değeri hiç yoktur |
-| 3 | `deviceStatus.retrieveReachabilityStatus` | Hat şu an veri/SMS alabiliyor mu? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_REACH_CHECK`), yalnız yüksek katman — erişilebilirlik meşru olarak dalgalanır, bu yüzden varsayılan kapalıdır |
-| 4 | `deviceStatus.checkRoaming` | Hat beklenen ülkede mi? | **Gerçek yol yazılı**, yüksek katman, yalnız `ADSPILOT_EXPECTED_COUNTRY` tanımlıyken — varsayılan ülke uydurulmaz, çünkü uydurulan bir varsayılan sonsuza dek "temiz" cevabı verir |
-| 5 | `deviceSwap.check` | Hat son N saatte yeni bir cihaza mı taşındı? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_DEVICESWAP_CHECK`), yüksek katman. SIM Swap'ın yapısal ikizi; okunamayan yanıt "değişim yok" sayılmaz, RET olur |
-| 6 | `callForwardingSignal` | Hatta koşulsuz çağrı yönlendirme açık mı? | **Gerçek yol yazılı, opt-in** (`ADSPILOT_CALLFWD_CHECK`), yüksek katman. OTP ele geçirmenin klasik yolu ve önceki beş halkanın göremediği saldırı: aynı SIM, aynı cihaz, hat erişilebilir, ülke beklenen. Yalnız koşulsuz varyant sorulur — tek boolean, PII yok |
+| 2 | `numberVerification.*` | Onay, sahibin kendi cihazından mı geliyor? | **Şimdilik kalıcı olarak yalnız simülasyon** (`AEGIS_NV_SIMULATE`) — cihaz-taraflı OIDC akışıdır, hiçbir arka uç onu çağıramaz. İz tipinde "gerçek" değeri hiç yoktur |
+| 3 | `deviceStatus.retrieveReachabilityStatus` | Hat şu an veri/SMS alabiliyor mu? | **Gerçek yol yazılı, opt-in** (`AEGIS_REACH_CHECK`), yalnız yüksek katman — erişilebilirlik meşru olarak dalgalanır, bu yüzden varsayılan kapalıdır |
+| 4 | `deviceStatus.checkRoaming` | Hat beklenen ülkede mi? | **Gerçek yol yazılı**, yüksek katman, yalnız `AEGIS_EXPECTED_COUNTRY` tanımlıyken — varsayılan ülke uydurulmaz, çünkü uydurulan bir varsayılan sonsuza dek "temiz" cevabı verir |
+| 5 | `deviceSwap.check` | Hat son N saatte yeni bir cihaza mı taşındı? | **Gerçek yol yazılı, opt-in** (`AEGIS_DEVICESWAP_CHECK`), yüksek katman. SIM Swap'ın yapısal ikizi; okunamayan yanıt "değişim yok" sayılmaz, RET olur |
+| 6 | `callForwardingSignal` | Hatta koşulsuz çağrı yönlendirme açık mı? | **Gerçek yol yazılı, opt-in** (`AEGIS_CALLFWD_CHECK`), yüksek katman. OTP ele geçirmenin klasik yolu ve önceki beş halkanın göremediği saldırı: aynı SIM, aynı cihaz, hat erişilebilir, ülke beklenen. Yalnız koşulsuz varyant sorulur — tek boolean, PII yok |
 
 > **SIM Swap artık Nokia'nın canlı Network-as-Code uç noktasına karşı koşuyor**
 > (2026-08-28'de doğrulandı): temiz hat `{"swapped":false}` döndürüp geçiyor, SIM'i değişmiş
-> hat `{"swapped":true}` döndürüp, varsayılan `ADSPILOT_STEPUP=0` ile istem gösterilmeden reddediliyor
+> hat `{"swapped":true}` döndürüp, varsayılan `AEGIS_STEPUP=0` ile istem gösterilmeden reddediliyor
 > (kademe açıkken reddetmek yerine insan istemine yükseltiliyor — aşağıya bak), platformun `500`
 > döndürdüğü hat ise upstream gövdesi maskelenerek kapalı arızaya gidiyor. Üçü de karar
 > günlüğüne `"simSwapKanali":"gercek"` olarak düştü. **Önemli çekince:** hesap platformun
@@ -176,7 +176,7 @@ değişimleri her gün oluyor; seyahat, biten pil, cevap vermeyen şebeke de öy
 kuralında bu kullanıcıların her biri, ileri gidecek hiçbir yol olmadan geri çevrilir — bu tasarımı
 inceleyen Nokia mentörümüz Aleksi Puranen'in işaret ettiği nokta tam da buydu.
 
-Artık bozuk bir sinyal isteği bitirmiyor. `ADSPILOT_STEPUP` açıkken, olağan bir insan durumunu
+Artık bozuk bir sinyal isteği bitirmiyor. `AEGIS_STEPUP` açıkken, olağan bir insan durumunu
 anlatan bir neden — SIM değişti, cihaz değişti, hat yurt dışında, telefon erişilemez, ağ sessiz —
 reddetmek yerine kademeyi yükseltiyor: kalan halkalar yine de soruluyor ve hepsi **gerçek bir
 kanaldan** temiz cevap verirse işlem, bozulan sinyali adıyla söyleyerek başlayan bir insan
@@ -258,9 +258,9 @@ artırabilen ve bu yüzden yukarıdaki kapıdan geçen eylemleri işaretler.
 Üç Meta aracı ikinci ve daha gevşek bir yol değil: aynı `onayAl` kapısını aynı risk
 kademeleriyle çağırıyorlar, yani CAMARA zinciri Meta'da da insan isteminden önce koşuyor.
 
-**Kaynaklar** — araç çağırmadan okunabilen veri: `adspilot://accounts` ·
-`adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (etkin
-kelepçelerin) · `adspilot://gaql-sema` (alan rehberi — ajan GAQL alanı uydurmasın).
+**Kaynaklar** — araç çağırmadan okunabilen veri: `aegis://accounts` ·
+`aegis://accounts/{id}/campaigns` · `aegis://accounts/{id}/limits` (etkin
+kelepçelerin) · `aegis://gaql-sema` (alan rehberi — ajan GAQL alanı uydurmasın).
 
 **Prompt'lar** — slash komut olarak görünen hazır iş akışları: `/reklam-kur`
 (siteden taslak kampanya) · `/israf-bul` (boşa harcamayı bul ve kes) ·
@@ -275,7 +275,7 @@ model yapar, yayına almadan önce insan onaylar.
 sequenceDiagram
     participant U as Sen
     participant A as Ajan
-    participant S as AdsPilot
+    participant S as Aegis
     participant G as Google Ads
 
     U->>A: /reklam-kur https://ornek.com
@@ -351,7 +351,7 @@ flowchart LR
         CD["Claude Desktop<br/>Cursor · diğerleri"]
     end
 
-    subgraph server["AdsPilot sunucusu"]
+    subgraph server["Aegis sunucusu"]
         direction TB
         T["stdio · Streamable HTTP + Bearer"]
         M["MCP yüzeyi<br/>15 araç · 4 kaynak · 5 prompt"]
@@ -389,7 +389,7 @@ Aynı çekirdeği paylaşan iki dağıtım biçimi var:
 
 ## Karşılaştırma
 
-| | Google resmi MCP | AdsPilot |
+| | Google resmi MCP | Aegis |
 |---|---|---|
 | **Kampanya yazma** | ❌ tasarım gereği salt okunur | ✅ kurma, bütçe, kelime, reklam, yayına alma |
 | **Onay modeli** | yok | İnsana MCP elicitation ile sorulur; ajan onay uyduramaz |
@@ -415,7 +415,7 @@ docker compose up --build
 curl http://localhost:8787/health          # -> {"ok":true,...}
 ```
 
-İmaj yapısı, ortam değişkeni tablosu, jüri demo modu (`ADSPILOT_NAC_SIMULATE`) ve sorun
+İmaj yapısı, ortam değişkeni tablosu, jüri demo modu (`AEGIS_NAC_SIMULATE`) ve sorun
 giderme: **[docs/DOCKER.md](docs/DOCKER.md)**.
 
 ## Güvenlik
@@ -434,7 +434,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 972 çevrimdışı test
+npm test           # 975 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 npm run agtest     # güven zincirinin Nokia NaC platformuna karşı canlı kontrolü
 npm run metatest   # Meta yolunun canlı kontrolü (--write ile duraklatılmış kampanya kurar)
@@ -448,7 +448,7 @@ kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var
 ### Test metrikleri
 
 ```
-972 test · 0 hata          satır %89.95  ·  dal %90.43  ·  fonksiyon %89.76
+975 test · 0 hata          satır %89.95  ·  dal %90.43  ·  fonksiyon %89.76
 ```
 
 Bu üç rakam, test koşucusunun kendi **all files** satırıdır
@@ -532,7 +532,7 @@ karşı doğrular.
 | Raporlar tipli | `structuredContent` bildirilen `outputSchema` ile uyuşuyor |
 | Çok satırlı GAQL alan kaybetmiyor | son `SELECT` alanı dönen satırlarda mevcut |
 | LIMIT tavanı gerçekten kesiyor | önce kırpmasız sayı ölçülüyor, sonra kesildiği kanıtlanıyor |
-| Kelepçeler okunabiliyor | `adspilot://accounts/{id}/limits` tavanı ve yazma iznini bildiriyor |
+| Kelepçeler okunabiliyor | `aegis://accounts/{id}/limits` tavanı ve yazma iznini bildiriyor |
 | Tamamlama gerçek hesabı öneriyor | `completion/complete` canlı hesap ID'sini döndürüyor |
 | Tavan üstü bütçe reddediliyor | ret **ve** canlı bütçenin değişmediği doğrulanıyor |
 | Onaysız yayına alma reddediliyor | ret **ve** canlı durumun değişmediği doğrulanıyor |
@@ -559,6 +559,6 @@ Bu yazılımı kullanabilir, değiştirebilir ve dağıtabilirsin. **Değiştiri
 sürümünü ağ üzerinden servis olarak sunuyorsan AGPL §13 gereği o servisin
 kullanıcılarına kaynağı sunmakla yükümlüsün.** Proje bu yükümlülüğü kendisi de yerine
 getirir: her sayfa altbilgisi ve `/source` uç noktası kaynağa bağlantı verir, MCP
-`instructions` alanı da bunu taşır. Fork edip dağıtıyorsan `ADSPILOT_SOURCE_URL`
+`instructions` alanı da bunu taşır. Fork edip dağıtıyorsan `AEGIS_SOURCE_URL`
 değişkenini **kendi** deponu gösterecek şekilde ayarla — upstream varsayılanı senin
 yükümlülüğünü karşılamaz.

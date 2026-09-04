@@ -10,7 +10,7 @@
  *  - ağ kapısı reddi 'ag-retti' olarak sınıflanır ve ret metni rapora AYNEN geçer;
  *    rapor bunu BAŞARISIZLIK değil, "güvenlik kapısı çalıştı" olarak sunar,
  *  - ağ TEMİZ geçip sunucu doğrulanmış insan onayı istediğinde bu 'ag-retti' diye
- *    YANLIŞ sunulmaz (kanıt satırındaki ADSPILOT_NAC_SIMULATE ipucu yanıltmaz),
+ *    YANLIŞ sunulmaz (kanıt satırındaki AEGIS_NAC_SIMULATE ipucu yanıltmaz),
  *  - --yayinla yolu DIŞINDA hiçbir yerden ENABLED çağrılmaz (kurulum yolunun kara
  *    listesi aynen durur; growth-brain.mjs'te yayinaAl tek ve korumalı çağrıdır),
  *  - --yayinla, --uygula olmadan Türkçe hatayla reddedilir.
@@ -45,7 +45,7 @@ const YAYIN_OK =
 const AG_RETTI =
   "Reddedildi [SİMÜLASYON]: AĞ DOĞRULAMASI BAŞARISIZ (SİMÜLE) — onaylayıcının " +
   "(+905*******22) SIM kartı son 72 saat içinde değişmiş SAYILDI " +
-  "(ADSPILOT_NAC_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, hesap ele " +
+  "(AEGIS_NAC_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, hesap ele " +
   "geçirme saldırılarının tipik işaretidir; onay istemi hiç gösterilmedi ve harcama artışı " +
   "uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.";
 
@@ -63,14 +63,14 @@ const AG_RETTI =
 const DEVSWAP_RETTI_SIM =
   "Reddedildi [SİMÜLASYON]: CİHAZ DEĞİŞİMİ SAPTANDI (SİMÜLE) — onaylayıcının (+905*******22) " +
   "hattı son 72 saat içinde YENİ BİR CİHAZA taşınmış SAYILDI " +
-  "(ADSPILOT_DEVICESWAP_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, SIM " +
+  "(AEGIS_DEVICESWAP_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, SIM " +
   "kartı hiç değişmeden hattın başka bir telefona alınması anlamına gelir — hesap ele " +
   "geçirmenin SIM Swap kontrolüne yakalanmayan biçimidir; onay istemi gösterilmez ve harcama " +
   "artışı uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.";
 
 const CALLFWD_RETTI_SIM =
   "Reddedildi [SİMÜLASYON]: ÇAĞRI YÖNLENDİRME AÇIK (SİMÜLE) — onaylayıcının (+905*******22) " +
-  "hattında koşulsuz çağrı yönlendirme etkin SAYILDI (ADSPILOT_CALLFWD_SIMULATE=acik; gerçek " +
+  "hattında koşulsuz çağrı yönlendirme etkin SAYILDI (AEGIS_CALLFWD_SIMULATE=acik; gerçek " +
   "ağ sorgusu YAPILMADI). Gerçek akışta bu, hattın doğrulama çağrılarının başka bir numaraya " +
   "aktarıldığı anlamına gelir — OTP/sesli doğrulama ele geçirmenin klasik yolu; onay istemi " +
   "gösterilmez ve harcama artışı uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu " +
@@ -98,13 +98,13 @@ const CALLFWD_RETTI_GERCEK =
  * desende yokken bu retler de sınıflandırıcının dışında kalıyordu).
  */
 const DEVSWAP_CELISKI =
-  "Reddedildi [SİMÜLASYON]: ADSPILOT_DEVICESWAP_CHECK açık (gerçek cihaz değişimi sorgusu) ve " +
-  "ADSPILOT_DEVICESWAP_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu " +
-  "isteniyorsa simülasyon kaldırılmalı, demo isteniyorsa ADSPILOT_DEVICESWAP_CHECK kapatılmalı. " +
+  "Reddedildi [SİMÜLASYON]: AEGIS_DEVICESWAP_CHECK açık (gerçek cihaz değişimi sorgusu) ve " +
+  "AEGIS_DEVICESWAP_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu " +
+  "isteniyorsa simülasyon kaldırılmalı, demo isteniyorsa AEGIS_DEVICESWAP_CHECK kapatılmalı. " +
   "Güvenlik gereği belirsiz yapılandırmada harcama artışı uygulanmaz.";
 
 const CALLFWD_DEGER_TANIMSIZ =
-  "Reddedildi [SİMÜLASYON]: ADSPILOT_CALLFWD_SIMULATE değeri tanınmadı (değer, sır ihtimaline " +
+  "Reddedildi [SİMÜLASYON]: AEGIS_CALLFWD_SIMULATE değeri tanınmadı (değer, sır ihtimaline " +
   'karşı burada gösterilmez) — geçerli değerler "kapali" | "acik". Güvenlik gereği ' +
   "anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).";
 
@@ -115,7 +115,7 @@ const INSAN_ONAYI = [
   "  • Günlük bütçe: 40 (hesabın para biriminde; Google günlük bütçenin katlarını harcayabilir)",
   "  • Coğrafi hedef: 1 konum",
   "  • Ağ doğrulaması [SİMÜLASYON]: SIM değişimi yok (son 72 saat, +905*******22) — simüle kanal " +
-    "(ADSPILOT_NAC_SIMULATE=temiz), gerçek ağ sorgusu YAPILMADI",
+    "(AEGIS_NAC_SIMULATE=temiz), gerçek ağ sorgusu YAPILMADI",
   "Kullanıcıya bu özeti göster ve açık onayını al; onay geldiyse confirm=true ile tekrar çağır.",
 ].join("\n");
 
@@ -558,7 +558,7 @@ test("KRİTİK: kampanya adı sıradan bir reddi 'ağ reddetti' gibi gösteremez
 });
 
 test("KRİTİK: kampanya adı env değişkeni taklit ederek ağ kapısı uyduramaz", () => {
-  const kotuAd = "Kampanya ADSPILOT_NAC_SIMULATE=degisti";
+  const kotuAd = "Kampanya AEGIS_NAC_SIMULATE=degisti";
   const ret = `Reddedildi: "${kotuAd}" kampanyasının günlük bütçesi 900 — hesap güvenlik tavanının (500) üstünde.`;
   assert.equal(yayinSonucuSinifla(ret, kotuAd), "reddedildi", "bu bir bütçe reddidir, ağ reddi değil");
 });

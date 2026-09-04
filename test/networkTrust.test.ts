@@ -51,7 +51,7 @@ test("ağ: token yoksa kapı devre dışı — engel yok, durumu söyleyen kanı
 
 test("ağ: token var ama onaylayıcı numarası yoksa KAPALI ARIZA", async () => {
   const k = await agDogrula({ nacToken: "t", simSwapWindowHours: 72 }, "high");
-  assert.match(k.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.match(k.engel!, /AEGIS_APPROVER_PHONE/);
 });
 
 test("ağ: SIM değişmişse REDDET ve numarayı maskele", async () => {

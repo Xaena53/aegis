@@ -6,7 +6,7 @@
  * adı belgede geçiyor mu"). İki iddia bu ağdan kaçtı, çünkü ikisi de varlık değil ANLAM
  * iddiasıydı:
  *
- *   1) KADEMELİ DOĞRULAMA. `ADSPILOT_STEPUP` docs/ altında HİÇ geçmiyordu ve hiçbir
+ *   1) KADEMELİ DOĞRULAMA. `AEGIS_STEPUP` docs/ altında HİÇ geçmiyordu ve hiçbir
  *      gözcü onu aramıyordu (zincir kaydında yoktu). Sonuç: runbook'un kapalı-arıza
  *      matrisi ile README, kapının TERSİNE çalışan bir davranışını KURAL diye ilan
  *      ediyordu — "SIM değişimi anında reddeder, sonraki hiçbir halka yumuşatamaz".
@@ -97,7 +97,7 @@ test("runbook: kademeye ASLA uygun olmayan nedenler tabloya SIZMAMIŞ", () => {
   }
 });
 
-test("belge: ADSPILOT_STEPUP hem runbook'ta hem CAMARA kontrol listesinde anlatılıyor", () => {
+test("belge: AEGIS_STEPUP hem runbook'ta hem CAMARA kontrol listesinde anlatılıyor", () => {
   /**
    * Zincir kaydına eklenmesi (ZINCIR_ORTAK_ENVLERI) .env.example ve docs/CAMARA.md
    * gözcülerini zaten devreye sokar; docs/DEMO.md gözcüsü HALKA başına çalıştığı için
@@ -106,14 +106,14 @@ test("belge: ADSPILOT_STEPUP hem runbook'ta hem CAMARA kontrol listesinde anlat�
    */
   assert.match(
     BELGE_DEMO,
-    /ADSPILOT_STEPUP/,
-    "docs/DEMO.md `ADSPILOT_STEPUP`'tan hiç söz etmiyor — matrisin hangi ayar altında " +
+    /AEGIS_STEPUP/,
+    "docs/DEMO.md `AEGIS_STEPUP`'tan hiç söz etmiyor — matrisin hangi ayar altında " +
       "geçerli olduğunu söylemeyen bir kapalı-arıza matrisi yanlış güven verir"
   );
   assert.match(
     BELGE_CAMARA,
-    /ADSPILOT_STEPUP/,
-    "docs/CAMARA.md `ADSPILOT_STEPUP`'tan hiç söz etmiyor — token gelen operatör canlı " +
+    /AEGIS_STEPUP/,
+    "docs/CAMARA.md `AEGIS_STEPUP`'tan hiç söz etmiyor — token gelen operatör canlı " +
       "koşudan önce onun kapalı olması gerektiğini hiç öğrenmez"
   );
 });
@@ -134,7 +134,7 @@ const MUTLAK_IDDIA = [
 ];
 
 /** İddiayı koşula bağlayan ifadeler — aynı SATIRDA bulunmak zorunda. */
-const KOSUL = /ADSPILOT_STEPUP|step-up|kademe/i;
+const KOSUL = /AEGIS_STEPUP|step-up|kademe/i;
 
 test("belge: 'istem hiç gösterilmez' diyen her satır step-up koşulunu SÖYLÜYOR", () => {
   /**
@@ -159,7 +159,7 @@ test("belge: 'istem hiç gösterilmez' diyen her satır step-up koşulunu SÖYL�
     suclular,
     [],
     "Bu satırlar onay isteminin HİÇ gösterilmediğini KOŞULSUZ bir kural gibi yazıyor, " +
-      "oysa KADEME_UYGUN'daki her neden için bu yalnız `ADSPILOT_STEPUP=0` iken (varsayılan) " +
+      "oysa KADEME_UYGUN'daki her neden için bu yalnız `AEGIS_STEPUP=0` iken (varsayılan) " +
       "doğrudur. Cümleyi koşula bağla (ör. \"while step-up is off, the default\"):\n" +
       suclular.join("\n")
   );

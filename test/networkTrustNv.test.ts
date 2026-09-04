@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Number Verification SİMÜLASYON kanalı (ADSPILOT_NV_SIMULATE) — güven zincirinin 2. halkası.
+ * Number Verification SİMÜLASYON kanalı (AEGIS_NV_SIMULATE) — güven zincirinin 2. halkası.
  *
  * SIM Swap "hat son zamanlarda ele geçirildi mi?" sorusunu cevaplar; bu halka bir sonrakini:
  * "onay isteği hat sahibinin KENDİ cihazından mı geliyor?". Gerçek CAMARA Number Verification
@@ -11,7 +11,7 @@
  * Merkezi iddialar: "uyusmadi" SIM temizken bile insan istemi HİÇ gösterilmeden SERT reddeder;
  * halka YALNIZ high katmanda koşar (medium'da hiç yok); tanınmayan değer kapalı arızaya gider
  * ve ham değeri yankılamaz; zincir sırası tek yönlüdür — SIM reti NV "dogrulandi" ile
- * yumuşatılamaz; halka ADSPILOT_NAC_SIMULATE'ten bağımsızdır ve gerçek SIM-Swap kanalıyla da
+ * yumuşatılamaz; halka AEGIS_NAC_SIMULATE'ten bağımsızdır ve gerçek SIM-Swap kanalıyla da
  * birleşir.
  *
  * Fail-closed değişmezi: buradaki hiçbir senaryo mevcut kapıyı gevşetmez.
@@ -90,7 +90,7 @@ test("nv: tanınmayan değer karar anında RET — ham değer (sır olabilir) me
   const k = await agDogrula({ ...NV_AYAR, nvSimulate: "sanirim-oldu" }, "high");
   assert.ok(k.engel, "tanınmayan değer fail-open olamaz");
   assert.match(k.engel!, /SİMÜLASYON/);
-  assert.match(k.engel!, /ADSPILOT_NV_SIMULATE/);
+  assert.match(k.engel!, /AEGIS_NV_SIMULATE/);
   assert.match(k.engel!, /tanınmadı/);
   assert.match(k.engel!, /"dogrulandi" \| "uyusmadi"/, "geçerli değerler operatöre söylenmeli");
   assert.doesNotMatch(k.engel!, /sanirim-oldu/, "ham env değeri ret metnine yankılanmaz");
@@ -101,7 +101,7 @@ test("nv: approverPhone yoksa 2. halka da KAPALI ARIZA (doğrulanacak numara olm
   const k = await agDogrula({ simSwapWindowHours: 72, nvSimulate: "dogrulandi" }, "high");
   assert.ok(k.engel);
   assert.match(k.engel!, /SİMÜLASYON/);
-  assert.match(k.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.match(k.engel!, /AEGIS_APPROVER_PHONE/);
   assert.equal(k.kanit.length, 0);
 });
 

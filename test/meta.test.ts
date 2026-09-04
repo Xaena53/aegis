@@ -52,7 +52,7 @@ interface SahteSecenek {
   metaToken?: string;
   metaHesap?: string;
   /**
-   * Kademeli doğrulama (ADSPILOT_STEPUP) açık mı? Açıkken erişilebilirlik VE cihaz
+   * Kademeli doğrulama (AEGIS_STEPUP) açık mı? Açıkken erişilebilirlik VE cihaz
    * değişimi halkaları da gerçek kanaldan koşar: yükseltmenin, bozuk sinyale KEFİL
    * OLABİLEN en az bir gerçek doğrulayana ihtiyacı vardır.
    */
@@ -88,7 +88,7 @@ afterEach(() => {
   istemSayisi = 0;
   istemMetinleri = [];
   // Günlük bir SÜREÇ AYARI: açık bırakılırsa sonraki testler farkında olmadan yazar.
-  delete process.env.ADSPILOT_DECISION_LOG;
+  delete process.env.AEGIS_DECISION_LOG;
   if (gunlukKok) {
     rmSync(gunlukKok, { recursive: true, force: true });
     gunlukKok = undefined;
@@ -307,7 +307,7 @@ test("Meta: token yokken araç SESSİZ KALMAZ, açıkça 'yapılandırılmamış
     name: "create_meta_campaign",
     arguments: { name: "X", objective: "OUTCOME_TRAFFIC", dailyBudget: 10 },
   });
-  assert.match(metin(r), /ADSPILOT_META_TOKEN/);
+  assert.match(metin(r), /AEGIS_META_TOKEN/);
   assert.equal(cagrilar.length, 0);
 });
 
@@ -317,7 +317,7 @@ test("Meta: token var ama hesap kimliği yoksa KAPALI ARIZA", async () => {
     name: "create_meta_campaign",
     arguments: { name: "X", objective: "OUTCOME_TRAFFIC", dailyBudget: 10 },
   });
-  assert.match(metin(r), /ADSPILOT_META_AD_ACCOUNT_ID/);
+  assert.match(metin(r), /AEGIS_META_AD_ACCOUNT_ID/);
   assert.equal(cagrilar.length, 0, "hangi hesap olduğu belirsizken hiçbir şey yapılmamalı");
 });
 
@@ -373,9 +373,9 @@ let gunlukKok: string | undefined;
 
 /** Günlüğü AÇAR: geçici dizin + env. Dönüş, okunacak JSONL dosyasının yoludur. */
 function gunlukAc(): string {
-  gunlukKok = mkdtempSync(path.join(tmpdir(), "adspilot-meta-karar-"));
+  gunlukKok = mkdtempSync(path.join(tmpdir(), "aegis-meta-karar-"));
   const dosya = path.join(gunlukKok, "kararlar.jsonl");
-  process.env.ADSPILOT_DECISION_LOG = dosya;
+  process.env.AEGIS_DECISION_LOG = dosya;
   return dosya;
 }
 
@@ -444,9 +444,9 @@ test("TUTAR: Meta yayına almada OKUNABİLEN günlük bütçe kaydedilir", async
  * BÜTÇE TAVANI YAYINA ALMADA — bu üç test bir denetimde bulunan boşluğun bekçisidir.
  *
  * Bütçeyi bu araç yazmadığında tavanı kimse sınamıyordu: kampanya Meta Ads Manager'da
- * elle kurulup AdsPilot'a yalnız "yayına al" dedirtilebiliyordu. Tavan yalnız BİZİM
+ * elle kurulup Aegis'a yalnız "yayına al" dedirtilebiliyordu. Tavan yalnız BİZİM
  * yazdığımız bütçelere uygulandığı sürece, hesap sahibinin koyduğu kelepçe harcamanın
- * değil "AdsPilot üzerinden kurulan kampanyaların" kelepçesidir.
+ * değil "Aegis üzerinden kurulan kampanyaların" kelepçesidir.
  *
  * Onaya HİÇ gelinmediği de sınanıyor: tavan aşımı bir soru değil, bir rettir. İnsana
  * sorulsaydı, kapı "hayır" diyebilecek bir şeyi "emin misin?" diye pazarlığa açardı.

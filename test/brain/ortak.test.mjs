@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 // BRAIN_MODEL varsayılanını deterministik test edebilmek için modül, env
 // temizlendikten SONRA yüklenir (modül sabiti yükleme anında hesaplanır).
-delete process.env.ADSPILOT_BRAIN_MODEL;
+delete process.env.AEGIS_BRAIN_MODEL;
 const {
   BRAIN_MODEL,
   SONUC_TAVANI,
@@ -348,9 +348,9 @@ test("kaynakOku: contents text blokları birleşir, text olmayanlar atlanır", a
     async close() {},
   };
   const { kaynakOku } = cagirSarmala(mcp);
-  const sonuc = await kaynakOku("adspilot://accounts/1/limits");
+  const sonuc = await kaynakOku("aegis://accounts/1/limits");
   assert.equal(sonuc, '{"gunlukButceTavani":500}');
-  assert.deepEqual(okumalar, [{ uri: "adspilot://accounts/1/limits" }]);
+  assert.deepEqual(okumalar, [{ uri: "aegis://accounts/1/limits" }]);
 });
 
 test("kaynakOku: uzun kaynak SONUC_TAVANI'nda kırpılır ve işaretlenir", async () => {
@@ -361,7 +361,7 @@ test("kaynakOku: uzun kaynak SONUC_TAVANI'nda kırpılır ve işaretlenir", asyn
     async close() {},
   };
   const { kaynakOku } = cagirSarmala(mcp);
-  const sonuc = await kaynakOku("adspilot://accounts/1/limits");
+  const sonuc = await kaynakOku("aegis://accounts/1/limits");
   assert.ok(sonuc.endsWith(KIRPMA_ISARETI));
   assert.equal(sonuc.length, SONUC_TAVANI + 1 + KIRPMA_ISARETI.length);
 });

@@ -52,13 +52,13 @@ const HEDEFLER = [
 function yapilandirmaEksik(ayar: { metaToken?: string; metaAdAccountId?: string }): string | null {
   if (!ayar.metaToken) {
     return (
-      "Meta araçları yapılandırılmamış: ADSPILOT_META_TOKEN tanımlı değil. " +
+      "Meta araçları yapılandırılmamış: AEGIS_META_TOKEN tanımlı değil. " +
       "Hesap sahibi tanımlamadan Meta tarafında hiçbir işlem yapılamaz."
     );
   }
   if (!ayar.metaAdAccountId) {
     return (
-      "Meta yapılandırması eksik: ADSPILOT_META_TOKEN var ama ADSPILOT_META_AD_ACCOUNT_ID boş. " +
+      "Meta yapılandırması eksik: AEGIS_META_TOKEN var ama AEGIS_META_AD_ACCOUNT_ID boş. " +
       "Hangi reklam hesabında çalışılacağı belirsizken işlem yapılmaz (kapalı arıza)."
     );
   }
@@ -266,7 +266,7 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
            *
            * Kampanya başka bir yerde (Meta Ads Manager'da elle) kurulmuş olabilir ve
            * bizim hiç görmediğimiz bir günlük bütçe taşıyabilir. Tavan yalnız BİZİM
-           * yazdığımız bütçelere uygulanırsa, hesap sahibinin koyduğu kelepçe "AdsPilot
+           * yazdığımız bütçelere uygulanırsa, hesap sahibinin koyduğu kelepçe "Aegis
            * üzerinden kurulan kampanyalar" kelepçesine dönüşür — oysa vaat harcamanın
            * kendisi üzerine. Google tarafındaki ikizi bunu zaten yapıyor
            * (tools/write.ts, set_campaign_status ENABLED dalı); burada eksikti.

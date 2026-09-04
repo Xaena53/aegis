@@ -210,7 +210,7 @@ test("PAUSED kampanyada insana HİÇ sorulmaz (taslak akışı akıcı kalmalı)
  * bayat bir rızadır.
  *
  * Aşağıdaki bekçiler yükseltmenin NEREDE durduğunu sabitler. Yoklukları ölçüldü:
- * bugünkü kodda ADSPILOT_STEPUP=1 + elicitation'sız istemci + confirm=true, taşınmış
+ * bugünkü kodda AEGIS_STEPUP=1 + elicitation'sız istemci + confirm=true, taşınmış
  * bir SIM ile kampanyayı insana hiç sorulmadan yayına alıyordu.
  * ══════════════════════════════════════════════════════════════════════════════ */
 

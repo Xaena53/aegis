@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * SIM-Swap SİMÜLASYON kanalı (ADSPILOT_NAC_SIMULATE) — jüri demosu NaC token'sız çalışır.
+ * SIM-Swap SİMÜLASYON kanalı (AEGIS_NAC_SIMULATE) — jüri demosu NaC token'sız çalışır.
  *
  * Merkezi iddialar: simülasyonun ürettiği HER metin "SİMÜLASYON" ibaresi taşır (gerçek ağ
  * doğrulaması gibi sunulamaz); "degisti" insan istemi HİÇ gösterilmeden SERT reddeder;
@@ -68,13 +68,13 @@ test("sim: geçersiz değer karar anında Türkçe RET (kapalı arıza — sunuc
 
 test("sim: approverPhone yoksa simülasyonda da KAPALI ARIZA (nacToken gerekmez, telefon şart)", async () => {
   const k = await agDogrula({ simSwapWindowHours: 72, nacSimulate: "temiz" }, "high");
-  assert.match(k.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.match(k.engel!, /AEGIS_APPROVER_PHONE/);
   assert.match(k.engel!, /SİMÜLASYON/);
 });
 
 test("sim: nacToken VE simülasyon birlikte → çelişkili yapılandırma SERT RET (fail-closed)", async () => {
   /**
-   * Belirsizlikte gevşek kanal seçilmez: demodan kalan bir ADSPILOT_NAC_SIMULATE
+   * Belirsizlikte gevşek kanal seçilmez: demodan kalan bir AEGIS_NAC_SIMULATE
    * kalıntısı, gerçek token'lı bir kurulumun ağ doğrulamasını sessizce tiyatroya
    * çeviremez — iki dünya aynı anda istenirse cevap RET'tir.
    */
@@ -82,7 +82,7 @@ test("sim: nacToken VE simülasyon birlikte → çelişkili yapılandırma SERT 
   assert.ok(k.engel, "çelişkili yapılandırma fail-open olamaz");
   assert.match(k.engel!, /SİMÜLASYON/);
   assert.match(k.engel!, /çelişkili yapılandırma/);
-  assert.match(k.engel!, /ADSPILOT_NAC_TOKEN/);
+  assert.match(k.engel!, /AEGIS_NAC_TOKEN/);
   assert.equal(k.kanit.length, 0);
 });
 

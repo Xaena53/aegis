@@ -115,10 +115,10 @@ test("belge: SDK'nın atladığı X-RapidAPI-Host başlığı ve sonucu kayıtl�
 
 /* ── 3) Kopyalanabilir kontrol listesi gerçekten uygulanabilir mi ─────────────── */
 
-test("kontrol listesi: geçen her ADSPILOT_* env adı .env.example'da GERÇEKTEN var", () => {
+test("kontrol listesi: geçen her AEGIS_* env adı .env.example'da GERÇEKTEN var", () => {
   const ornek = readFileSync(yol("../.env.example"), "utf8");
   const liste = bolum("Token arrival checklist");
-  const adlar = [...new Set(liste.match(/ADSPILOT_[A-Z0-9_]+/g) ?? [])];
+  const adlar = [...new Set(liste.match(/AEGIS_[A-Z0-9_]+/g) ?? [])];
   assert.ok(adlar.length >= 4, "kontrol listesi env adı içermiyor — kopyalanabilir olmalı");
   for (const ad of adlar) {
     assert.ok(
@@ -142,8 +142,8 @@ test("kontrol listesi: simülasyon değişkenlerinin TEMİZLENMESİ adımı duru
   const liste = bolum("Token arrival checklist");
   // Token + simülasyon birlikteliği çelişkili yapılandırmadır ve REDDEDİLİR; operatörün
   // bunu canlı koşudan ÖNCE öğrenmesi gerekir, hata mesajından sonra değil.
-  assert.match(liste, /ADSPILOT_NAC_SIMULATE/, "simülasyon kanalının temizlenmesi adımı kayıp");
-  assert.match(liste, /ADSPILOT_NV_SIMULATE/, "NV simülasyon kanalının temizlenmesi adımı kayıp");
+  assert.match(liste, /AEGIS_NAC_SIMULATE/, "simülasyon kanalının temizlenmesi adımı kayıp");
+  assert.match(liste, /AEGIS_NV_SIMULATE/, "NV simülasyon kanalının temizlenmesi adımı kayıp");
   assert.match(liste, /contradictory|çeliş/i, "çelişkili yapılandırma uyarısı kayıp");
   // Canlı koşunun KANITI iz alanıdır: operatöre neye bakacağı söylenmeli.
   assert.match(liste, /simSwapKanali/, "denetim izinde neye bakılacağı yazılmalı");

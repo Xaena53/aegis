@@ -145,7 +145,7 @@ test("HEDEF: ajan kendi kelepçesini gevşetsin — MCP yüzeyinde hiçbir yol y
   assert.deepEqual(supheli, [], "kelepçe değiştiren araç bulunmamalı");
 
   // The resource is read-only: it reports the limits but offers no way to change them
-  const res: any = await c.readResource({ uri: "adspilot://accounts/1466231519/limits" });
+  const res: any = await c.readResource({ uri: "aegis://accounts/1466231519/limits" });
   const veri = JSON.parse(res.contents[0].text);
   assert.equal(veri.gunlukButceTavani, 50);
   assert.ok(

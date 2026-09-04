@@ -52,7 +52,7 @@ const BELGE_README = oku("../README.md");
 const BELGE_README_TR = oku("../README.tr.md");
 const BELGE_CAMARA = oku("../docs/CAMARA.md");
 const BELGE_DEMO = oku("../docs/DEMO.md");
-const BIRIM_SYSTEMD = oku("../deploy/adspilot.service");
+const BIRIM_SYSTEMD = oku("../deploy/aegis.service");
 const BELGE_DEPLOY = oku("../deploy/README.md");
 
 /** Kayıttaki tüm env adları (halkaların kendi env'leri + zincir geneli ortak ayarlar). */
@@ -94,10 +94,10 @@ test("kayıt: id / izAlani / gunlukAlani BENZERSİZ — iki halka tek alana ezil
 /* ── 1) Karar günlüğü: halkanın kanalı kayda VE JSONL satırına düşüyor mu? ───── */
 
 test("günlük: her halkanın kanalı hem KararKaydi'nde hem JSONL çıktısında görünür", () => {
-  const dizin = mkdtempSync(join(tmpdir(), "adspilot-zincir-"));
+  const dizin = mkdtempSync(join(tmpdir(), "aegis-zincir-"));
   const dosya = join(dizin, "kararlar.jsonl");
-  const onceki = process.env.ADSPILOT_DECISION_LOG;
-  process.env.ADSPILOT_DECISION_LOG = dosya;
+  const onceki = process.env.AEGIS_DECISION_LOG;
+  process.env.AEGIS_DECISION_LOG = dosya;
   try {
     for (const halka of ZINCIR_HALKALARI) {
       /**
@@ -136,8 +136,8 @@ test("günlük: her halkanın kanalı hem KararKaydi'nde hem JSONL çıktısınd
       );
     }
   } finally {
-    if (onceki === undefined) delete process.env.ADSPILOT_DECISION_LOG;
-    else process.env.ADSPILOT_DECISION_LOG = onceki;
+    if (onceki === undefined) delete process.env.AEGIS_DECISION_LOG;
+    else process.env.AEGIS_DECISION_LOG = onceki;
     rmSync(dizin, { recursive: true, force: true });
   }
 });
@@ -151,10 +151,10 @@ test("günlük: PENCERELİ halkanın penceresi de hem kayda hem JSONL satırına
    * TEK penceredir; düşerse "hangi soru hangi pencereyle soruldu" bilgisi kaybolur ve
    * bunu hiçbir test görmez. Bu döngü, penceresi olan her halka için o boşluğu kapatır.
    */
-  const dizin = mkdtempSync(join(tmpdir(), "adspilot-pencere-"));
+  const dizin = mkdtempSync(join(tmpdir(), "aegis-pencere-"));
   const dosya = join(dizin, "kararlar.jsonl");
-  const onceki = process.env.ADSPILOT_DECISION_LOG;
-  process.env.ADSPILOT_DECISION_LOG = dosya;
+  const onceki = process.env.AEGIS_DECISION_LOG;
+  process.env.AEGIS_DECISION_LOG = dosya;
   try {
     const pencereliler = ZINCIR_HALKALARI.filter((h) => h.pencereIzAlani);
     assert.ok(
@@ -194,8 +194,8 @@ test("günlük: PENCERELİ halkanın penceresi de hem kayda hem JSONL satırına
       );
     }
   } finally {
-    if (onceki === undefined) delete process.env.ADSPILOT_DECISION_LOG;
-    else process.env.ADSPILOT_DECISION_LOG = onceki;
+    if (onceki === undefined) delete process.env.AEGIS_DECISION_LOG;
+    else process.env.AEGIS_DECISION_LOG = onceki;
     rmSync(dizin, { recursive: true, force: true });
   }
 });
@@ -331,7 +331,7 @@ test("beyin sınıflandırıcısı: her halkanın env adı da desenlerce yakalan
         `halka '${halka.id}' env'i '${env}' AG_KAPISI_IZLERI desenlerinin hiçbirine uymuyor. ` +
           `Halkanın yapılandırma/çelişki retleri (metinleri env adından başka ağ izi taşımaz) ` +
           `bu yüzden 'reddedildi' sınıflanır. uygulama.mjs'teki ` +
-          `/ADSPILOT_(…)_[A-Z_]+/ desenine halkanın önekini ekle.`
+          `/AEGIS_(…)_[A-Z_]+/ desenine halkanın önekini ekle.`
       );
     }
   }
@@ -583,10 +583,10 @@ function yazilabilirKokler(birim: string): string[] {
   return kokler;
 }
 
-test("denetim izi: belgelenen ADSPILOT_DECISION_LOG yolu systemd'de YAZILABİLİR", () => {
+test("denetim izi: belgelenen AEGIS_DECISION_LOG yolu systemd'de YAZILABİLİR", () => {
   /**
    * Sessiz arızanın tam tarifi: birim ProtectSystem=strict ile koşuyor, yazılabilir
-   * tek yol /opt/adspilot/data iken .env.example ve DEMO.md /var/log/adspilot/… örneği
+   * tek yol /opt/aegis/data iken .env.example ve DEMO.md /var/log/aegis/… örneği
    * veriyordu. Operatör günlüğü açtığını sanır; her riskli karar kum havuzuna çarpar;
    * günlük KAPI OLMADIĞI için (yazma hatası akışı düşürmez, stderr'e tek satır yazılır)
    * hiçbir şey bozulmaz ve JSONL boş kalır. Eksiklik ancak "geçen ay kaç ret vardı"
@@ -604,25 +604,25 @@ test("denetim izi: belgelenen ADSPILOT_DECISION_LOG yolu systemd'de YAZILABİLİ
     for (const satir of metin.split(/\r?\n/)) {
       /**
        * KAPSAM: yalnız systemd biriminin yönettiği yollar. Konteyner örnekleri
-       * (`docker run … -e ADSPILOT_DECISION_LOG=/data/…`) bilerek dışarıda: orada
+       * (`docker run … -e AEGIS_DECISION_LOG=/data/…`) bilerek dışarıda: orada
        * dosya sistemini bu birim değil, imajın kendi /data bağlaması belirler ve
        * onları buraya katmak, kapsamı dışında bir kural yüzünden yanlış alarm üretirdi.
        */
       if (/docker|^\s*-e\s/i.test(satir)) continue;
-      const m = /ADSPILOT_DECISION_LOG=(\/[^\s`"']+)/.exec(satir);
+      const m = /AEGIS_DECISION_LOG=(\/[^\s`"']+)/.exec(satir);
       if (m) yollar.push({ kaynak: ad, yol: m[1] });
     }
   }
   assert.ok(
     yollar.length >= 2,
-    `Belgelerde mutlak yollu ADSPILOT_DECISION_LOG örneği bulunamadı (${yollar.length}) — ` +
+    `Belgelerde mutlak yollu AEGIS_DECISION_LOG örneği bulunamadı (${yollar.length}) — ` +
       "örnek kaldırıldıysa bu gözcü sessizce boşa düşer; testi de birlikte güncelle."
   );
 
   for (const { kaynak, yol } of yollar) {
     assert.ok(
       kokler.some((kok) => yol === kok || yol.startsWith(kok.endsWith("/") ? kok : kok + "/")),
-      `${kaynak} '${yol}' yolunu örnek veriyor ama deploy/adspilot.service bu yolu ` +
+      `${kaynak} '${yol}' yolunu örnek veriyor ama deploy/aegis.service bu yolu ` +
         `YAZILABİLİR bırakmıyor (yazılabilir kökler: ${kokler.join(", ")}). ` +
         `Ya birime LogsDirectory=/ReadWritePaths= satırı ekle, ya da örneği yazılabilir ` +
         `kümenin altına taşı. Aksi hâlde denetim izi ÜRETİMDE sessizce hiç oluşmaz.`
@@ -632,7 +632,7 @@ test("denetim izi: belgelenen ADSPILOT_DECISION_LOG yolu systemd'de YAZILABİLİ
 
 test("deploy runbook'u karar günlüğünün kum havuzu tuzağını ANIYOR", () => {
   /**
-   * ADSPILOT_DB için bu uyarı zaten yazılmıştı ("must be an absolute path… which
+   * AEGIS_DB için bu uyarı zaten yazılmıştı ("must be an absolute path… which
    * ProtectSystem=strict makes read-only"); denetim izi için hiç yazılmamıştı ve
    * runbook DECISION_LOG'dan tek kelime etmiyordu. Aradaki fark keyfi: ikisi de aynı
    * kum havuzuna çarpar, ama biri servisi çökertip kendini duyurur, diğeri sessizce
@@ -640,7 +640,7 @@ test("deploy runbook'u karar günlüğünün kum havuzu tuzağını ANIYOR", () 
    */
   assert.match(
     BELGE_DEPLOY,
-    /ADSPILOT_DECISION_LOG/,
+    /AEGIS_DECISION_LOG/,
     "deploy/README.md karar günlüğünden hiç söz etmiyor — operatör onu ancak burada öğrenir"
   );
   assert.match(

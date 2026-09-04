@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 loadDotenv({ path: path.join(projectRoot, ".env"), quiet: true });
 
-export interface AdsPilotConfig {
+export interface AegisConfig {
   developerToken: string;
   clientId: string;
   clientSecret: string;
@@ -38,7 +38,7 @@ export interface AdsPilotConfig {
   /** SIM-swap lookback window for high-risk actions (hours). */
   simSwapWindowHours: number;
   /**
-   * KADEMELİ DOĞRULAMA (ADSPILOT_STEPUP) — varsayılan KAPALI.
+   * KADEMELİ DOĞRULAMA (AEGIS_STEPUP) — varsayılan KAPALI.
    *
    * Açıkken, olağan bir kullanıcı durumundan doğan bozuk ağ sinyali (SIM/cihaz
    * değişimi, seyahat, kapalı telefon, cevapsız ağ) düz retle bitmez: kalan halkalar
@@ -124,7 +124,7 @@ export function missingCredentials(): string[] {
  * same variables the same way.
  */
 export function nacConfigFromEnv(): Pick<
-  AdsPilotConfig,
+  AegisConfig,
   | "nacToken"
   | "approverPhone"
   | "simSwapWindowHours"
@@ -141,41 +141,41 @@ export function nacConfigFromEnv(): Pick<
   | "stepUp"
 > {
   return {
-    stepUp: parseBool(process.env.ADSPILOT_STEPUP, false, "ADSPILOT_STEPUP"),
-    nacToken: process.env.ADSPILOT_NAC_TOKEN?.trim() || undefined,
-    approverPhone: process.env.ADSPILOT_APPROVER_PHONE?.trim() || undefined,
+    stepUp: parseBool(process.env.AEGIS_STEPUP, false, "AEGIS_STEPUP"),
+    nacToken: process.env.AEGIS_NAC_TOKEN?.trim() || undefined,
+    approverPhone: process.env.AEGIS_APPROVER_PHONE?.trim() || undefined,
     // Bilerek ham geçirilir; "temiz"/"degisti" doğrulaması karar anında yapılır.
-    nacSimulate: process.env.ADSPILOT_NAC_SIMULATE?.trim() || undefined,
+    nacSimulate: process.env.AEGIS_NAC_SIMULATE?.trim() || undefined,
     // Aynı gerekçe: "dogrulandi"/"uyusmadi" doğrulaması karar anında yapılır.
-    nvSimulate: process.env.ADSPILOT_NV_SIMULATE?.trim() || undefined,
+    nvSimulate: process.env.AEGIS_NV_SIMULATE?.trim() || undefined,
     // Aynı gerekçe: "erisilebilir"/"anormal" doğrulaması karar anında yapılır.
-    reachSimulate: process.env.ADSPILOT_REACH_SIMULATE?.trim() || undefined,
+    reachSimulate: process.env.AEGIS_REACH_SIMULATE?.trim() || undefined,
     /**
      * Varsayılan KAPALI. parseBool anlaşılamayan değeri de güvenli tarafa (kapalı)
      * aldığı için bozuk bir değer halkayı açık bırakmaz — açmak açık bir niyet ister.
      */
-    reachCheck: parseBool(process.env.ADSPILOT_REACH_CHECK, false, "ADSPILOT_REACH_CHECK"),
+    reachCheck: parseBool(process.env.AEGIS_REACH_CHECK, false, "AEGIS_REACH_CHECK"),
     // Aynı gerekçe: "beklenen"/"beklenmedik" doğrulaması karar anında yapılır.
-    locSimulate: process.env.ADSPILOT_LOC_SIMULATE?.trim() || undefined,
+    locSimulate: process.env.AEGIS_LOC_SIMULATE?.trim() || undefined,
     /**
      * Ham geçirilir: iki-harf (ISO 3166-1 alpha-2) doğrulaması karar anındadır. Boş/eksik
      * değer burada undefined olur ve konum halkası HİÇ KOŞMAZ (beklenti uydurulmaz).
      */
-    expectedCountry: process.env.ADSPILOT_EXPECTED_COUNTRY?.trim() || undefined,
+    expectedCountry: process.env.AEGIS_EXPECTED_COUNTRY?.trim() || undefined,
     // Aynı gerekçe: "temiz"/"degisti" doğrulaması karar anında yapılır.
-    devSwapSimulate: process.env.ADSPILOT_DEVICESWAP_SIMULATE?.trim() || undefined,
+    devSwapSimulate: process.env.AEGIS_DEVICESWAP_SIMULATE?.trim() || undefined,
     /**
      * Varsayılan KAPALI — reachCheck ile aynı gerekçe, artı gecikme: açık her gerçek
      * halka HIGH katmandaki onaya bir CAMARA gidiş-dönüşü ekler. parseBool anlaşılamayan
      * değeri de güvenli tarafa (kapalı) aldığı için bozuk bir değer halkayı açmaz.
      */
-    devSwapCheck: parseBool(process.env.ADSPILOT_DEVICESWAP_CHECK, false, "ADSPILOT_DEVICESWAP_CHECK"),
+    devSwapCheck: parseBool(process.env.AEGIS_DEVICESWAP_CHECK, false, "AEGIS_DEVICESWAP_CHECK"),
     // Aynı gerekçe: "kapali"/"acik" doğrulaması karar anında yapılır.
-    callFwdSimulate: process.env.ADSPILOT_CALLFWD_SIMULATE?.trim() || undefined,
-    callFwdCheck: parseBool(process.env.ADSPILOT_CALLFWD_CHECK, false, "ADSPILOT_CALLFWD_CHECK"),
+    callFwdSimulate: process.env.AEGIS_CALLFWD_SIMULATE?.trim() || undefined,
+    callFwdCheck: parseBool(process.env.AEGIS_CALLFWD_CHECK, false, "AEGIS_CALLFWD_CHECK"),
     simSwapWindowHours: parseNumEnv(
-      "ADSPILOT_SIMSWAP_WINDOW_HOURS",
-      process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS,
+      "AEGIS_SIMSWAP_WINDOW_HOURS",
+      process.env.AEGIS_SIMSWAP_WINDOW_HOURS,
       72
     ),
   };
@@ -253,7 +253,7 @@ export function kiraciAnahtarDilimi(user: {
   ];
 }
 
-export function loadConfig(): AdsPilotConfig {
+export function loadConfig(): AegisConfig {
   const missing = missingCredentials();
   if (missing.length) {
     throw new Error(
@@ -262,15 +262,15 @@ export function loadConfig(): AdsPilotConfig {
     );
   }
   return {
-    metaToken: process.env.ADSPILOT_META_TOKEN?.trim() || undefined,
-    metaAdAccountId: process.env.ADSPILOT_META_AD_ACCOUNT_ID?.trim() || undefined,
+    metaToken: process.env.AEGIS_META_TOKEN?.trim() || undefined,
+    metaAdAccountId: process.env.AEGIS_META_AD_ACCOUNT_ID?.trim() || undefined,
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN!.trim(),
     clientId: process.env.GOOGLE_ADS_CLIENT_ID!.trim(),
     clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET!.trim(),
     refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN!.trim(),
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.trim() || undefined,
-    writeEnabled: parseBool(process.env.ADSPILOT_WRITE_ENABLED, true, "ADSPILOT_WRITE_ENABLED"),
-    maxDailyBudget: parseBudgetCap(process.env.ADSPILOT_MAX_DAILY_BUDGET),
+    writeEnabled: parseBool(process.env.AEGIS_WRITE_ENABLED, true, "AEGIS_WRITE_ENABLED"),
+    maxDailyBudget: parseBudgetCap(process.env.AEGIS_MAX_DAILY_BUDGET),
     ...nacConfigFromEnv(),
   };
 }
@@ -298,7 +298,7 @@ export function parseBool(raw: string | undefined, varsayilan: boolean, ad = "ba
    * yeter; hangi yanlış değeri yazdığını zaten kendisi biliyor.
    */
   console.error(
-    `[adspilot] Uyarı: ${ad} değeri anlaşılamadı (beklenen: 1/0, true/false, evet/hayır) — ` +
+    `[aegis] Uyarı: ${ad} değeri anlaşılamadı (beklenen: 1/0, true/false, evet/hayır) — ` +
       `güvenli tarafa (kapalı) alındı. Değer sır ihtimaline karşı gösterilmiyor.`
   );
   return false;
@@ -314,7 +314,7 @@ export function parseNumEnv(name: string, raw: string | undefined, varsayilan: n
   if (!Number.isFinite(n) || n <= 0) {
     // parseBool ile aynı gerekçe: ham değer loga akmaz, yalnız değişken adı + beklenen biçim.
     console.error(
-      `[adspilot] Uyarı: ${name} geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
+      `[aegis] Uyarı: ${name} geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
         `varsayılan ${varsayilan} kullanılıyor. Değer sır ihtimaline karşı gösterilmiyor.`
     );
     return varsayilan;
@@ -333,7 +333,7 @@ function parseBudgetCap(raw: string | undefined): number {
   if (!Number.isFinite(n) || n <= 0) {
     // parseBool ile aynı gerekçe: ham değer loga akmaz.
     console.error(
-      `[adspilot] Uyarı: ADSPILOT_MAX_DAILY_BUDGET geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
+      `[aegis] Uyarı: AEGIS_MAX_DAILY_BUDGET geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
         `bütçe tavanı ${DEFAULT} olarak zorlandı. Değer sır ihtimaline karşı gösterilmiyor.`
     );
     return DEFAULT;
@@ -345,7 +345,7 @@ function parseBudgetCap(raw: string | undefined): number {
  * DÜZ METİN (TLS'siz) DİNLEME KARARI — yayın biçiminden BAĞIMSIZ.
  *
  * NEDEN VAR: hosted sunucu her zaman düz HTTP konuşur; şifrelemeyi önündeki nginx/Caddy
- * sonlandırır. Eski uyarı yalnız ADSPILOT_PUBLIC_URL'e bakıyordu, dolayısıyla TLS'in
+ * sonlandırır. Eski uyarı yalnız AEGIS_PUBLIC_URL'e bakıyordu, dolayısıyla TLS'in
  * gerçekten atlanabildiği iki durumda SUSUYORDU:
  *   1) PUBLIC_URL https:// ama süreç 0.0.0.0'a bağlı — 443'ün yanında şifresiz bir port
  *      açık kalır; /connect ve /settings düz HTTP yanıtlar, /mcp için doğru Host başlığı
@@ -354,7 +354,7 @@ function parseBudgetCap(raw: string | undefined): number {
  *      açık metin taşınır.
  * Karar bu yüzden İKİ girdiye birden bakar: nereye bağlandık ve kullanıcılar bize hangi
  * şemayla ulaşıyor. Düz metin bir genel adres artık sessiz bir uyarı değil, AÇIK ONAY
- * (ADSPILOT_ALLOW_PLAINTEXT) isteyen bir engeldir — "bilinmiyor" ile "güvenli" aynı şey
+ * (AEGIS_ALLOW_PLAINTEXT) isteyen bir engeldir — "bilinmiyor" ile "güvenli" aynı şey
  * değildir ve varsayılan RET olmalıdır.
  */
 const YEREL_ADLAR = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0:0:0:0:0:0:0:1"]);
@@ -380,16 +380,16 @@ export function duzMetinKarari(girdi: {
     konak = u.hostname;
   } catch {
     // Okunamayan URL "temiz" sayılmaz: doğrulanamayan yapılandırma uyarıyı hak eder.
-    return { uyari: `ADSPILOT_PUBLIC_URL çözümlenemedi ('${girdi.publicUrl}') — TLS durumu DOĞRULANAMADI.` };
+    return { uyari: `AEGIS_PUBLIC_URL çözümlenemedi ('${girdi.publicUrl}') — TLS durumu DOĞRULANAMADI.` };
   }
 
   const genelDuzMetin = sema === "http:" && !yerelAdres(konak);
   if (genelDuzMetin && !girdi.izinVerildi) {
     return {
       engel:
-        `ADSPILOT_PUBLIC_URL düz http:// ve '${konak}' yerel değil — API anahtarları ve OAuth ` +
+        `AEGIS_PUBLIC_URL düz http:// ve '${konak}' yerel değil — API anahtarları ve OAuth ` +
         "kodları AÇIK METİN taşınır. TLS (nginx/Caddy) arkasına al ve URL'i https:// yap. " +
-        "Bilerek şifresiz koşuyorsan ADSPILOT_ALLOW_PLAINTEXT=1 ile açıkça onayla.",
+        "Bilerek şifresiz koşuyorsan AEGIS_ALLOW_PLAINTEXT=1 ile açıkça onayla.",
     };
   }
 
@@ -401,7 +401,7 @@ export function duzMetinKarari(girdi: {
         `düz HTTP dinleyicisi ${girdi.bind}:PORT üzerinde — bu portu doğrudan dışarı YAYINLAMA. ` +
         "Konteynerde yayın adresini 127.0.0.1'e sabitle (\"127.0.0.1:8787:8787\"), dışarıya yalnız " +
         "TLS sonlandırıcıyı aç; aksi hâlde şifreli 443'ün yanında şifresiz bir kapı açık kalır." +
-        (genelDuzMetin ? " (ADSPILOT_ALLOW_PLAINTEXT ile şifresiz genel adres ONAYLANDI.)" : ""),
+        (genelDuzMetin ? " (AEGIS_ALLOW_PLAINTEXT ile şifresiz genel adres ONAYLANDI.)" : ""),
     };
   }
   return {};

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Changelog
 
-Notable changes to AdsPilot. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+Notable changes to Aegis. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Entries state what changed and, where it matters, *why* — a spending guard whose reasoning
@@ -20,7 +20,7 @@ is undocumented is a guard nobody dares to touch later.
 - **A six-link trust chain**, each behind its own switch so that holding a token never
   silently enables a query nobody asked for: SIM Swap, Number Verification, device
   reachability, roaming country, device swap and unconditional call forwarding.
-- **Structural decision trace and JSONL audit trail** (`ADSPILOT_DECISION_LOG`). Every
+- **Structural decision trace and JSONL audit trail** (`AEGIS_DECISION_LOG`). Every
   risk-tagged decision — refusals *and* passes — is recorded with a separate channel field
   per link, so a real network query can never be confused with a simulated one.
 - **Meta (Facebook/Instagram) as a second spend domain**, behind the same approval gate
@@ -43,7 +43,7 @@ is undocumented is a guard nobody dares to touch later.
 
 ### Changed
 
-- **BREAKING — `ADSPILOT_MASTER_KEY` must be exactly 64 hex characters or a non-hex
+- **BREAKING — `AEGIS_MASTER_KEY` must be exactly 64 hex characters or a non-hex
   passphrase.** A hex-only value of any other length (a machine key copied one character
   short, or the 32 hex characters of `openssl rand -hex 16`) used to be stretched with
   scrypt as if it were a passphrase; it is now refused at startup. The silent fallback

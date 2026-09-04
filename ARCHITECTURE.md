@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Architecture
 
-This document explains how AdsPilot is put together and, more importantly, *why*.
+This document explains how Aegis is put together and, more importantly, *why*.
 Most of the design exists to answer one question: how do you give an autonomous agent
 write access to a system that spends money, without the agent being the one who decides
 whether a human said yes?
@@ -166,7 +166,7 @@ that silently stops guarding is worse than no guard: the promise remains in the 
 ### Guardrails the agent cannot touch
 
 Budget ceiling and write permission are per-user, readable through
-`adspilot://accounts/{id}/limits`, and writable **only** from an authenticated browser
+`aegis://accounts/{id}/limits`, and writable **only** from an authenticated browser
 session at `/settings`. The API key deliberately does not open that endpoint — the agent
 holds that key, so a key-protected settings page would be no protection at all.
 
@@ -194,7 +194,7 @@ resolved — which let one user invalidate another's credentials. Identity that 
 established now fails the connection outright.
 
 **Refresh tokens are encrypted at rest** with AES-256-GCM. The key comes from
-`ADSPILOT_MASTER_KEY`, trimmed first, and exactly two shapes are accepted: **exactly 64 hex
+`AEGIS_MASTER_KEY`, trimmed first, and exactly two shapes are accepted: **exactly 64 hex
 characters**, used directly as the 32-byte key, or a **non-hex passphrase** of at least 32
 characters, stretched with scrypt because a human-chosen passphrase run through a plain hash
 is weak. A hex-only value of any other length — a machine key copied one character short, or

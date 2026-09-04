@@ -30,23 +30,23 @@ test("dört kaynak kayıtlı (2 sabit + 2 şablon)", async () => {
   const sabit: any = await c.listResources();
   assert.deepEqual(
     sabit.resources.map((r: any) => r.uri).sort(),
-    ["adspilot://accounts", "adspilot://gaql-sema"]
+    ["aegis://accounts", "aegis://gaql-sema"]
   );
 
   const sablon: any = await c.listResourceTemplates();
   assert.deepEqual(
     sablon.resourceTemplates.map((t: any) => t.uriTemplate).sort(),
-    ["adspilot://accounts/{customerId}/campaigns", "adspilot://accounts/{customerId}/limits"]
+    ["aegis://accounts/{customerId}/campaigns", "aegis://accounts/{customerId}/limits"]
   );
   for (const r of [...sabit.resources, ...sablon.resourceTemplates]) {
     assert.ok(r.title && r.description, `${r.uri ?? r.uriTemplate} başlık/açıklama eksik`);
   }
 });
 
-test("adspilot://accounts alt hesapları düzleştirir ve MCC'yi işaretler", async () => {
+test("aegis://accounts alt hesapları düzleştirir ve MCC'yi işaretler", async () => {
   const { ctx } = sahteContext({ queries: HESAPLI });
   const c = await baglanti(ctx);
-  const { ham, mime } = await oku(c, "adspilot://accounts");
+  const { ham, mime } = await oku(c, "aegis://accounts");
   assert.equal(mime, "application/json");
   const veri = JSON.parse(ham);
   assert.equal(veri.gosterilen, 2);
@@ -69,7 +69,7 @@ test("KRİTİK: kaynak okunamayan hesabı GİZLEMEZ, liste EKSİK ilan edilir", 
     queries: [[/FROM customer\b/, [{ customer: { descriptive_name: "Reklam Hesabı", manager: false } }]]],
   });
   const c = await baglanti(ctx);
-  const veri = JSON.parse((await oku(c, "adspilot://accounts")).ham);
+  const veri = JSON.parse((await oku(c, "aegis://accounts")).ham);
 
   const okunamayan = veri.hesaplar.find((h: any) => h.id === "5346956094");
   assert.ok(okunamayan, "okunamayan hesap listeden düşmemeli");
@@ -95,7 +95,7 @@ test("KRİTİK: kırpılmış alt hesap listesi kaynakta EKSİK olarak duyurulur
     ],
   });
   const c = await baglanti(ctx);
-  const veri = JSON.parse((await oku(c, "adspilot://accounts")).ham);
+  const veri = JSON.parse((await oku(c, "aegis://accounts")).ham);
   assert.equal(veri.tamListeMi, false, "kırpma da bir eksikliktir");
   assert.match(veri.not, /kırpıldı/);
   assert.match(veri.not, /1234567890/, "hangi MCC'nin listesi kesildiği yazmalı");
@@ -109,7 +109,7 @@ test("limits kaynağı kullanıcının GERÇEK kelepçelerini yansıtır", async
     queries: [[/FROM customer\b/, [{ customer: { id: 1466231519 } }]]],
   });
   const c = await baglanti(ctx);
-  const { ham } = await oku(c, "adspilot://accounts/1466231519/limits");
+  const { ham } = await oku(c, "aegis://accounts/1466231519/limits");
   const veri = JSON.parse(ham);
   assert.equal(veri.yazmaIzni, false, "context'ten okunmalı, sabit değer olmamalı");
   assert.equal(veri.gunlukButceTavani, 42);
@@ -127,7 +127,7 @@ test("KRİTİK: limits kaynağı 10 haneli olmayan kimliği REDDEDER", async () 
   const c = await baglanti(ctx);
   for (const kotu of ["bu-hesap-yok", "123", "146623151900"]) {
     await assert.rejects(
-      () => oku(c, `adspilot://accounts/${kotu}/limits`),
+      () => oku(c, `aegis://accounts/${kotu}/limits`),
       /10 hanelidir/,
       `'${kotu}' kelepçe raporu üretmemeli`
     );
@@ -142,7 +142,7 @@ test("KRİTİK: erişimi doğrulanamayan hesap için kelepçe alanları HİÇ ya
    */
   const { ctx } = sahteContext({ okunamayanHesaplar: ["1466231519"] });
   const c = await baglanti(ctx);
-  await assert.rejects(() => oku(c, "adspilot://accounts/1466231519/limits"), (e: any) => {
+  await assert.rejects(() => oku(c, "aegis://accounts/1466231519/limits"), (e: any) => {
     const m = String(e?.message ?? "");
     assert.doesNotMatch(m, /yazmaIzni|gunlukButceTavani/, "ret metninde bile kelepçe beyanı olmamalı");
     return /okunamadı|erişim|izin|permission/i.test(m);
@@ -151,7 +151,7 @@ test("KRİTİK: erişimi doğrulanamayan hesap için kelepçe alanları HİÇ ya
   // Sorgusu patlamayan ama satır DÖNDÜRMEYEN hesap da "bilinmiyor"dur, "temiz" değil.
   const { ctx: bos } = sahteContext({ queries: [[/FROM customer\b/, []]] });
   const c2 = await baglanti(bos);
-  await assert.rejects(() => oku(c2, "adspilot://accounts/1466231519/limits"), /doğrulanamadı/);
+  await assert.rejects(() => oku(c2, "aegis://accounts/1466231519/limits"), /doğrulanamadı/);
 });
 
 test("campaigns kaynağı enum'ları ada çevirir ve micros'u böler", async () => {
@@ -174,7 +174,7 @@ test("campaigns kaynağı enum'ları ada çevirir ve micros'u böler", async () 
     ],
   });
   const c = await baglanti(ctx);
-  const { ham } = await oku(c, "adspilot://accounts/1466231519/campaigns");
+  const { ham } = await oku(c, "aegis://accounts/1466231519/campaigns");
   const veri = JSON.parse(ham);
   assert.equal(veri.kampanyalar[0].durum, "ENABLED");
   assert.equal(veri.kampanyalar[0].kanal, "SEARCH");
@@ -188,7 +188,7 @@ test("campaigns kaynağı enum'ları ada çevirir ve micros'u böler", async () 
 test("campaigns kaynağı URI'den gelen customerId'yi TEMİZLEYEREK kullanır", async () => {
   const { ctx, rec } = sahteContext({ queries: [[/FROM campaign\b/, []]] });
   const c = await baglanti(ctx);
-  await oku(c, "adspilot://accounts/14662abc31519/campaigns");
+  await oku(c, "aegis://accounts/14662abc31519/campaigns");
   // The URI is free text; the customer id that reaches the API must be digits only
   assert.equal(rec.customerIds.at(-1), "1466231519");
 });
@@ -196,7 +196,7 @@ test("campaigns kaynağı URI'den gelen customerId'yi TEMİZLEYEREK kullanır", 
 test("gaql-sema ajanın alan uydurmasını engelleyecek bilgiyi taşır", async () => {
   const { ctx } = sahteContext();
   const c = await baglanti(ctx);
-  const { ham, mime } = await oku(c, "adspilot://gaql-sema");
+  const { ham, mime } = await oku(c, "aegis://gaql-sema");
   assert.equal(mime, "text/markdown");
   assert.match(ham, /search_term_view/);
   assert.match(ham, /metrics\.cost_micros/);
@@ -209,10 +209,10 @@ test("kaynak okuma hiçbir yazma üretmez", async () => {
   const { ctx, rec } = sahteContext({ queries: HESAPLI });
   const c = await baglanti(ctx);
   for (const uri of [
-    "adspilot://accounts",
-    "adspilot://gaql-sema",
-    "adspilot://accounts/1466231519/limits",
-    "adspilot://accounts/1466231519/campaigns",
+    "aegis://accounts",
+    "aegis://gaql-sema",
+    "aegis://accounts/1466231519/limits",
+    "aegis://accounts/1466231519/campaigns",
   ]) {
     await oku(c, uri);
   }
@@ -223,7 +223,7 @@ test("customerId şablon değişkeni için otomatik tamamlama çalışır", asyn
   const { ctx } = sahteContext({ queries: HESAPLI });
   const c = await baglanti(ctx);
   const res: any = await c.complete({
-    ref: { type: "ref/resource", uri: "adspilot://accounts/{customerId}/campaigns" },
+    ref: { type: "ref/resource", uri: "aegis://accounts/{customerId}/campaigns" },
     argument: { name: "customerId", value: "14" },
   });
   assert.deepEqual(res.completion.values, ["1466231519"], "MCC elenmiş, alt hesap önerilmiş olmalı");
@@ -249,7 +249,7 @@ test("kaynak tamamlaması API hatasında sessizce boş döner (kullanıcıyı bl
     getCustomer: () => ({}),
   };
   const c = await baglanti(ctx);
-  for (const uri of ["adspilot://accounts/{customerId}/campaigns", "adspilot://accounts/{customerId}/limits"]) {
+  for (const uri of ["aegis://accounts/{customerId}/campaigns", "aegis://accounts/{customerId}/limits"]) {
     const res: any = await c.complete({
       ref: { type: "ref/resource", uri },
       argument: { name: "customerId", value: "1" },
@@ -271,7 +271,7 @@ test("KRİTİK: tamamlama detayı OKUNAMAYAN hesabı önermez", async () => {
   });
   const c = await baglanti(ctx);
   const res: any = await c.complete({
-    ref: { type: "ref/resource", uri: "adspilot://accounts/{customerId}/campaigns" },
+    ref: { type: "ref/resource", uri: "aegis://accounts/{customerId}/campaigns" },
     argument: { name: "customerId", value: "" },
   });
   assert.deepEqual(res.completion.values, ["1466231519"], "yalnız okunabilen reklam hesabı önerilmeli");
@@ -320,7 +320,7 @@ test("kampanyalar kaynağı: okunamayan günlük bütçe 0 diye KATALOGA GİRMEZ
     ],
   });
   const c = await baglanti(ctx);
-  const veri = JSON.parse((await oku(c, "adspilot://accounts/1234567890/campaigns")).ham);
+  const veri = JSON.parse((await oku(c, "aegis://accounts/1234567890/campaigns")).ham);
   const [bosDeger, alanYok, saglam] = veri.kampanyalar;
 
   for (const k of [bosDeger, alanYok]) {

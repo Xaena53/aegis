@@ -32,7 +32,7 @@ export const KANALLAR = /** @type {const} */ (["google", "meta"]);
  */
 export function kullanilabilirKanallar(env = process.env) {
   const kanallar = ["google"];
-  if (env.ADSPILOT_META_TOKEN?.trim() && env.ADSPILOT_META_AD_ACCOUNT_ID?.trim()) {
+  if (env.AEGIS_META_TOKEN?.trim() && env.AEGIS_META_AD_ACCOUNT_ID?.trim()) {
     kanallar.push("meta");
   }
   return kanallar;

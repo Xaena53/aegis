@@ -1,11 +1,11 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-process.env.ADSPILOT_MASTER_KEY = "birim-test-anahtari-32-bayttan-uzun-olmali";
-const DB = join(tmpdir(), `adspilot-test-${process.pid}.db`);
+process.env.AEGIS_MASTER_KEY = "birim-test-anahtari-32-bayttan-uzun-olmali";
+const DB = join(tmpdir(), `aegis-test-${process.pid}.db`);
 
 const { UserStore, encryptSecret, decryptSecret, generateApiKey, hashApiKey } = await import("../src/store.js");
 
@@ -193,7 +193,16 @@ test("anahtar türetmesi bilinen cevaba EŞİT: scrypt + sabit tuz + 32 bayt", a
   const { scryptSync } = await import("node:crypto");
   const { deriveMasterKey } = await import("../src/store.js");
 
-  // Testin KENDİ hesabı — üretim koduyla aynı sabitleri tekrarlar, ondan okumaz.
+  /**
+   * Testin KENDİ hesabı — üretim koduyla aynı sabitleri TEKRARLAR, ondan okumaz.
+   * Sabiti import etmek testi anlamsız kılardı: üretimdeki değer değişince test de
+   * onunla birlikte değişir ve hiçbir şey ölçmez.
+   *
+   * Tuzun "adspilot" önekiyle başlaması bir bayatlık DEĞİL: ürün Aegis'e adlandırıldı
+   * ama tuz KASITLI olarak eski adında bırakıldı, çünkü değiştirmek depodaki her şifreli
+   * satırı çözülemez yapar (bkz. src/store.ts · ANAHTAR_TUZU). Bu satır o kararın
+   * ikinci kilidi: tuzu "düzeltmeye" kalkan biri burada da kızarır.
+   */
   const beklenen = scryptSync(TEST_PAROLASI, "adspilot-token-encryption-v1", 32);
   const uretilen = deriveMasterKey(TEST_PAROLASI);
 
@@ -262,16 +271,16 @@ test("HEX AMA 64 DEĞİL: sessizce parolaya düşmek yerine REDDEDİLİR", async
 
 test("masterKeyText: env'i KIRPARAK verir, kısa/eksik değerde fırlatır", async () => {
   const { masterKeyText } = await import("../src/store.js");
-  const eski = process.env.ADSPILOT_MASTER_KEY;
+  const eski = process.env.AEGIS_MASTER_KEY;
   try {
-    process.env.ADSPILOT_MASTER_KEY = `  ${TEST_PAROLASI}\n`;
+    process.env.AEGIS_MASTER_KEY = `  ${TEST_PAROLASI}\n`;
     assert.equal(masterKeyText(), TEST_PAROLASI, "HMAC ve KDF aynı dizeyi görmeli");
-    process.env.ADSPILOT_MASTER_KEY = "kisa";
+    process.env.AEGIS_MASTER_KEY = "kisa";
     assert.throws(() => masterKeyText(), /32 karakterden kısa/);
-    delete process.env.ADSPILOT_MASTER_KEY;
+    delete process.env.AEGIS_MASTER_KEY;
     assert.throws(() => masterKeyText(), /eksik/);
   } finally {
-    process.env.ADSPILOT_MASTER_KEY = eski;
+    process.env.AEGIS_MASTER_KEY = eski;
   }
 });
 
@@ -302,18 +311,18 @@ test("çözme biçim denetimi YAPISAL: parça sayısı, IV 12 ve etiket 16 bayt"
 /* ── VERİTABANI YOLU: toptan kimlik-bilgisi kaybına karşı bekçi ───────────────── */
 
 /**
- * NEDEN BU TESTLER VAR: `process.env.ADSPILOT_DB || "adspilot.db"` içindeki `||` işaretini
+ * NEDEN BU TESTLER VAR: `process.env.AEGIS_DB || "aegis.db"` içindeki `||` işaretini
  * `??` yapan TEK KARAKTERLİK bir değişiklik tüm paketi yeşil bırakıyordu. Oysa
- * ADSPILOT_DB tanımlı ama BOŞSA `??` boş dizeyi geçirir ve `DatabaseSync("")` sessizce
+ * AEGIS_DB tanımlı ama BOŞSA `??` boş dizeyi geçirir ve `DatabaseSync("")` sessizce
  * GEÇİCİ bir veritabanı açar: tüm kiracı token'ları her yeniden başlatmada tek bir hata
  * satırı bile üretmeden silinir. Varsayılan argüman yolunu koşan hiçbir test yoktu.
  */
-test("VARSAYILAN YOL: ADSPILOT_DB kullanılır ve depo diskte KALICIDIR", async () => {
+test("VARSAYILAN YOL: AEGIS_DB kullanılır ve depo diskte KALICIDIR", async () => {
   const { existsSync, mkdtempSync } = await import("node:fs");
-  const klasor = mkdtempSync(join(tmpdir(), "adspilot-varsayilan-"));
+  const klasor = mkdtempSync(join(tmpdir(), "aegis-varsayilan-"));
   const yol = join(klasor, "kalici.db");
-  const eski = process.env.ADSPILOT_DB;
-  process.env.ADSPILOT_DB = yol;
+  const eski = process.env.AEGIS_DB;
+  process.env.AEGIS_DB = yol;
   try {
     // Argümansız çağrı: varsayılan argüman ifadesinin GERÇEKTEN koştuğu tek yol.
     const ilk = new UserStore();
@@ -327,8 +336,8 @@ test("VARSAYILAN YOL: ADSPILOT_DB kullanılır ve depo diskte KALICIDIR", async 
     assert.equal(ikinci.findByApiKey(apiKey)?.refreshToken, "kalici-token", "token yeniden başlatmayı geçmeli");
     ikinci.close();
   } finally {
-    if (eski === undefined) delete process.env.ADSPILOT_DB;
-    else process.env.ADSPILOT_DB = eski;
+    if (eski === undefined) delete process.env.AEGIS_DB;
+    else process.env.AEGIS_DB = eski;
     try {
       rmSync(klasor, { recursive: true, force: true });
     } catch {
@@ -337,26 +346,26 @@ test("VARSAYILAN YOL: ADSPILOT_DB kullanılır ve depo diskte KALICIDIR", async 
   }
 });
 
-test("BOŞ ADSPILOT_DB geçici veritabanına DÜŞMEZ (varsayılan dosya adına düşer)", async () => {
+test("BOŞ AEGIS_DB geçici veritabanına DÜŞMEZ (varsayılan dosya adına düşer)", async () => {
   const { existsSync, mkdtempSync } = await import("node:fs");
-  const klasor = mkdtempSync(join(tmpdir(), "adspilot-bosdb-"));
+  const klasor = mkdtempSync(join(tmpdir(), "aegis-bosdb-"));
   const eskiCwd = process.cwd();
-  const eski = process.env.ADSPILOT_DB;
-  process.env.ADSPILOT_DB = "";
-  process.chdir(klasor); // varsayılan "adspilot.db" göreli yolu bu klasöre düşsün
+  const eski = process.env.AEGIS_DB;
+  process.env.AEGIS_DB = "";
+  process.chdir(klasor); // varsayılan "aegis.db" göreli yolu bu klasöre düşsün
   try {
     const ilk = new UserStore();
     const { apiKey } = ilk.upsertUser({ email: "bosdb@ornek.com", refreshToken: "bosdb-token" });
     ilk.close();
-    assert.equal(existsSync(join(klasor, "adspilot.db")), true, "boş env varsayılan DOSYAYA düşmeli");
+    assert.equal(existsSync(join(klasor, "aegis.db")), true, "boş env varsayılan DOSYAYA düşmeli");
 
     const ikinci = new UserStore();
     assert.equal(ikinci.findByApiKey(apiKey)?.refreshToken, "bosdb-token");
     ikinci.close();
   } finally {
     process.chdir(eskiCwd);
-    if (eski === undefined) delete process.env.ADSPILOT_DB;
-    else process.env.ADSPILOT_DB = eski;
+    if (eski === undefined) delete process.env.AEGIS_DB;
+    else process.env.AEGIS_DB = eski;
     try {
       rmSync(klasor, { recursive: true, force: true });
     } catch {
@@ -368,4 +377,65 @@ test("BOŞ ADSPILOT_DB geçici veritabanına DÜŞMEZ (varsayılan dosya adına 
 test("AÇIKÇA verilen boş/boşluk yol REDDEDİLİR (sessiz geçici veritabanı yok)", () => {
   assert.throws(() => new UserStore(""), /Veritabanı yolu boş/);
   assert.throws(() => new UserStore("   "), /Veritabanı yolu boş/);
+});
+
+
+/* ── Yeniden adlandırma sonrası veritabanı yolu ───────────────────────────────
+ *
+ * Ürün AdsPilot'tan Aegis'e geçerken varsayılan dosya adı da değişti. Tek başına bu,
+ * yükseltme yapan her kurulumda SESSİZ VERİ KAYBI olurdu: süreç açılır, boş bir
+ * veritabanı yaratır, hiçbir hata vermez ve bağlı bütün hesaplar yok görünür.
+ */
+
+test("KRİTİK: eski adlı veritabanı ORTADAYSA yeni ad uydurulmaz", () => {
+  const dizin = mkdtempSync(join(tmpdir(), "aegis-yol-"));
+  const eskiCwd = process.cwd();
+  const eskiEnv = process.env.AEGIS_DB;
+  try {
+    delete process.env.AEGIS_DB;
+    process.chdir(dizin);
+    writeFileSync("adspilot.db", ""); // eski kurulumdan kalan dosya
+
+    assert.equal(
+      UserStore.varsayilanYol(),
+      "adspilot.db",
+      "KRİTİK: eski dosya dururken yeni ada geçmek, bağlı hesapları yok göstermek demektir"
+    );
+
+    // Yeni dosya da varsa artık YENİSİ kullanılır — geçiş tamamlanmış demektir.
+    writeFileSync("aegis.db", "");
+    assert.equal(UserStore.varsayilanYol(), "aegis.db", "geçiş bittiyse yeni ad kullanılmalı");
+  } finally {
+    process.chdir(eskiCwd);
+    if (eskiEnv === undefined) delete process.env.AEGIS_DB;
+    else process.env.AEGIS_DB = eskiEnv;
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("temiz kurulumda YENİ ad kullanılır", () => {
+  const dizin = mkdtempSync(join(tmpdir(), "aegis-yol-"));
+  const eskiCwd = process.cwd();
+  const eskiEnv = process.env.AEGIS_DB;
+  try {
+    delete process.env.AEGIS_DB;
+    process.chdir(dizin);
+    assert.equal(UserStore.varsayilanYol(), "aegis.db");
+  } finally {
+    process.chdir(eskiCwd);
+    if (eskiEnv === undefined) delete process.env.AEGIS_DB;
+    else process.env.AEGIS_DB = eskiEnv;
+    rmSync(dizin, { recursive: true, force: true });
+  }
+});
+
+test("AEGIS_DB açıkça verilmişse hiçbir tahmin yapılmaz", () => {
+  const eskiEnv = process.env.AEGIS_DB;
+  try {
+    process.env.AEGIS_DB = "  /veri/ozel.db  ";
+    assert.equal(UserStore.varsayilanYol(), "/veri/ozel.db", "operatörün verdiği yol kırpılıp aynen kullanılmalı");
+  } finally {
+    if (eskiEnv === undefined) delete process.env.AEGIS_DB;
+    else process.env.AEGIS_DB = eskiEnv;
+  }
 });

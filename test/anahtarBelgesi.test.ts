@@ -3,7 +3,7 @@
  * ANA ANAHTAR KURALI — belge ile kodun aynı şeyi söylemesi.
  *
  * NEDEN VAR: gerçek bir sürüklenmeden doğdu. Kod, "yalnız hex ama uzunluğu 64 değil"
- * bir ADSPILOT_MASTER_KEY'i açıkça REDDEDER hâle geldi (store.ts: sessizce parolaya
+ * bir AEGIS_MASTER_KEY'i açıkça REDDEDER hâle geldi (store.ts: sessizce parolaya
  * düşmek, operatörün hiç istemediği bir anahtar türetip depodaki her sırrı okunamaz
  * yapıyordu). Ama ARCHITECTURE.md hâlâ "64 hex doğrudan kullanılır; GERİ KALAN HER ŞEY
  * scrypt ile gerilir" diyordu ve docs/DOCKER.md yalnız "Min 32 chars" yazıyordu.
@@ -24,7 +24,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const KOK = path.join(import.meta.dirname, "..");
-const ANAHTAR_ADI = "ADSPILOT_MASTER_KEY";
+const ANAHTAR_ADI = "AEGIS_MASTER_KEY";
 
 /**
  * Anahtarın BİÇİMİNİ anlatan belgeler. Adı yalnız anıp geçen yerler (docs/DEMO.md'nin

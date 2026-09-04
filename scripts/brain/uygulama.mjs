@@ -554,7 +554,7 @@ const YAYIN_BASARI_IZI = /YAYINDA \(ENABLED\)/;
 
 /**
  * İnsan onayı kapısının imzaları. ÖNCE bunlara bakılır: ağ kapısı TEMİZ geçtiğinde
- * kanıt satırları (içinde ADSPILOT_NAC_SIMULATE gibi ipuçları geçebilir) onay
+ * kanıt satırları (içinde AEGIS_NAC_SIMULATE gibi ipuçları geçebilir) onay
  * kapısının ret metnine eklenir — sıra ters olsaydı temiz bir geçiş "ağ reddetti"
  * diye yanlış sunulurdu.
  */
@@ -590,8 +590,8 @@ const AG_KAPISI_IZLERI = [
   // Halka adları BURAYA da eklenir: yeni halkanın env'i desende yoksa o halkanın
   // yapılandırma/çelişki retleri (metinleri env adından başka ağ izi taşımaz)
   // sınıflandırıcının dışında kalır. DEVICESWAP|CALLFWD tam da böyle kaçmıştı.
-  /ADSPILOT_(NAC|NV|REACH|LOC|DEVICESWAP|CALLFWD)_[A-Z_]+/u,
-  /ADSPILOT_(APPROVER_PHONE|EXPECTED_COUNTRY)/u,
+  /AEGIS_(NAC|NV|REACH|LOC|DEVICESWAP|CALLFWD)_[A-Z_]+/u,
+  /AEGIS_(APPROVER_PHONE|EXPECTED_COUNTRY)/u,
 ];
 
 /** Onay özetinin madde satırları (ağ kanıtı bu satırlarda taşınır). */
@@ -630,7 +630,7 @@ export function yayinSonucuSinifla(metin, kampanyaAdi) {
    * Sunucu ret metinlerine kampanya adını koyar ("Reddedildi: \"X\" kampanyası…") ve o
    * adı MODEL üretir. Yani aşağıdaki desenlerin eşleştiği metnin bir parçası, kapının
    * kendi çıktısı değil, modelin yazdığı serbest metindir. Adına "AĞ DOĞRULAMASI
-   * BAŞARISIZ" ya da "ADSPILOT_NAC_SIMULATE" geçen bir kampanya kurulduğunda, sıradan
+   * BAŞARISIZ" ya da "AEGIS_NAC_SIMULATE" geçen bir kampanya kurulduğunda, sıradan
    * bir sunucu reddi (bütçe tavanı, yayınlanabilir reklam yok) 'ag-retti' sınıflanıyor
    * ve rapor HİÇ ÇALIŞMAMIŞ bir CAMARA kapısı için "GÜVENLİK KAPISI ÇALIŞTI" basıyordu.
    * Demoda bu, kapının çalıştığını kanıtlaması gereken anın uydurulabilir olması demek.

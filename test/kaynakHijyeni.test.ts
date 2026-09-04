@@ -57,7 +57,7 @@ test("kaynak dosyalarda HAM NUL baytı yok (git dosyayı ikili sayar)", () => {
 /**
  * İMZA ANAHTARININ TEK KAYNAĞI.
  *
- * NEDEN VAR: çerez imzaları eskiden `process.env.ADSPILOT_MASTER_KEY ?? ""` ile
+ * NEDEN VAR: çerez imzaları eskiden `process.env.AEGIS_MASTER_KEY ?? ""` ile
  * üretiliyordu. Bunun sinsi yanı, imzalama ile doğrulamanın AYNI ifadeyi kullanması:
  * anahtar hiç yokken bile her şey kendi içinde tutarlı çalışırdı — çerezler herkesin
  * bilebileceği BOŞ DİZEYLE imzalanır, tek bir test bile kızarmazdı. Bugün açılışta

@@ -1,16 +1,16 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Deploying the hosted service
 
-This guide covers running AdsPilot as a multi-user service on a Linux VPS. The order of
+This guide covers running Aegis as a multi-user service on a Linux VPS. The order of
 steps matters — several of them fail in confusing ways if you skip ahead.
 
-The files in this directory (`adspilot.service`, `nginx.conf.example`, and the
+The files in this directory (`aegis.service`, `nginx.conf.example`, and the
 `Dockerfile` at the repository root) carry the same warnings inline, so you'll see them
 even if you don't read this page.
 
 ## Upgrading an existing install — read this before `git pull`
 
-> **Breaking change: a hex-only `ADSPILOT_MASTER_KEY` whose length is not exactly 64 no
+> **Breaking change: a hex-only `AEGIS_MASTER_KEY` whose length is not exactly 64 no
 > longer starts.** Earlier versions silently stretched such a value with scrypt, exactly as
 > if it were a passphrase. It is now refused at startup, because "a machine key copied one
 > character short" and "a passphrase" are indistinguishable to the code and guessing wrong
@@ -21,11 +21,11 @@ This matters *only* if the key you run today is all hex digits and is not 64 cha
 before you upgrade:
 
 ```bash
-sudo -u adspilot node -e '
-const line = require("fs").readFileSync("/opt/adspilot/.env", "utf8")
+sudo -u aegis node -e '
+const line = require("fs").readFileSync("/opt/aegis/.env", "utf8")
   .split(/\r?\n/).map((l) => l.trim())
-  .find((l) => l.startsWith("ADSPILOT_MASTER_KEY="));
-const k = (line ? line.slice("ADSPILOT_MASTER_KEY=".length) : "").trim();
+  .find((l) => l.startsWith("AEGIS_MASTER_KEY="));
+const k = (line ? line.slice("AEGIS_MASTER_KEY=".length) : "").trim();
 const hex = /^[0-9a-f]+$/i.test(k);
 console.log(!hex ? (k.length >= 32 ? "passphrase — upgrade is safe" : "TOO SHORT — fix before upgrading")
   : k.length === 64 ? "64-hex — upgrade is safe"
@@ -39,13 +39,13 @@ encrypted under the scrypt-derived key, and no length-64 value reproduces it. Th
 migration script; the supported path is:
 
 1. Note the current key value — losing it removes even the theoretical recovery route.
-2. Upgrade, then put a fresh `ADSPILOT_MASTER_KEY=<64 hex characters>` in `.env`.
+2. Upgrade, then put a fresh `AEGIS_MASTER_KEY=<64 hex characters>` in `.env`.
 3. Have every tenant reconnect through `/connect`, which overwrites their row with a token
    encrypted under the new key. Until they do, their first request fails.
 
 Tell your tenants before the restart, not after. Nothing else in this guide changes for an
 upgrade — steps 1 and 4 are one-time setup, and `npm ci && npm run build && systemctl restart
-adspilot` is the rest of it.
+aegis` is the rest of it.
 
 ## Prerequisites
 
@@ -64,8 +64,8 @@ sudo apt-get install -y nodejs && node -v      # must print v22.13 or newer
 ## 1. User and directory
 
 ```bash
-sudo useradd --system --home /opt/adspilot --shell /usr/sbin/nologin adspilot
-sudo mkdir -p /opt/adspilot && sudo chown adspilot:adspilot /opt/adspilot
+sudo useradd --system --home /opt/aegis --shell /usr/sbin/nologin aegis
+sudo mkdir -p /opt/aegis && sudo chown aegis:aegis /opt/aegis
 ```
 
 The `data` directory is created *after* the clone — `git clone` refuses a non-empty
@@ -74,11 +74,11 @@ target.
 ## 2. Code
 
 ```bash
-sudo -u adspilot -H git clone <repo-url> /opt/adspilot
-cd /opt/adspilot
-sudo -u adspilot -H mkdir -p data
-sudo -u adspilot -H npm ci
-sudo -u adspilot -H npm run build
+sudo -u aegis -H git clone <repo-url> /opt/aegis
+cd /opt/aegis
+sudo -u aegis -H mkdir -p data
+sudo -u aegis -H npm ci
+sudo -u aegis -H npm run build
 ```
 
 `-H` matters: without it `sudo` keeps the caller's `HOME` and npm tries to write to
@@ -87,10 +87,10 @@ sudo -u adspilot -H npm run build
 ## 3. Configuration
 
 ```bash
-sudo -u adspilot cp .env.example .env
-sudo -u adspilot node -e "console.log('ADSPILOT_MASTER_KEY='+require('crypto').randomBytes(32).toString('hex'))"
-sudo nano /opt/adspilot/.env
-sudo chmod 600 /opt/adspilot/.env
+sudo -u aegis cp .env.example .env
+sudo -u aegis node -e "console.log('AEGIS_MASTER_KEY='+require('crypto').randomBytes(32).toString('hex'))"
+sudo nano /opt/aegis/.env
+sudo chmod 600 /opt/aegis/.env
 ```
 
 Required values:
@@ -99,22 +99,22 @@ Required values:
 GOOGLE_ADS_DEVELOPER_TOKEN=...
 GOOGLE_ADS_CLIENT_ID=...
 GOOGLE_ADS_CLIENT_SECRET=...
-ADSPILOT_MASTER_KEY=<64 hex characters>
-ADSPILOT_DB=/opt/adspilot/data/adspilot.db
-ADSPILOT_PUBLIC_URL=https://adspilot.example.com
-ADSPILOT_ALLOWED_HOSTS=adspilot.example.com
-ADSPILOT_SOURCE_URL=https://github.com/YOUR-ACCOUNT/YOUR-FORK
+AEGIS_MASTER_KEY=<64 hex characters>
+AEGIS_DB=/opt/aegis/data/aegis.db
+AEGIS_PUBLIC_URL=https://aegis.example.com
+AEGIS_ALLOWED_HOSTS=aegis.example.com
+AEGIS_SOURCE_URL=https://github.com/YOUR-ACCOUNT/YOUR-FORK
 PORT=8787
 ```
 
 > **Never put a comment on the same line as a value.** This file is also read by systemd
 > (`EnvironmentFile`) and Docker (`--env-file`), and both treat `#` as a comment only at
-> the start of a line. `ADSPILOT_ALLOWED_HOSTS=example.com   # required` becomes a host
+> the start of a line. `AEGIS_ALLOWED_HOSTS=example.com   # required` becomes a host
 > named `example.com   # required`, nothing matches, and **all MCP traffic returns 403**
 > — a failure that is genuinely hard to diagnose.
-> Verify with: `systemctl show adspilot -p Environment`
+> Verify with: `systemctl show aegis -p Environment`
 
-> **`ADSPILOT_MASTER_KEY` is either exactly 64 hex characters or a non-hex passphrase.**
+> **`AEGIS_MASTER_KEY` is either exactly 64 hex characters or a non-hex passphrase.**
 > The value is trimmed before use (a trailing newline from a secret file is harmless), and
 > a hex-only value whose length is not 64 is **refused at startup** rather than silently
 > treated as a passphrase — that silent fallback derived a different key, so nothing in the
@@ -122,17 +122,17 @@ PORT=8787
 > are stretched with scrypt; the minimum length (32 characters) is enforced on the trimmed
 > value, so padding with spaces does not get past it.
 
-> **`ADSPILOT_MASTER_KEY` is unrecoverable.** Lose it and every stored refresh token
+> **`AEGIS_MASTER_KEY` is unrecoverable.** Lose it and every stored refresh token
 > becomes undecryptable. Back it up separately from the database — if both are stolen
 > together, the encryption bought you nothing.
 
-> **`ADSPILOT_DB` must be an absolute path.** Left empty, the file is looked up relative
+> **`AEGIS_DB` must be an absolute path.** Left empty, the file is looked up relative
 > to the working directory, which `ProtectSystem=strict` makes read-only; the service
 > then crash-loops every five seconds.
 
-> **`ADSPILOT_DECISION_LOG` only works under a writable path.** The unit runs with
+> **`AEGIS_DECISION_LOG` only works under a writable path.** The unit runs with
 > `ProtectSystem=strict`, so the filesystem is read-only apart from `ReadWritePaths=`
-> (`/opt/adspilot/data`) and `LogsDirectory=` (`/var/log/adspilot`, which systemd creates
+> (`/opt/aegis/data`) and `LogsDirectory=` (`/var/log/aegis`, which systemd creates
 > and chowns for you). Point the log anywhere else and every risk-tagged decision hits the
 > sandbox — and *nothing breaks*: the decision log is deliberately an observation, never a
 > gate, so a write failure prints one stderr line and the approval flow continues. The file
@@ -140,12 +140,12 @@ PORT=8787
 > refused. The value below is inside the writable set:
 >
 > ```ini
-> ADSPILOT_DECISION_LOG=/var/log/adspilot/kararlar.jsonl
+> AEGIS_DECISION_LOG=/var/log/aegis/kararlar.jsonl
 > ```
 >
-> Verify after the first refusal with: `sudo -u adspilot tail /var/log/adspilot/kararlar.jsonl`
+> Verify after the first refusal with: `sudo -u aegis tail /var/log/aegis/kararlar.jsonl`
 
-> **`ADSPILOT_SOURCE_URL` must point at your own repository** if you modified the code.
+> **`AEGIS_SOURCE_URL` must point at your own repository** if you modified the code.
 > AGPL §13 requires offering *your* version's source to your users; the upstream default
 > does not satisfy that.
 
@@ -163,7 +163,7 @@ fails loudly instead of reporting itself healthy.
 Add this exact authorised redirect URI:
 
 ```
-https://adspilot.example.com/oauth/callback
+https://aegis.example.com/oauth/callback
 ```
 
 > **The seven-day trap.** `adwords` is one of Google's *sensitive* scopes. While your
@@ -176,10 +176,10 @@ https://adspilot.example.com/oauth/callback
 ## 5. Service
 
 ```bash
-sudo cp deploy/adspilot.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now adspilot
-sudo systemctl status adspilot
-journalctl -u adspilot -f
+sudo cp deploy/aegis.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now aegis
+sudo systemctl status aegis
+journalctl -u aegis -f
 ```
 
 > **Run exactly one instance.** Sessions and rate-limit counters live in process memory.
@@ -197,12 +197,12 @@ blocks certbot.
 ```bash
 # 1. Certificate first, without touching nginx's site config
 sudo apt-get install -y certbot
-sudo certbot certonly --webroot -w /var/www/html -d adspilot.example.com
+sudo certbot certonly --webroot -w /var/www/html -d aegis.example.com
 
 # 2. Now the config can load
-sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/adspilot
-sudo nano /etc/nginx/sites-available/adspilot        # set your domain
-sudo ln -s /etc/nginx/sites-available/adspilot /etc/nginx/sites-enabled/
+sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/aegis
+sudo nano /etc/nginx/sites-available/aegis        # set your domain
+sudo ln -s /etc/nginx/sites-available/aegis /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
@@ -213,16 +213,16 @@ sudo nginx -t && sudo systemctl reload nginx
 ## 7. Verify
 
 ```bash
-curl -s https://adspilot.example.com/health                    # {"ok":true,...}
+curl -s https://aegis.example.com/health                    # {"ok":true,...}
 curl -s -o /dev/null -w "%{http_code}\n" \
-  -X POST https://adspilot.example.com/mcp                     # expect 401
+  -X POST https://aegis.example.com/mcp                     # expect 401
 ```
 
-Then open `https://adspilot.example.com/connect` in a browser, connect with Google, copy
+Then open `https://aegis.example.com/connect` in a browser, connect with Google, copy
 the API key you're shown once, and register it:
 
 ```bash
-claude mcp add --transport http adspilot https://adspilot.example.com/mcp \
+claude mcp add --transport http aegis https://aegis.example.com/mcp \
   --header "Authorization: Bearer ap_..."
 ```
 
@@ -234,24 +234,24 @@ consistent file:
 
 ```bash
 sudo apt-get install -y sqlite3
-sudo mkdir -p /backup && sudo chown adspilot:adspilot /backup
-sudo -u adspilot -H sqlite3 /opt/adspilot/data/adspilot.db \
-  ".backup '/backup/adspilot-$(date +%F).db'"
+sudo mkdir -p /backup && sudo chown aegis:aegis /backup
+sudo -u aegis -H sqlite3 /opt/aegis/data/aegis.db \
+  ".backup '/backup/aegis-$(date +%F).db'"
 ```
 
-Store `ADSPILOT_MASTER_KEY` somewhere other than the backups.
+Store `AEGIS_MASTER_KEY` somewhere other than the backups.
 
 ## 9. Docker alternative
 
 ```bash
-docker build -t adspilot .
-grep -v '^ADSPILOT_DB=' .env > .env.docker      # let the image own the DB path
-docker run -d --name adspilot -p 127.0.0.1:8787:8787 \
-  --env-file .env.docker -v adspilot-data:/data --restart unless-stopped adspilot
+docker build -t aegis .
+grep -v '^AEGIS_DB=' .env > .env.docker      # let the image own the DB path
+docker run -d --name aegis -p 127.0.0.1:8787:8787 \
+  --env-file .env.docker -v aegis-data:/data --restart unless-stopped aegis
 ```
 
-> **Don't reuse the VPS `.env` as-is.** It sets `ADSPILOT_DB=/opt/adspilot/data/...`,
-> which overrides the image's `/data/adspilot.db`. That path doesn't exist in the
+> **Don't reuse the VPS `.env` as-is.** It sets `AEGIS_DB=/opt/aegis/data/...`,
+> which overrides the image's `/data/aegis.db`. That path doesn't exist in the
 > container, the process dies at startup, and `--restart` turns it into a loop.
 
 > With a bind mount (`-v /host/dir:/data`) ownership is not copied from the image; run

@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-# CAMARA / GSMA Open Gateway in AdsPilot
+# CAMARA / GSMA Open Gateway in Aegis
 
-**What this document is for.** AdsPilot uses mobile-network signals (GSMA Open Gateway,
+**What this document is for.** Aegis uses mobile-network signals (GSMA Open Gateway,
 CAMARA APIs, reached through the Nokia Network-as-Code platform) as a trust anchor in front
 of every money-spending approval. This page states, without softening, which of those
 signals we actually query, which we only simulate, which we have merely designed, and — most
@@ -15,7 +15,7 @@ undocumented header the SDK omits.
 
 **Headline verdict on Number Verification: it is NOT callable from our server.** It is a
 device-side OIDC flow, and section 4 proves that from the SDK's own type definitions rather
-than from an assumption. That is why `ADSPILOT_NV_SIMULATE` exists and why every line it
+than from an assumption. That is why `AEGIS_NV_SIMULATE` exists and why every line it
 produces is stamped `SİMÜLASYON`.
 
 ---
@@ -26,16 +26,16 @@ Every CAMARA namespace exposed by `network-as-code@10.0.0` was read from its `.d
 definitions and judged on three questions: what fraud question does it answer, can our
 server call it at all, and what is its status in this codebase today.
 
-| CAMARA signal | Question it answers | Status in AdsPilot | Server-callable? |
+| CAMARA signal | Question it answers | Status in Aegis | Server-callable? |
 |---|---|---|---|
-| **SIM Swap** (`simSwap.check`) | "Was the approver's line taken over recently?" | **Real path written.** Live channel + `ADSPILOT_NAC_SIMULATE` simulation channel + test seam. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — API key + phone number, nothing else. |
-| **Number Verification** (`numberVerification.*`, `numberVerificationV100.*`) | "Is this approval coming from the line owner's own device?" | **Simulation only** (`ADSPILOT_NV_SIMULATE`). Runs on the `high` tier only. Every string it emits says `SİMÜLASYON` and `gerçek ağ sorgusu YAPILMADI`. | **No.** Device-side OIDC authorization-code flow — see §4. |
-| **Device Swap** (`deviceSwap.check`) | "Was the line moved to a NEW DEVICE in the last N hours?" | **Link 5 — real path written, opt-in.** Structural twin of SIM Swap: same auth, same body shape, same hour-based `maxAge` (it *shares* `ADSPILOT_SIMSWAP_WINDOW_HOURS` rather than inventing a second window variable), same single-boolean output. The live query stays **off unless `ADSPILOT_DEVICESWAP_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_DEVICESWAP_SIMULATE` is the demo channel. One deliberate divergence from link 1: an unreadable `swapped` is **not** taken as "no swap" — `undefined` is `RET`. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — phone number only. |
-| **Call Forwarding Signal** (`callForwardingSignal.retrieveUnconditionalCallForwarding`) | "Is *unconditional* call forwarding active on the approver's line?" (the standard way to intercept OTP/voice verification, and invisible to all five earlier links: same SIM, same device, line reachable, expected country) | **Link 6 — real path written, opt-in.** Off unless `ADSPILOT_CALLFWD_CHECK` is set, `high` tier only, trail records `kapali` while off; `ADSPILOT_CALLFWD_SIMULATE` is the demo channel. Only the unconditional variant is called — one boolean, no PII: *which* number the line forwards to is never asked for, never received, never written anywhere. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — phone number only. |
+| **SIM Swap** (`simSwap.check`) | "Was the approver's line taken over recently?" | **Real path written.** Live channel + `AEGIS_NAC_SIMULATE` simulation channel + test seam. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — API key + phone number, nothing else. |
+| **Number Verification** (`numberVerification.*`, `numberVerificationV100.*`) | "Is this approval coming from the line owner's own device?" | **Simulation only** (`AEGIS_NV_SIMULATE`). Runs on the `high` tier only. Every string it emits says `SİMÜLASYON` and `gerçek ağ sorgusu YAPILMADI`. | **No.** Device-side OIDC authorization-code flow — see §4. |
+| **Device Swap** (`deviceSwap.check`) | "Was the line moved to a NEW DEVICE in the last N hours?" | **Link 5 — real path written, opt-in.** Structural twin of SIM Swap: same auth, same body shape, same hour-based `maxAge` (it *shares* `AEGIS_SIMSWAP_WINDOW_HOURS` rather than inventing a second window variable), same single-boolean output. The live query stays **off unless `AEGIS_DEVICESWAP_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `AEGIS_DEVICESWAP_SIMULATE` is the demo channel. One deliberate divergence from link 1: an unreadable `swapped` is **not** taken as "no swap" — `undefined` is `RET`. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — phone number only. |
+| **Call Forwarding Signal** (`callForwardingSignal.retrieveUnconditionalCallForwarding`) | "Is *unconditional* call forwarding active on the approver's line?" (the standard way to intercept OTP/voice verification, and invisible to all five earlier links: same SIM, same device, line reachable, expected country) | **Link 6 — real path written, opt-in.** Off unless `AEGIS_CALLFWD_CHECK` is set, `high` tier only, trail records `kapali` while off; `AEGIS_CALLFWD_SIMULATE` is the demo channel. Only the unconditional variant is called — one boolean, no PII: *which* number the line forwards to is never asked for, never received, never written anywhere. **Verified against the live endpoint on 2026-08-28** (§2). | **Yes** — phone number only. |
 | **KYC Tenure** (`kyc.checkTenure`) | "Has this number been with the same subscriber since date X, and is it prepaid (PAYG) or contract/business?" | **Roadmap, blocked on data we do not have.** Requires a `tenureDate` we would have to invent — see the trap note below. | **Yes**, but needs a date input we cannot honestly supply yet. |
-| **Number Recycling** (`numberRecycling.check`) | "Has the configured approver number changed hands since date X?" | **Roadmap.** Needs a new config field (e.g. `ADSPILOT_APPROVER_SINCE`). Window semantics differ from every other link: absolute date, not an hour window. | **Yes**, but needs that new config field. |
-| **Device Status — roaming** (`deviceStatus.checkRoaming`) | "Is the approver's line abroad right now, and in which country?" | **Link 4 — real path written.** Serves the expected-country check: `ADSPILOT_EXPECTED_COUNTRY` (ISO 3166-1 alpha-2) with `ADSPILOT_LOC_SIMULATE` as the demo channel. `high` tier only, and **only when an expected country is configured** — no default is invented, since a default would answer "clean" forever. Raw `countryName[]` is never echoed; only the derived expected/unexpected verdict. **Verified against the live endpoint on 2026-08-31** (§2) — the 404s came from hand-built passthrough-prefixed URLs; the SDK calls `device-status/device-roaming-status/v1/retrieve` directly and answers `200` (roaming true, country HU), confirmed by Nokia mentor Aleksi Puranen and reproduced through the gate with a `gercek` trace. | **Yes** — `device.phoneNumber`. Direct endpoint, not passthrough. |
-| **Device Status — connectivity / reachability** (`deviceStatus.retrieveReachabilityStatus`) | "Can the line receive data/SMS right now?" | **Link 3 — real path written, opt-in.** The false-positive objection is real: reachability legitimately fluctuates (airplane mode, coverage, dead battery) and under fail-closed an "unreachable" answer refuses the spend. So the live query stays **off unless `ADSPILOT_REACH_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `ADSPILOT_REACH_SIMULATE` is the demo channel. **Verified against the live endpoint on 2026-08-31** (§2) — same correction as link 4: the endpoint was never gated, our hand-built URLs carried a passthrough prefix the SDK does not use. Answers `200` (reachable, SMS). | **Yes** — phone number only. |
+| **Number Recycling** (`numberRecycling.check`) | "Has the configured approver number changed hands since date X?" | **Roadmap.** Needs a new config field (e.g. `AEGIS_APPROVER_SINCE`). Window semantics differ from every other link: absolute date, not an hour window. | **Yes**, but needs that new config field. |
+| **Device Status — roaming** (`deviceStatus.checkRoaming`) | "Is the approver's line abroad right now, and in which country?" | **Link 4 — real path written.** Serves the expected-country check: `AEGIS_EXPECTED_COUNTRY` (ISO 3166-1 alpha-2) with `AEGIS_LOC_SIMULATE` as the demo channel. `high` tier only, and **only when an expected country is configured** — no default is invented, since a default would answer "clean" forever. Raw `countryName[]` is never echoed; only the derived expected/unexpected verdict. **Verified against the live endpoint on 2026-08-31** (§2) — the 404s came from hand-built passthrough-prefixed URLs; the SDK calls `device-status/device-roaming-status/v1/retrieve` directly and answers `200` (roaming true, country HU), confirmed by Nokia mentor Aleksi Puranen and reproduced through the gate with a `gercek` trace. | **Yes** — `device.phoneNumber`. Direct endpoint, not passthrough. |
+| **Device Status — connectivity / reachability** (`deviceStatus.retrieveReachabilityStatus`) | "Can the line receive data/SMS right now?" | **Link 3 — real path written, opt-in.** The false-positive objection is real: reachability legitimately fluctuates (airplane mode, coverage, dead battery) and under fail-closed an "unreachable" answer refuses the spend. So the live query stays **off unless `AEGIS_REACH_CHECK` is set**, runs on the `high` tier only, and the audit trail records `kapali` while it is off. `AEGIS_REACH_SIMULATE` is the demo channel. **Verified against the live endpoint on 2026-08-31** (§2) — same correction as link 4: the endpoint was never gated, our hand-built URLs carried a passthrough prefix the SDK does not use. Answers `200` (reachable, SMS). | **Yes** — phone number only. |
 | **Location Verification / Retrieval** (`location.*`) | "Is the approver inside the expected geography?" | **Deferred — the country question is served by roaming instead (above).** The SDK's `Area` type is `{ areaType: 'CIRCLE' }` only: center coordinates and radius are absent from the `.d.ts`, so a query area cannot be expressed type-safely, and forcing it with `as any` would be inventing a schema. It is also the highest-privacy data in the set (needs `consentInfo`), and `retrieve` returns raw coordinates. Country-level roaming answers most of the fraud question at a fraction of the privacy cost. | Structurally yes; **not type-safe today.** |
 | **Geofencing** (`geofencing.*`) | "Tell me when the approver enters/leaves an area." | **Out of scope.** Not a synchronous question-and-answer: the answer arrives later on a webhook, which a fail-closed approval gate cannot wait for. Also needs a public sink URL and subscription lifecycle state. | Technically yes; architecturally unusable here. |
 | **KYC Match / Fill-In** (`kyc.match`, `kyc.fillIn`) | "Do the user's identity details match the operator's records?" / "Give me the subscriber's identity record." | **Rejected on principle.** `match` demands identity PII as *input* (we hold none). `fillIn` returns ID document number, address, birthdate as *output* — a direct collision with our invariant that raw values are never echoed to the agent. | Yes — and that is precisely why the refusal is deliberate, not incidental. |
@@ -47,7 +47,7 @@ come back clean — a silent loss of security dressed up as a passing check. Unt
 registration date exists in config, this link must fail closed (`RET`), never default.
 
 **Trap note on `numberRecycling.check`.** Same shape of trap, same rule. This link is not
-built, and `ADSPILOT_APPROVER_SINCE` does not exist in the configuration today — the name
+built, and `AEGIS_APPROVER_SINCE` does not exist in the configuration today — the name
 appears here only to fix the rule that will bind whoever writes it: without a real date the
 link must refuse rather than invent one.
 
@@ -62,7 +62,7 @@ an error code 501 can be returned", so every throw — `NotImplementedError` inc
 `RET`. The array-returning sibling `retrieveCallForwarding` is therefore **never called**:
 an unrecognised array member would be one more fail-closed path for a question that is
 already answerable with a single boolean. If an operator's network does not serve this
-signal, the honest move is to turn the link off (`ADSPILOT_CALLFWD_CHECK`), not to read the
+signal, the honest move is to turn the link off (`AEGIS_CALLFWD_CHECK`), not to read the
 silence as "no forwarding".
 
 ---
@@ -79,7 +79,7 @@ code (`ZINCIR_HALKALARI[].canliDogrulandi`) so a test refuses to let the two dri
 | 1 · `simSwap.check` | **2026-08-28** | Three MSISDNs, three outcomes — table below |
 | 2 · `numberVerification.*` | **never, and never will be** | Device-side OIDC; not callable from any back end (§4). This is an architectural verdict, not a pending task |
 | 3 · `deviceStatus.retrieveReachabilityStatus` | **2026-08-31** | `200` (reachable, SMS) through the gate, trace `"reach":"gercek"` |
-| 4 · `deviceStatus.checkRoaming` | **2026-08-31** | `200` (roaming, country HU) through the gate, trace `"loc":"gercek"`; a wrong `ADSPILOT_EXPECTED_COUNTRY` produces a real refusal with the observed country kept out of the text |
+| 4 · `deviceStatus.checkRoaming` | **2026-08-31** | `200` (roaming, country HU) through the gate, trace `"loc":"gercek"`; a wrong `AEGIS_EXPECTED_COUNTRY` produces a real refusal with the observed country kept out of the text |
 | 5 · `deviceSwap.check` | **2026-08-28** | `200 {"swapped":…}` through the gate, trace `"devSwap":"gercek"` |
 | 6 · `callForwardingSignal` | **2026-08-28** | `200 {"active":…}` through the gate, trace `"callFwd":"gercek"` |
 
@@ -181,8 +181,8 @@ The evidence for everything above, all of it checkable in the tree:
 
    It is a lazy dynamic import, reached only when a token is present *and* that link's
    simulation channel is absent — and, for reachability, device swap and call forwarding,
-   only when that link's own opt-in switch (`ADSPILOT_REACH_CHECK`,
-   `ADSPILOT_DEVICESWAP_CHECK`, `ADSPILOT_CALLFWD_CHECK`) is on.
+   only when that link's own opt-in switch (`AEGIS_REACH_CHECK`,
+   `AEGIS_DEVICESWAP_CHECK`, `AEGIS_CALLFWD_CHECK`) is on.
 
 3. **Tests never touch the network — they inject a fake channel.** The seam is
    `__setSimSwapKanalForTests(...)`, used by `test/helpers/harness.ts`:
@@ -242,7 +242,7 @@ Run this end to end the day a Network-as-Code key is issued. Copy-pasteable, in 
 ### Step 1 — Register and obtain the key
 
 Sign up at <https://networkascode.nokia.io> (a free sandbox tier exists) and create an
-application key. The SDK sends it as the `x-rapidapi-key` header; it authenticates *AdsPilot
+application key. The SDK sends it as the `x-rapidapi-key` header; it authenticates *Aegis
 to the Nokia platform*, and is not a per-user token.
 
 ### Step 2 — Add the environment variables
@@ -251,17 +251,17 @@ Edit `.env` (see `.env.example` for the full commentary on each one):
 
 ```bash
 # The Network-as-Code application key. Its presence is what switches the layer on.
-ADSPILOT_NAC_TOKEN=<key from step 1>
+AEGIS_NAC_TOKEN=<key from step 1>
 
 # E.164, '+' prefixed. REQUIRED once the token is set: token without number = refusal.
-ADSPILOT_APPROVER_PHONE=+90XXXXXXXXXX
+AEGIS_APPROVER_PHONE=+90XXXXXXXXXX
 
 # SIM-swap lookback for high-risk actions, in hours. Clamped to CAMARA's 1-2400 range.
 # Medium-risk actions (budget increases) always use the tighter of 24h and this value.
-ADSPILOT_SIMSWAP_WINDOW_HOURS=72
+AEGIS_SIMSWAP_WINDOW_HOURS=72
 
 # Turn the audit trail on so the live run leaves evidence you can read afterwards.
-ADSPILOT_DECISION_LOG=./kararlar.jsonl
+AEGIS_DECISION_LOG=./kararlar.jsonl
 ```
 
 The token switches on link 1 and **nothing else**. Links 3–6 each need their own opt-in,
@@ -270,10 +270,10 @@ because every live link adds one more CAMARA round trip (10 s timeout each) to e
 latency — or false-positive refusals — they never asked for:
 
 ```bash
-ADSPILOT_REACH_CHECK=1          # link 3 — reachability (fluctuates legitimately)
-ADSPILOT_EXPECTED_COUNTRY=TR    # link 4 — roaming; no default is ever invented
-ADSPILOT_DEVICESWAP_CHECK=1     # link 5 — device swap (shares the SIM-swap window)
-ADSPILOT_CALLFWD_CHECK=1        # link 6 — unconditional call forwarding
+AEGIS_REACH_CHECK=1          # link 3 — reachability (fluctuates legitimately)
+AEGIS_EXPECTED_COUNTRY=TR    # link 4 — roaming; no default is ever invented
+AEGIS_DEVICESWAP_CHECK=1     # link 5 — device swap (shares the SIM-swap window)
+AEGIS_CALLFWD_CHECK=1        # link 6 — unconditional call forwarding
 ```
 
 Turn them on one at a time for a first live run: each one is a new way for the endpoint to
@@ -283,7 +283,7 @@ One more variable belongs to the chain as a whole rather than to any single link
 changes what a refusal *means*:
 
 ```bash
-ADSPILOT_STEPUP=0               # default. 1 = escalate instead of refusing (see below)
+AEGIS_STEPUP=0               # default. 1 = escalate instead of refusing (see below)
 ```
 
 Leave it at `0` for a first live run. With it on, a broken signal that describes an
@@ -307,21 +307,21 @@ This is the step that is easy to forget and expensive to get wrong.
 
 ```bash
 # ALL SIX must be empty/absent for a real run — one per chain link.
-ADSPILOT_NAC_SIMULATE=
-ADSPILOT_NV_SIMULATE=
-ADSPILOT_REACH_SIMULATE=
-ADSPILOT_LOC_SIMULATE=
-ADSPILOT_DEVICESWAP_SIMULATE=
-ADSPILOT_CALLFWD_SIMULATE=
+AEGIS_NAC_SIMULATE=
+AEGIS_NV_SIMULATE=
+AEGIS_REACH_SIMULATE=
+AEGIS_LOC_SIMULATE=
+AEGIS_DEVICESWAP_SIMULATE=
+AEGIS_CALLFWD_SIMULATE=
 ```
 
-`ADSPILOT_NAC_TOKEN` and `ADSPILOT_NAC_SIMULATE` set together is **contradictory
+`AEGIS_NAC_TOKEN` and `AEGIS_NAC_SIMULATE` set together is **contradictory
 configuration and is refused outright** (`yapilandirma-celiskili`). The gate does not warn
 and continue: under ambiguity it will not pick the looser channel, because a leftover demo
 variable silently turning real verification back into theatre is exactly the failure this
 rule exists to prevent.
 
-`ADSPILOT_NV_SIMULATE` is independent of the SIM-Swap layer and may legitimately coexist with
+`AEGIS_NV_SIMULATE` is independent of the SIM-Swap layer and may legitimately coexist with
 a real token — but for a first live run, clear it, so nothing in the output is simulated.
 
 #### The trap: for links 3, 5 and 6 the contradiction rule does *not* fire by default
@@ -333,17 +333,17 @@ only when its own opt-in switch is set:
 
 | Link | Leftover variable | Refuses on a token alone? |
 |---|---|---|
-| 3 — reachability | `ADSPILOT_REACH_SIMULATE` | **No** — only when `ADSPILOT_REACH_CHECK` is also on |
-| 4 — roaming / country | `ADSPILOT_LOC_SIMULATE` | Yes, when `ADSPILOT_EXPECTED_COUNTRY` is set |
-| 5 — device swap | `ADSPILOT_DEVICESWAP_SIMULATE` | **No** — only when `ADSPILOT_DEVICESWAP_CHECK` is also on |
-| 6 — call forwarding | `ADSPILOT_CALLFWD_SIMULATE` | **No** — only when `ADSPILOT_CALLFWD_CHECK` is also on |
+| 3 — reachability | `AEGIS_REACH_SIMULATE` | **No** — only when `AEGIS_REACH_CHECK` is also on |
+| 4 — roaming / country | `AEGIS_LOC_SIMULATE` | Yes, when `AEGIS_EXPECTED_COUNTRY` is set |
+| 5 — device swap | `AEGIS_DEVICESWAP_SIMULATE` | **No** — only when `AEGIS_DEVICESWAP_CHECK` is also on |
+| 6 — call forwarding | `AEGIS_CALLFWD_SIMULATE` | **No** — only when `AEGIS_CALLFWD_CHECK` is also on |
 
 The reasoning inside the gate is sound on its own terms: with the switch off there is no
 live channel to contradict, so the simulation cannot be overriding a real query. But those
 switches are **off by default**, which means the composite outcome is precisely the failure
 this document warns about elsewhere — *a leftover demo variable turning real verification
 into theatre*. Concretely: you set a real token, you forget
-`ADSPILOT_DEVICESWAP_SIMULATE=temiz` from demo day, and link 5 answers **from the
+`AEGIS_DEVICESWAP_SIMULATE=temiz` from demo day, and link 5 answers **from the
 simulation** without a single word of protest. Nothing refuses, nothing warns on stderr,
 and the approval prompt carries a `SİMÜLASYON`-stamped evidence line among the real ones.
 
@@ -374,7 +374,7 @@ evidence line attached to the approval prompt:
 | What you see | What it means |
 |---|---|
 | `Ağ doğrulaması: SIM değişimi yok (son 24 saat, +90XX****XX) — GSMA Open Gateway` | **Live query succeeded.** No `SİMÜLASYON`, no `kapalı`. First produced on 2026-08-28 (§2); on a real subscriber line it will be produced for the first time. |
-| `Ağ doğrulaması: kapalı (ADSPILOT_NAC_TOKEN tanımlı değil)` | The token did not reach the process. Check `.env` location — config is loaded from the project root, never from the CWD. |
+| `Ağ doğrulaması: kapalı (AEGIS_NAC_TOKEN tanımlı değil)` | The token did not reach the process. Check `.env` location — config is loaded from the project root, never from the CWD. |
 | Any line containing `SİMÜLASYON` | A simulation variable is still set. Go back to step 3. |
 | `Reddedildi: ağ doğrulaması tamamlanamadı` | The endpoint was reached but did not answer within 10s / 1 retry. Details are on stderr with the number redacted. Fail-closed worked. |
 
@@ -432,7 +432,7 @@ A passing check proves half the integration. Deliberately provoke the refusals t
    `"ag-yanitsiz"` and `simSwapKanali":"gercek"` (configuration was sound; the query was
    attempted and unanswered — this is a different state from `calismadi` and the audit must
    keep them apart).
-2. **Missing approver number** — clear `ADSPILOT_APPROVER_PHONE` with the token still set,
+2. **Missing approver number** — clear `AEGIS_APPROVER_PHONE` with the token still set,
    confirm refusal with `"onaylayici-numarasi-yok"`.
 3. **Swapped SIM** — if the sandbox offers a test MSISDN that reports `swapped: true`, run it
    and confirm the approval prompt is **never shown**.
@@ -532,7 +532,7 @@ const PARAM_KEY = "apiKey";
 const HEADER_NAME = "x-rapidapi-key";
 ```
 
-The key we hold becomes an `x-rapidapi-key` header. It authenticates AdsPilot to the Nokia
+The key we hold becomes an `x-rapidapi-key` header. It authenticates Aegis to the Nokia
 platform (two-legged). The NV endpoints underneath additionally require the `authorization`
 bearer described in Evidence A — the three-legged, device-derived token. The platform key
 gets you to the passthrough door; it does not answer the question behind it.
@@ -546,8 +546,8 @@ const _queryParams = { code, state };
 // url: passthrough/camara/v1/number-verification/number-verification/v0/verify
 ```
 
-**Conclusion: Number Verification is not callable from AdsPilot's server, and no credential
-we could obtain would change that.** This is the verified reason `ADSPILOT_NV_SIMULATE` is a
+**Conclusion: Number Verification is not callable from Aegis's server, and no credential
+we could obtain would change that.** This is the verified reason `AEGIS_NV_SIMULATE` is a
 simulation-only channel, and why `NvIzi` has no `"gercek"` member.
 
 Relevant endpoints, for whoever builds the companion:
@@ -572,7 +572,7 @@ server cannot have: **the approver's mobile data connection.**
   │  MCP client  │──────────────────────────────┐
   │  (agent)     │                              ▼
   └──────────────┘                   ┌─────────────────────────┐
-                                     │  AdsPilot approval gate │
+                                     │  Aegis approval gate │
                                      │  src/approval.ts        │
                                      │  src/networkTrust.ts    │
                                      └───────────┬─────────────┘
@@ -597,7 +597,7 @@ server cannot have: **the approver's mobile data connection.**
                                                  │    ?code=...&state=...
                                                  ▼
                                      ┌─────────────────────────┐
-                                     │  AdsPilot callback      │
+                                     │  Aegis callback      │
                                      │  (hosted mode only)     │
                                      └───────────┬─────────────┘
                                                  │ 5. server-side exchange:
@@ -631,7 +631,7 @@ server cannot have: **the approver's mobile data connection.**
 
 **Where the callback would live.** The stdio server (`npm start`) has no HTTP surface and
 cannot host step 4 — this is the architectural fact behind the whole limitation. Hosted mode
-(`npm run serve`, `src/http.ts`) already runs a public server with `ADSPILOT_PUBLIC_URL` and
+(`npm run serve`, `src/http.ts`) already runs a public server with `AEGIS_PUBLIC_URL` and
 an existing `/oauth/callback` route for Google OAuth; a sibling NV callback belongs there.
 **Therefore the real NV link is a hosted-mode capability, not a stdio one**, and any claim
 otherwise should be treated as a design error.

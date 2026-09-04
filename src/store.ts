@@ -7,6 +7,7 @@
  * keyed by Google's stable subject identifier rather than email, which can change or be
  * reassigned.
  */
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, createCipheriv, createDecipheriv, createHash, scryptSync } from "node:crypto";
 
@@ -32,6 +33,19 @@ let cachedMasterKey: Buffer | undefined;
  * refresh_token_enc çözülemez hâle gelir, ama bu tür bir değişiklik derlemeyi de
  * testleri de kendiliğinden kırmaz. Kıran şey, bu değerlere bağlı sabit fikstürdür.
  */
+/**
+ * ⚠ BU DİZE ASLA DEĞİŞTİRİLEMEZ — ürün yeniden adlandırılsa bile.
+ *
+ * Parola tipi bir ana anahtar bu tuzla scrypt'ten geçirilir. Tuz değişirse türeyen
+ * anahtar da değişir ve DEPODAKİ HER ŞİFRELİ SATIR ÇÖZÜLEMEZ HÂLE GELİR: süreç açılır,
+ * hiçbir tip hatası çıkmaz, her kiracı sebebi yazmayan bir hatayla karşılaşır ve sıcak
+ * yedek de aynı şekilde bozuktur.
+ *
+ * "adspilot" öneki ürünün eski adıdır ve BİLEREK duruyor. Aegis'e geçerken toplu
+ * yeniden adlandırma bu satırı da değiştirdi; test/anahtarBelgesi.ts'teki gömülü şifreli
+ * metin bunu anında yakaladı. Anahtar döndürmek istiyorsan yol tuzu değiştirmek değil,
+ * kullanıcıları yeniden bağlamaktır.
+ */
 const ANAHTAR_TUZU = "adspilot-token-encryption-v1";
 const ANAHTAR_ASGARI_UZUNLUK = 32;
 const ANAHTAR_BAYT = 32;
@@ -45,7 +59,7 @@ const ANAHTAR_BAYT = 32;
  * vermez, ama depodaki hiçbir satır çözülemez ve sıcak yedek de bozulur.
  *
  * HTTP TARAFI NEDEN BURAYI ÇAĞIRIYOR: aynı metin HMAC imzalarında da kullanılıyor
- * (http.ts oturum/state çerezleri) ve orası eskiden `process.env.ADSPILOT_MASTER_KEY ?? ""`
+ * (http.ts oturum/state çerezleri) ve orası eskiden `process.env.AEGIS_MASTER_KEY ?? ""`
  * diyordu. İmzalama ve doğrulama aynı ifadeyi kullandığı için bu kendi içinde TUTARLIYDI —
  * kırpma farkı oradaki imzaları hiç bozmazdı, o gerekçe yanlıştı. Gerçek kazanç daha küçük
  * ve başka yerde: `?? ""` yedeği, anahtar hiç yokken çerezleri BOŞ DİZEYLE imzalardı, yani
@@ -56,10 +70,10 @@ const ANAHTAR_BAYT = 32;
  * (test/kaynakHijyeni.test.ts: imza yollarında ham env okunmaz).
  */
 export function masterKeyText(): string {
-  const kirpik = process.env.ADSPILOT_MASTER_KEY?.trim() ?? "";
+  const kirpik = process.env.AEGIS_MASTER_KEY?.trim() ?? "";
   if (kirpik.length < ANAHTAR_ASGARI_UZUNLUK) {
     throw new Error(
-      `ADSPILOT_MASTER_KEY eksik ya da ${ANAHTAR_ASGARI_UZUNLUK} karakterden kısa — hosted mod token şifrelemesi için zorunlu. ` +
+      `AEGIS_MASTER_KEY eksik ya da ${ANAHTAR_ASGARI_UZUNLUK} karakterden kısa — hosted mod token şifrelemesi için zorunlu. ` +
         "Üretmek için: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
     );
   }
@@ -89,13 +103,13 @@ export function deriveMasterKey(ham: string): Buffer {
   const kirpik = ham.trim();
   if (kirpik.length < ANAHTAR_ASGARI_UZUNLUK) {
     throw new Error(
-      `ADSPILOT_MASTER_KEY ${ANAHTAR_ASGARI_UZUNLUK} karakterden kısa olamaz (kırpılmış uzunluk: ${kirpik.length}).`
+      `AEGIS_MASTER_KEY ${ANAHTAR_ASGARI_UZUNLUK} karakterden kısa olamaz (kırpılmış uzunluk: ${kirpik.length}).`
     );
   }
   if (/^[0-9a-f]{64}$/i.test(kirpik)) return Buffer.from(kirpik, "hex");
   if (/^[0-9a-f]+$/i.test(kirpik)) {
     throw new Error(
-      `ADSPILOT_MASTER_KEY yalnız onaltılık karakterlerden oluşuyor ama uzunluğu 64 değil (${kirpik.length}). ` +
+      `AEGIS_MASTER_KEY yalnız onaltılık karakterlerden oluşuyor ama uzunluğu 64 değil (${kirpik.length}). ` +
         "Eksik/fazla kopyalanmış bir makine anahtarı, parola olarak türetilirse depodaki hiçbir sır açılamaz. " +
         "Ya tam 64 hex karakter ver ya da hex olmayan bir parola kullan."
     );
@@ -110,7 +124,7 @@ function masterKey(): Buffer {
   // Hangi dalın koştuğu ÜRETİMDE görünmeli: "anahtarı verdim ama hiçbir şey açılmıyor"
   // arızasının tek ucuz teşhisi budur (env'de görünmeyen bir boşluk, yanlış uzunluk).
   console.error(
-    `[adspilot] ana anahtar türetmesi: ${
+    `[aegis] ana anahtar türetmesi: ${
       /^[0-9a-f]{64}$/i.test(kirpik) ? "64-hex (doğrudan)" : `parola (scrypt, tuz: ${ANAHTAR_TUZU})`
     }`
   );
@@ -169,12 +183,39 @@ export function hashApiKey(plain: string): string {
 export class UserStore {
   private db: DatabaseSync;
 
+  /**
+   * AEGIS_DB verilmediğinde kullanılacak dosya — ESKİ ADI TERK ETMEDEN.
+   *
+   * Ürün AdsPilot'tan Aegis'e adlandırıldığında varsayılan dosya adı da `adspilot.db`'den
+   * `aegis.db`'ye kaydı. Tek başına bu, yükseltme yapan her kurulumda SESSİZ VERİ KAYBIDIR:
+   * süreç açılır, boş bir veritabanı yaratır, tek bir hata satırı bile çıkmaz — ve bağlı
+   * bütün hesaplar yokmuş gibi görünür. Kullanıcı "her şey silinmiş" diye bakar, oysa eski
+   * dosya diskte durmaktadır.
+   *
+   * Bu yüzden yeni ad YALNIZCA eski dosya ORTADA YOKKEN kullanılır. Eski dosya duruyorsa
+   * o açılır ve durum stderr'e YAZILIR: sessiz uyum sağlamak da sessiz kayıp kadar kötüdür,
+   * operatör hangi dosyayı kullandığını bilmeli ve isterse elle taşımalı.
+   */
+  static varsayilanYol(): string {
+    const acik = process.env.AEGIS_DB?.trim();
+    if (acik) return acik;
+    if (!existsSync("aegis.db") && existsSync("adspilot.db")) {
+      console.error(
+        "[aegis] Bilgi: 'aegis.db' yok ama eski 'adspilot.db' bulundu — ESKİ DOSYA kullanılıyor. " +
+          "Yeni ada geçmek için süreci durdurup dosyayı 'aegis.db' olarak yeniden adlandır " +
+          "(yanındaki -wal ve -shm dosyalarıyla birlikte)."
+      );
+      return "adspilot.db";
+    }
+    return "aegis.db";
+  }
+
   // `||` rather than `??`: `??` lets an empty string through, and DatabaseSync("") silently
   // opens a TEMPORARY database — every restart would then wipe all user tokens without
   // raising a single error. `.trim()` aynı kapının ikinci yarısıdır: yalnız boşluktan
-  // oluşan bir ADSPILOT_DB `??`/`||` fark etmeksizin "doğru" görünür ama diske adı
+  // oluşan bir AEGIS_DB `??`/`||` fark etmeksizin "doğru" görünür ama diske adı
   // boşluk olan bir dosya açar; o da her yeniden başlatmada kaybolan bir depodur.
-  constructor(path = process.env.ADSPILOT_DB?.trim() || "adspilot.db") {
+  constructor(path = UserStore.varsayilanYol()) {
     /**
      * AÇIKÇA VERİLEN BOŞ YOL DA RET. Varsayılan argüman yukarıda korunuyor ama
      * `new UserStore(kullaniciYolu)` çağıran bir yol boş dize geçirirse aynı sessiz
@@ -184,7 +225,7 @@ export class UserStore {
     if (!path.trim()) {
       throw new Error(
         "Veritabanı yolu boş — DatabaseSync boş yolda GEÇİCİ bir veritabanı açar ve tüm " +
-          "kullanıcı token'ları her yeniden başlatmada sessizce silinirdi. ADSPILOT_DB'ye gerçek bir yol ver."
+          "kullanıcı token'ları her yeniden başlatmada sessizce silinirdi. AEGIS_DB'ye gerçek bir yol ver."
       );
     }
     try {
@@ -192,7 +233,7 @@ export class UserStore {
     } catch (e: any) {
       throw new Error(
         `Veritabanı açılamadı: '${path}' (${e?.message ?? e}). ` +
-          `Klasör var mı ve yazılabilir mi? ADSPILOT_DB ile başka bir yol verebilirsin.`
+          `Klasör var mı ve yazılabilir mi? AEGIS_DB ile başka bir yol verebilirsin.`
       );
     }
     // Concurrency: the default busy_timeout=0 makes two simultaneous requests fail hard

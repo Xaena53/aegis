@@ -150,9 +150,9 @@ export function registerPrompts(server: McpServer, getCtx: ContextProvider): voi
     },
     () =>
       metin(
-        `Bu AdsPilot bağlantısının güvenlik ayarlarını bana açıkla:\n` +
+        `Bu Aegis bağlantısının güvenlik ayarlarını bana açıkla:\n` +
           `1. list_accounts ile hangi hesaplara erişimim olduğunu göster.\n` +
-          `2. Bir reklam hesabı seç ve "adspilot://accounts/<hesapId>/limits" KAYNAĞINI oku. ` +
+          `2. Bir reklam hesabı seç ve "aegis://accounts/<hesapId>/limits" KAYNAĞINI oku. ` +
           `Yazma izni ve günlük bütçe tavanı ORADA yazılıdır — tahmin etme, uydurma, ` +
           `yazma aracını deneme amaçlı çağırma.\n` +
           `3. Kaynaktaki "kurallar" listesini bana aktar ve şunu da ekle: YAYINDAKİ bir kampanyaya ` +

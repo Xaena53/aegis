@@ -101,7 +101,7 @@ files need the SPDX header:
 ```
 
 If you deploy a modified version as a network service, AGPL §13 obliges you to offer
-its source to that service's users — set `ADSPILOT_SOURCE_URL` to your own repository.
+its source to that service's users — set `AEGIS_SOURCE_URL` to your own repository.
 
 ## Commit messages
 

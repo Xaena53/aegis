@@ -72,7 +72,7 @@ test("yalnız loopback'e bağlı yerel koşu ne engellenir ne uyarılır", () =>
 
 test("şifresiz genel adres AÇIK ONAY olmadan engeldir (kapalı arıza)", () => {
   const k = duzMetinKarari({ bind: "0.0.0.0", publicUrl: "http://ads.ornek.com", izinVerildi: false });
-  assert.match(String(k.engel), /ADSPILOT_ALLOW_PLAINTEXT/);
+  assert.match(String(k.engel), /AEGIS_ALLOW_PLAINTEXT/);
 });
 
 test("açık onay verilince engel kalkar ama uyarı susmaz", () => {
@@ -95,7 +95,7 @@ test("127.0.0.0/8'in tamamı loopback sayılır", () => {
 /* ── 3) Süreç davranışı: engel varsa HİÇ dinlemez ────────────────────────────── */
 
 const PORT = 9400 + (process.pid % 180);
-const DB = join(tmpdir(), `adspilot-yayin-${process.pid}.db`);
+const DB = join(tmpdir(), `aegis-yayin-${process.pid}.db`);
 
 function sunucuyuKostur(ek: Record<string, string>): Promise<{ kod: number | null; hata: string; cikti: string }> {
   return new Promise((coz) => {
@@ -105,12 +105,12 @@ function sunucuyuKostur(ek: Record<string, string>): Promise<{ kod: number | nul
       env: {
         ...process.env,
         PORT: String(PORT),
-        ADSPILOT_DB: DB,
-        ADSPILOT_MASTER_KEY: "a".repeat(64),
+        AEGIS_DB: DB,
+        AEGIS_MASTER_KEY: "a".repeat(64),
         GOOGLE_ADS_DEVELOPER_TOKEN: "sahte-token",
         GOOGLE_ADS_CLIENT_ID: "sahte-client-id",
         GOOGLE_ADS_CLIENT_SECRET: "sahte-secret",
-        ADSPILOT_ALLOW_PLAINTEXT: "",
+        AEGIS_ALLOW_PLAINTEXT: "",
         ...ek,
       },
     });
@@ -129,17 +129,17 @@ function sunucuyuKostur(ek: Record<string, string>): Promise<{ kod: number | nul
 }
 
 test("şifresiz genel adreste süreç BAŞLAMAZ (onay yoksa)", async () => {
-  const r = await sunucuyuKostur({ ADSPILOT_PUBLIC_URL: `http://ads.ornek.test:${PORT}` });
+  const r = await sunucuyuKostur({ AEGIS_PUBLIC_URL: `http://ads.ornek.test:${PORT}` });
   assert.equal(r.kod, 1, `süreç dinlemeye geçmemeliydi — çıktı: ${r.cikti.slice(0, 200)}`);
   assert.doesNotMatch(r.cikti, /dinliyor/, "engel varken hiçbir port açılmamalı");
-  assert.match(r.hata, /ADSPILOT_ALLOW_PLAINTEXT/);
+  assert.match(r.hata, /AEGIS_ALLOW_PLAINTEXT/);
   rmSync(DB, { force: true });
 });
 
 test("https PUBLIC_URL ile bile 0.0.0.0 dinleyicisi uyarıyı yazar", async () => {
   const r = await sunucuyuKostur({
-    ADSPILOT_PUBLIC_URL: `https://ads.ornek.test`,
-    ADSPILOT_BIND: "0.0.0.0",
+    AEGIS_PUBLIC_URL: `https://ads.ornek.test`,
+    AEGIS_BIND: "0.0.0.0",
   });
   assert.match(r.cikti, /dinliyor/, `süreç ayağa kalkmalıydı — stderr: ${r.hata.slice(0, 300)}`);
   assert.match(r.hata, /UYARI:.*127\.0\.0\.1/s, "yayın biçiminden bağımsız uyarı susmamalı");

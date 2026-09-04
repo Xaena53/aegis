@@ -1,5 +1,5 @@
 {
-  "name": "adspilot-mcp",
+  "name": "aegis-mcp",
   "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-only",
@@ -7,11 +7,11 @@
     "type": "git",
     "url": "git+https://github.com/Xaena53/google-ads-mcp.git"
   },
-  "description": "AdsPilot — Google Ads MCP server: connect your site, let Claude run your ads (write-enabled, human-approval gated)",
+  "description": "Aegis — Google Ads MCP server: connect your site, let Claude run your ads (write-enabled, human-approval gated)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "adspilot-mcp": "dist/index.js"
+    "aegis-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

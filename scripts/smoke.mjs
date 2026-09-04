@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
- * AdsPilot — Google Ads MCP server
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
+ * Aegis — Google Ads MCP server
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the Aegis contributors
  *
  * This program is free software: you may redistribute it and/or modify it under the
  * terms of the GNU Affero General Public License version 3 as published by the Free
@@ -55,7 +55,7 @@ const CALL_TIMEOUT_MS = 90_000;
 const TAZELIK = derlemeTazeligi(ROOT);
 if (!TAZELIK.taze) {
   console.error(
-    `\n  AdsPilot — canlı duman testi BAŞLATILMADI (${TAZELIK.kod})\n` +
+    `\n  Aegis — canlı duman testi BAŞLATILMADI (${TAZELIK.kod})\n` +
       `  ${TAZELIK.not}\n\n` +
       "  Sınanmayan bir derlemenin fişi kesilmez: `npm run build` sonra tekrar dene.\n"
   );
@@ -170,7 +170,7 @@ try {
   const init = await mcp.istek("initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {}, // no elicitation: the approval gate must fall back to confirm
-    clientInfo: { name: "adspilot-smoke", version: "1.0.0" },
+    clientInfo: { name: "aegis-smoke", version: "1.0.0" },
   });
   if (init.error) throw new Error(`initialize başarısız: ${init.error.message}`);
   mcp.bildirim("notifications/initialized");
@@ -252,7 +252,7 @@ try {
   });
 
   await kontrol("Kelepçeler kaynak olarak okunur", "resources/read limits", async () => {
-    const y = await mcp.istek("resources/read", { uri: `adspilot://accounts/${CID}/limits` });
+    const y = await mcp.istek("resources/read", { uri: `aegis://accounts/${CID}/limits` });
     dogrula(!y.error, `kaynak okunamadı: ${y.error?.message}`);
     const veri = JSON.parse(y.result.contents[0].text);
     dogrula(typeof veri.gunlukButceTavani === "number", "bütçe tavanı sayı değil");
@@ -363,10 +363,10 @@ try {
 
   if (WRITE) {
     await kontrol("Kampanya DURAKLATILMIŞ oluşur", "create_search_campaign (--write)", async () => {
-      const ad = `AdsPilot Duman ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+      const ad = `Aegis Duman ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
       const r = await arac(mcp, "create_search_campaign", {
         customerId: CID, name: ad, dailyBudget: 1, countryCodes: ["TR"],
-        keywords: ["adspilot duman testi"], adGroupName: "duman",
+        keywords: ["aegis duman testi"], adGroupName: "duman",
       });
       dogrula(!r.hataMi, r.metin.slice(0, 300));
       const idEsl = /campaigns\/(\d+)|kampanya (?:ID|id)[:\s]+(\d+)/.exec(r.metin);
@@ -392,7 +392,7 @@ try {
 const gecen = sonuclar.filter((s) => s.gecti).length;
 const genislik = Math.max(...sonuclar.map((s) => s.soz.length), 10);
 
-console.log(`\n  AdsPilot — canlı duman testi  [sınanan ikili: ${SINANAN_DERLEME}]\n`);
+console.log(`\n  Aegis — canlı duman testi  [sınanan ikili: ${SINANAN_DERLEME}]\n`);
 for (const s of sonuclar) {
   const isaret = s.gecti ? "GEÇTİ" : "KALDI";
   console.log(`  ${isaret}  ${s.soz.padEnd(genislik)}  ${s.ad}`);

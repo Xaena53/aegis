@@ -201,7 +201,7 @@ export function ensureGaqlLimit(query: string, limit: number): string {
 export function budgetGuard(amount: number, cap: number): string | null {
   // Belt and braces: a broken ceiling (NaN or <= 0) is refused, never waved through
   if (!Number.isFinite(cap) || cap <= 0) {
-    return "Reddedildi: bütçe tavanı yapılandırması geçersiz (ADSPILOT_MAX_DAILY_BUDGET) — düzeltilmeden bütçe işlemi yapılmaz.";
+    return "Reddedildi: bütçe tavanı yapılandırması geçersiz (AEGIS_MAX_DAILY_BUDGET) — düzeltilmeden bütçe işlemi yapılmaz.";
   }
   if (amount > cap) {
     return (

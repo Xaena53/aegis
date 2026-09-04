@@ -391,7 +391,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         "KULLAN: hazır raporların kapsamadığı bir veri gerektiğinde (reklam metinleri, negatif kelimeler, coğrafi hedefler gibi). " +
         "KULLANMA: kampanya/kelime/arama terimi performansı için — bunların hazır ve daha ucuz araçları var " +
         "(campaign_performance, keyword_performance, search_terms_report). " +
-        "İPUCU: alan adı uydurma; 'adspilot://gaql-sema' kaynağında doğru alan listesi ve örnekler var. Sorguyu TEK SATIR yaz.",
+        "İPUCU: alan adı uydurma; 'aegis://gaql-sema' kaynağında doğru alan listesi ve örnekler var. Sorguyu TEK SATIR yaz.",
       annotations: READ_ANNOTATIONS,
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID (örn. 1234567890)"),

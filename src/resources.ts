@@ -37,7 +37,7 @@ async function kaynakGuvenli<T>(uri: string, isi: () => Promise<T>): Promise<T> 
  * `erisilemedi` olan hesap ÖNERİLMEZ: detayı okunamadığı için yönetici olup olmadığı
  * bilinmiyor ve önerilse her çağrısı izin hatasıyla dönerdi. Tamamlama protokolü yalnız
  * aday KİMLİK dizisi taşıyabildiği için eksiklik burada duyurulamaz — o yük
- * `adspilot://accounts` kaynağının (tamListeMi/not) ve list_accounts aracının üstündedir.
+ * `aegis://accounts` kaynağının (tamListeMi/not) ve list_accounts aracının üstündedir.
  */
 async function reklamHesaplari(getCtx: ContextProvider): Promise<string[]> {
   try {
@@ -56,7 +56,7 @@ function musteriKimligi(deger: unknown): string {
 export function registerResources(server: McpServer, getCtx: ContextProvider): void {
   server.registerResource(
     "hesaplar",
-    "adspilot://accounts",
+    "aegis://accounts",
     {
       title: "Google Ads hesapları",
       description: "Bu bağlantının eriştiği tüm hesaplar (MCC alt hesapları dahil).",
@@ -101,7 +101,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
 
   server.registerResource(
     "hesap-limitleri",
-    new ResourceTemplate("adspilot://accounts/{customerId}/limits", {
+    new ResourceTemplate("aegis://accounts/{customerId}/limits", {
       list: undefined,
       complete: { customerId: (deger) => reklamHesaplari(getCtx).then((l) => l.filter((id) => id.startsWith(deger.replace(/\D/g, "")))) },
     }),
@@ -154,7 +154,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
 
   server.registerResource(
     "kampanyalar",
-    new ResourceTemplate("adspilot://accounts/{customerId}/campaigns", {
+    new ResourceTemplate("aegis://accounts/{customerId}/campaigns", {
       list: undefined,
       complete: { customerId: (deger) => reklamHesaplari(getCtx).then((l) => l.filter((id) => id.startsWith(deger.replace(/\D/g, "")))) },
     }),
@@ -206,7 +206,7 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
 
   server.registerResource(
     "gaql-sema",
-    "adspilot://gaql-sema",
+    "aegis://gaql-sema",
     {
       title: "GAQL alan rehberi",
       description:

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
 /*
- * AdsPilot — Google Ads MCP server (hosted mode)
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
+ * Aegis — Google Ads MCP server (hosted mode)
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the Aegis contributors
  *
  * Distributed under the GNU Affero General Public License v3 — see LICENSE.
  * Per AGPL §13, the source is offered to the users of this service at /source.
@@ -30,16 +30,16 @@ import {
  * AGPL-3.0 SECTION 13 COMPLIANCE.
  *
  * "Users interacting with the program over a network must be offered the Corresponding
- * Source." AdsPilot is a network service, so the obligation binds the OPERATOR — whoever
+ * Source." Aegis is a network service, so the obligation binds the OPERATOR — whoever
  * runs this server. The link is served in every page footer and at /source.
  *
  * This URL must genuinely resolve: running a publicly reachable service while the
  * repository is private violates the license.
  */
-const SOURCE_URL = process.env.ADSPILOT_SOURCE_URL?.trim() || "https://github.com/Xaena53/google-ads-mcp";
+const SOURCE_URL = process.env.AEGIS_SOURCE_URL?.trim() || "https://github.com/Xaena53/google-ads-mcp";
 
 const PORT = parseNumEnv("PORT", process.env.PORT, 8787);
-const PUBLIC_URL = process.env.ADSPILOT_PUBLIC_URL?.trim() || `http://localhost:${PORT}`;
+const PUBLIC_URL = process.env.AEGIS_PUBLIC_URL?.trim() || `http://localhost:${PORT}`;
 
 /**
  * Fail fast at startup. Configuration errors must surface before the process
@@ -57,11 +57,11 @@ function validateHostedEnv(): void {
    * (kırpan) denetiminde ilk kullanıcıda patlıyordu — yani kapalı arıza AÇILIŞTA değil,
    * sağlık yeşile döndükten sonra gerçekleşiyordu.
    */
-  const mk = process.env.ADSPILOT_MASTER_KEY?.trim() ?? "";
-  if (mk.length < 32) eksik.push("ADSPILOT_MASTER_KEY (min 32 karakter)");
+  const mk = process.env.AEGIS_MASTER_KEY?.trim() ?? "";
+  if (mk.length < 32) eksik.push("AEGIS_MASTER_KEY (min 32 karakter)");
   if (eksik.length) {
     console.error(
-      `[adspilot-http] BAŞLATILAMADI — eksik/geçersiz yapılandırma:\n  - ${eksik.join("\n  - ")}\n` +
+      `[aegis-http] BAŞLATILAMADI — eksik/geçersiz yapılandırma:\n  - ${eksik.join("\n  - ")}\n` +
         `Örnek için .env.example dosyasına bak. Anahtar üretmek için:\n` +
         `  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
     );
@@ -70,12 +70,12 @@ function validateHostedEnv(): void {
   try {
     new URL(PUBLIC_URL);
   } catch {
-    console.error(`[adspilot-http] BAŞLATILAMADI — ADSPILOT_PUBLIC_URL geçersiz: '${PUBLIC_URL}'`);
+    console.error(`[aegis-http] BAŞLATILAMADI — AEGIS_PUBLIC_URL geçersiz: '${PUBLIC_URL}'`);
     process.exit(1);
   }
-  if (!process.env.ADSPILOT_DB?.trim()) {
+  if (!process.env.AEGIS_DB?.trim()) {
     console.error(
-      "[adspilot-http] Bilgi: ADSPILOT_DB tanımsız — çalışma dizinindeki 'adspilot.db' kullanılacak."
+      "[aegis-http] Bilgi: AEGIS_DB tanımsız — çalışma dizinindeki 'aegis.db' kullanılacak."
     );
   }
 }
@@ -102,14 +102,14 @@ try {
     throw new Error("şifrelenen değer geri çözülemedi (gidiş-dönüş uyuşmadı)");
   }
 } catch (e: any) {
-  console.error(`[adspilot-http] BAŞLATILAMADI — şifreleme anahtarı kullanılamıyor: ${e?.message ?? e}`);
+  console.error(`[aegis-http] BAŞLATILAMADI — şifreleme anahtarı kullanılamıyor: ${e?.message ?? e}`);
   process.exit(1);
 }
 {
   const durum = store.anahtarCalisiyorMu();
   if (typeof durum === "object") {
     console.error(
-      `[adspilot-http] BAŞLATILAMADI — ADSPILOT_MASTER_KEY veritabanındaki kayıtları ÇÖZEMİYOR.
+      `[aegis-http] BAŞLATILAMADI — AEGIS_MASTER_KEY veritabanındaki kayıtları ÇÖZEMİYOR.
 ` +
         `  Sebep: ${durum.hata}
 ` +
@@ -119,7 +119,7 @@ try {
 ` +
         `  her kiracıya sebepsiz 500 döndürmek demek olurdu; onun yerine burada duruluyor.
 ` +
-        `  Çözüm: doğru ADSPILOT_MASTER_KEY'i geri koy ya da kullanıcıları yeniden bağla.`
+        `  Çözüm: doğru AEGIS_MASTER_KEY'i geri koy ya da kullanıcıları yeniden bağla.`
     );
     process.exit(1);
   }
@@ -135,8 +135,8 @@ const SWEEP_MS = 60_000;
 // Per-user rate limit that protects the shared Google Ads quota
 const limiter = new RateLimiter({
   // parseNumEnv is required: an empty env var gives Number("") === 0, which would 429 every request
-  perMinute: parseNumEnv("ADSPILOT_RATE_PER_MINUTE", process.env.ADSPILOT_RATE_PER_MINUTE, 120),
-  perDay: parseNumEnv("ADSPILOT_RATE_PER_DAY", process.env.ADSPILOT_RATE_PER_DAY, 2000),
+  perMinute: parseNumEnv("AEGIS_RATE_PER_MINUTE", process.env.AEGIS_RATE_PER_MINUTE, 120),
+  perDay: parseNumEnv("AEGIS_RATE_PER_DAY", process.env.AEGIS_RATE_PER_DAY, 2000),
 });
 
 // In hosted mode an error hint must say "reconnect", never "edit your .env"
@@ -145,7 +145,7 @@ setRuntimeMode("hosted", `${PUBLIC_URL}/connect`);
 /**
  * Host/Origin allow list for DNS rebinding protection, as the MCP spec requires.
  * For local addresses the 127.0.0.1 and localhost variants are accepted together;
- * extra names come from ADSPILOT_ALLOWED_HOSTS as a comma-separated list, which is what
+ * extra names come from AEGIS_ALLOWED_HOSTS as a comma-separated list, which is what
  * a deployment behind nginx or another proxy needs.
  */
 function allowList(): { hosts: string[]; origins: string[] } {
@@ -158,7 +158,7 @@ function allowList(): { hosts: string[]; origins: string[] } {
       origins.add(`${pub.protocol}//${h}:${pub.port || PORT}`);
     }
   }
-  for (const extra of (process.env.ADSPILOT_ALLOWED_HOSTS ?? "").split(",")) {
+  for (const extra of (process.env.AEGIS_ALLOWED_HOSTS ?? "").split(",")) {
     const t = extra.trim();
     if (t) {
       hosts.add(t);
@@ -316,7 +316,7 @@ function page(title: string, inner: string): string {
  button{background:#1a73e8;color:#fff;border:0;padding:.7rem 1.4rem;border-radius:8px;font-weight:600;cursor:pointer}
  footer{margin-top:3rem;padding-top:1rem;border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;opacity:.75}
 </style></head><body>${inner}
-<footer>AdsPilot — <a href="${SOURCE_URL}">kaynak kodu</a> ·
+<footer>Aegis — <a href="${SOURCE_URL}">kaynak kodu</a> ·
 AGPL-3.0 lisanslıdır: bu servisi kullanan herkes kaynağa erişme hakkına sahiptir.</footer>
 </body></html>`;
 }
@@ -386,7 +386,7 @@ function verifySession(value: string | undefined): number | undefined {
 function oturumCerezi(userId: number): string {
   const secure = PUBLIC_URL.startsWith("https://") ? "; Secure" : "";
   // SameSite=Strict so a settings change cannot be triggered from another site
-  return `adspilot_session=${encodeURIComponent(signSession(userId, Date.now()))}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${OTURUM_TTL_MS / 1000}${secure}`;
+  return `aegis_session=${encodeURIComponent(signSession(userId, Date.now()))}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${OTURUM_TTL_MS / 1000}${secure}`;
 }
 
 function readCookie(req: http.IncomingMessage, name: string): string | undefined {
@@ -427,20 +427,20 @@ function handleConnect(res: http.ServerResponse) {
     res,
     200,
     page(
-      "AdsPilot'a bağlan",
-      `<h1>AdsPilot'a bağlan</h1>
+      "Aegis'a bağlan",
+      `<h1>Aegis'a bağlan</h1>
        <p>Google Ads hesabını bağla; Claude reklamlarını senin adına yönetsin.
        Tüm yazma işlemleri <strong>duraklatılmış taslak</strong> olarak oluşur ve
        yayına almak için <strong>senin onayını</strong> ister.</p>
        <p><a class="btn" href="${url}">Google ile bağlan</a></p>`
     ),
-    { "Set-Cookie": `adspilot_state=${encodeURIComponent(state)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}` }
+    { "Set-Cookie": `aegis_state=${encodeURIComponent(state)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}` }
   );
 }
 
 async function handleCallback(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const state = url.searchParams.get("state") ?? "";
-  const cookieState = readCookie(req, "adspilot_state");
+  const cookieState = readCookie(req, "aegis_state");
   // The state must be signed and fresh AND match what this browser has in its cookie
   if (!verifyState(state) || cookieState !== state) {
     return html(
@@ -512,11 +512,11 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
     page(
       "Bağlandı",
       `<h1>Bağlandı ✔</h1>
-       <p><strong>${esc(email)}</strong> hesabın AdsPilot'a bağlandı.</p>
+       <p><strong>${esc(email)}</strong> hesabın Aegis'a bağlandı.</p>
        <div class="warn"><strong>API anahtarın (yalnız bir kez gösterilir):</strong>
        <pre>${esc(apiKey)}</pre></div>
        <h2>Claude Code'a ekle</h2>
-       <pre>claude mcp add --transport http adspilot ${mcpUrl} \\
+       <pre>claude mcp add --transport http aegis ${mcpUrl} \\
   --header "Authorization: Bearer ${apiKey}"</pre>
        <p>Ardından Claude'a “Google Ads hesaplarımı listele” diyebilirsin.</p>
        <h2>Güvenlik kelepçelerin</h2>
@@ -536,7 +536,7 @@ function ayarSayfasi(user: StoredUser, mesaj?: { tur: "ok" | "hata"; metin: stri
     ? `<p class="${mesaj.tur === "ok" ? "ok" : "warn"}">${esc(mesaj.metin)}</p>`
     : "";
   return page(
-    "AdsPilot ayarları",
+    "Aegis ayarları",
     `<h1>Güvenlik ayarların</h1>
      <p>Hesap: <strong>${esc(user.email)}</strong></p>
      ${bildirim}
@@ -560,7 +560,7 @@ function ayarSayfasi(user: StoredUser, mesaj?: { tur: "ok" | "hata"; metin: stri
 }
 
 async function handleSettings(req: http.IncomingMessage, res: http.ServerResponse) {
-  const userId = verifySession(readCookie(req, "adspilot_session"));
+  const userId = verifySession(readCookie(req, "aegis_session"));
   if (!userId) {
     return html(
       res,
@@ -580,7 +580,7 @@ async function handleSettings(req: http.IncomingMessage, res: http.ServerRespons
   if (req.method === "POST") {
     /**
      * CSRF: SameSite=Strict alone is NOT enough. SameSite works at registrable-domain
-     * (eTLD+1) granularity, so on an adspilot.example.com deployment ANY subdomain of
+     * (eTLD+1) granularity, so on an aegis.example.com deployment ANY subdomain of
      * example.com — the marketing site, a compromised legacy app — counts as same-site and
      * receives the cookie. An auto-submitted form from there could switch writes on and
      * raise the ceiling to its maximum, which is exactly where the "only a human can
@@ -667,7 +667,7 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
 async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   const key = bearerFrom(req);
   if (!key) {
-    res.writeHead(401, { "WWW-Authenticate": `Bearer realm="adspilot"`, "Content-Type": "application/json" });
+    res.writeHead(401, { "WWW-Authenticate": `Bearer realm="aegis"`, "Content-Type": "application/json" });
     return res.end(JSON.stringify({ error: "unauthorized", hint: `API anahtarı için: ${PUBLIC_URL}/connect` }));
   }
   const user = store.findByApiKey(key);
@@ -802,11 +802,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/mcp") return await handleMcp(req, res);
     if (url.pathname === "/")
-      return html(res, 200, page("AdsPilot", `<h1>AdsPilot</h1><p>Google Ads MCP sunucusu. <a href="/connect">Hesabını bağla</a>.</p>`));
+      return html(res, 200, page("Aegis", `<h1>Aegis</h1><p>Google Ads MCP sunucusu. <a href="/connect">Hesabını bağla</a>.</p>`));
     json(res, 404, { error: "not_found" });
   } catch (e: any) {
     // Details go to the server log only; never leak internal error text to the client
-    console.error("[adspilot-http] hata:", e);
+    console.error("[aegis-http] hata:", e);
     if (!res.headersSent) json(res, 500, { error: "internal" });
   }
 });
@@ -817,8 +817,8 @@ const server = http.createServer(async (req, res) => {
  * with it and all clients start getting `404 session_not_found`. Log the error and stay
  * up. Both entry points need this — stdio mode installs the same handlers in index.ts.
  */
-process.on("unhandledRejection", (e) => console.error("[adspilot-http] unhandledRejection:", e));
-process.on("uncaughtException", (e) => console.error("[adspilot-http] uncaughtException:", e));
+process.on("unhandledRejection", (e) => console.error("[aegis-http] unhandledRejection:", e));
+process.on("uncaughtException", (e) => console.error("[aegis-http] uncaughtException:", e));
 
 // Slow-client (slowloris) defense: upper bounds for headers and bodies
 server.headersTimeout = 20_000;
@@ -834,7 +834,7 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
   process.on(sig, () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[adspilot-http] ${sig} alındı — kapanıyor...`);
+    console.log(`[aegis-http] ${sig} alındı — kapanıyor...`);
     server.close(() => {
       for (const s of sessions.values()) {
         try {
@@ -861,23 +861,23 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
  *
  * Karar burada değil src/config.ts'te (duzMetinKarari) çünkü hem sınanabilir olmalı hem de
  * tek bir yerden okunmalı. Engel varsa süreç HİÇ dinlemez: şifresiz bir genel adres, ancak
- * ADSPILOT_ALLOW_PLAINTEXT ile AÇIKÇA onaylandığında kabul edilir. Uyarı, PUBLIC_URL https
+ * AEGIS_ALLOW_PLAINTEXT ile AÇIKÇA onaylandığında kabul edilir. Uyarı, PUBLIC_URL https
  * olsa bile susmaz — çünkü dinleyicinin kendisi düz HTTP'dir ve 0.0.0.0'a yayınlandığında
  * ters vekil atlanabilir hâle gelir.
  */
-const BIND = process.env.ADSPILOT_BIND?.trim() || "0.0.0.0";
+const BIND = process.env.AEGIS_BIND?.trim() || "0.0.0.0";
 const duzMetin = duzMetinKarari({
   bind: BIND,
   publicUrl: PUBLIC_URL,
-  izinVerildi: parseBool(process.env.ADSPILOT_ALLOW_PLAINTEXT, false, "ADSPILOT_ALLOW_PLAINTEXT"),
+  izinVerildi: parseBool(process.env.AEGIS_ALLOW_PLAINTEXT, false, "AEGIS_ALLOW_PLAINTEXT"),
 });
 if (duzMetin.engel) {
-  console.error(`[adspilot-http] BAŞLATILAMADI — ${duzMetin.engel}`);
+  console.error(`[aegis-http] BAŞLATILAMADI — ${duzMetin.engel}`);
   process.exit(1);
 }
 
 server.listen(PORT, BIND, () => {
-  console.log(`[adspilot-http] ${PUBLIC_URL} üzerinde dinliyor (port ${PORT}, bağlanma adresi ${BIND})`);
-  console.log(`[adspilot-http] Bağlanma sayfası: ${PUBLIC_URL}/connect`);
-  if (duzMetin.uyari) console.error(`[adspilot-http] UYARI: ${duzMetin.uyari}`);
+  console.log(`[aegis-http] ${PUBLIC_URL} üzerinde dinliyor (port ${PORT}, bağlanma adresi ${BIND})`);
+  console.log(`[aegis-http] Bağlanma sayfası: ${PUBLIC_URL}/connect`);
+  if (duzMetin.uyari) console.error(`[aegis-http] UYARI: ${duzMetin.uyari}`);
 });

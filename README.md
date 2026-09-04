@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-# AdsPilot
+# Aegis
 
 **A Google Ads MCP server that lets an AI agent manage real campaigns — without letting it spend your money unsupervised.**
 
@@ -8,7 +8,7 @@
 [![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-972-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-975-brightgreen.svg)](test/)
 [![Coverage](https://img.shields.io/badge/line%20coverage-89.95%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
@@ -20,7 +20,7 @@ Connecting an LLM to an advertising account is easy. Doing it without waking up 
 drained budget is the hard part. Most write-capable integrations solve this by asking
 the agent to confirm — which means the *agent* decides whether a human was consulted.
 
-AdsPilot moves that decision out of the agent's hands. When your MCP client supports
+Aegis moves that decision out of the agent's hands. When your MCP client supports
 [elicitation](https://modelcontextprotocol.io), the server asks **you** directly through
 the protocol, and the agent's own `confirm` flag is ignored entirely. Approval stops
 being a story the agent tells and becomes a fact the server can verify.
@@ -29,7 +29,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 972 automated tests at 89.95% line coverage; Docker deployment |
+| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 975 automated tests at 89.95% line coverage; Docker deployment |
 | **Not yet** | Number Verification (device-side OIDC, uncallable from a server — an architectural verdict, not a pending task) · a real subscriber network behind the CAMARA calls (the account is in Simulator mode) |
 
 ## Contents
@@ -46,8 +46,8 @@ being a story the agent tells and becomes a fact the server can verify.
 Requires **Node ≥ 22.13** — the hosted mode uses the built-in `node:sqlite`.
 
 ```bash
-git clone https://github.com/Xaena53/google-ads-mcp.git adspilot
-cd adspilot
+git clone https://github.com/Xaena53/google-ads-mcp.git aegis
+cd aegis
 npm ci && npm run build && npm test
 ```
 
@@ -57,7 +57,7 @@ Cloud project with the Ads API enabled, and an OAuth client. Copy `.env.example`
 
 ```bash
 npm run auth                      # opens a browser, writes the refresh token to .env
-claude mcp add adspilot -- node /absolute/path/to/adspilot/dist/index.js
+claude mcp add aegis -- node /absolute/path/to/aegis/dist/index.js
 ```
 
 Ask Claude *"list my Google Ads accounts"* to confirm the connection.
@@ -76,7 +76,7 @@ same "are you sure?" dialog the owner would have seen, and answers it just as co
 The mobile network holds evidence the application layer cannot fabricate. Through GSMA Open
 Gateway / CAMARA APIs — reached via the Nokia Network-as-Code platform — an operator can
 answer questions such as *was this line's SIM swapped in the last 24 hours*, the signature
-move of account-takeover fraud. AdsPilot (the gate is called **Aegis**) puts that question
+move of account-takeover fraud. Aegis (the gate is called **Aegis**) puts that question
 in front of every spend-increasing action: **the network is consulted before the human
 prompt is ever shown**. A swapped SIM is refused outright rather than politely offered to
 whoever is now holding the line, and the agent's own `confirm` flag is ignored on every
@@ -89,7 +89,7 @@ unrecognised configuration value, contradictory configuration, or an endpoint th
 answer within 10 s all end in refusal — never in a quiet pass. Raw values never reach the
 agent: the evidence line carries a masked number, refusal reasons come from a fixed
 vocabulary, and upstream error text goes to stderr only. Each risk-tagged decision —
-refusals *and* passes — can be appended to a JSONL audit trail (`ADSPILOT_DECISION_LOG`)
+refusals *and* passes — can be appended to a JSONL audit trail (`AEGIS_DECISION_LOG`)
 that keeps a **separate channel field per chain link**, so "real query" and "simulated" can
 never be flattened into one another.
 
@@ -102,10 +102,10 @@ than the design does.
 |---|---|---|---|
 | 1 | `simSwap.check` | Was the approver's line taken over recently? | **Real path written** — live SDK channel + simulation channel + test seam. Runs on every risk-tagged action |
 | 2 | `numberVerification.*` | Is the approval coming from the owner's own device? | **Simulation only, permanently for now** — it is a device-side OIDC flow that no back-end can call. Its trace type has no "real" value at all |
-| 3 | `deviceStatus.retrieveReachabilityStatus` | Can the line receive data/SMS right now? | **Real path written, opt-in** (`ADSPILOT_REACH_CHECK`), high tier only — reachability legitimately fluctuates, so it stays off by default |
-| 4 | `deviceStatus.checkRoaming` | Is the line in the expected country? | **Real path written**, high tier, and only when `ADSPILOT_EXPECTED_COUNTRY` is set — no default country is invented, because a default would answer "clean" forever |
-| 5 | `deviceSwap.check` | Was the line moved to a **new device** — the attack SIM Swap cannot see? | **Real path written, opt-in** (`ADSPILOT_DEVICESWAP_CHECK`), high tier only. Shares the SIM-swap window but is logged under its own field; unlike link 1, an unreadable answer is a refusal, not a "no swap" |
-| 6 | `callForwardingSignal.retrieveUnconditionalCallForwarding` | Is unconditional call forwarding active — the classic OTP/voice intercept? | **Real path written, opt-in** (`ADSPILOT_CALLFWD_CHECK`), high tier only. One boolean, no PII: which number the line forwards to is never asked for or received |
+| 3 | `deviceStatus.retrieveReachabilityStatus` | Can the line receive data/SMS right now? | **Real path written, opt-in** (`AEGIS_REACH_CHECK`), high tier only — reachability legitimately fluctuates, so it stays off by default |
+| 4 | `deviceStatus.checkRoaming` | Is the line in the expected country? | **Real path written**, high tier, and only when `AEGIS_EXPECTED_COUNTRY` is set — no default country is invented, because a default would answer "clean" forever |
+| 5 | `deviceSwap.check` | Was the line moved to a **new device** — the attack SIM Swap cannot see? | **Real path written, opt-in** (`AEGIS_DEVICESWAP_CHECK`), high tier only. Shares the SIM-swap window but is logged under its own field; unlike link 1, an unreadable answer is a refusal, not a "no swap" |
+| 6 | `callForwardingSignal.retrieveUnconditionalCallForwarding` | Is unconditional call forwarding active — the classic OTP/voice intercept? | **Real path written, opt-in** (`AEGIS_CALLFWD_CHECK`), high tier only. One boolean, no PII: which number the line forwards to is never asked for or received |
 
 Links 2–6 run on the **high** tier only, and each needs its own variable: holding a
 Network-as-Code token switches on link 1 and nothing else, because every live link adds
@@ -115,7 +115,7 @@ never mistaken for "asked and passed".
 
 > **SIM Swap now runs against Nokia's live Network-as-Code endpoint** (verified 2026-08-28):
 > a clean line returns `{"swapped":false}` and passes, a swapped line returns
-> `{"swapped":true}` and is refused before any prompt while `ADSPILOT_STEPUP` is off (the
+> `{"swapped":true}` and is refused before any prompt while `AEGIS_STEPUP` is off (the
 > default — with step-up on it escalates to a prompt instead, see below), and a line that makes the platform
 > return `500` is refused fail-closed with the upstream body redacted. All three landed in
 > the decision log as `"simSwapKanali":"gercek"`. **The caveat that matters:** the account is
@@ -185,7 +185,7 @@ SIM swaps and device changes happen every day; so do travel, flat batteries and 
 simply do not answer. Under a flat fail-closed rule each of those users is turned away with no
 way forward — a point made by our Nokia mentor, Aleksi Puranen, reviewing this design.
 
-So a degraded signal no longer ends the request. With `ADSPILOT_STEPUP` on, a reason that
+So a degraded signal no longer ends the request. With `AEGIS_STEPUP` on, a reason that
 describes an ordinary human situation — SIM changed, device changed, line abroad, phone
 unreachable, network silent — escalates instead of refusing: the remaining links are asked
 anyway, and if every one of them answers clean **on a real channel**, the action proceeds to a
@@ -234,9 +234,9 @@ npm run demo  -- --musteri <customer-id> --canli    # real +1 budget raise, reve
 `npm run demo` drives the **real** server binary over real MCP stdio — a fresh server process
 per scene, each handed its own simulation value, so nothing in `.env` is flipped mid-demo:
 a budget raise on a clean signal (the prompt appears with the network evidence line inside
-it), the same raise with a swapped SIM (**hard refusal, zero prompts** at the default `ADSPILOT_STEPUP=0` — the script counts
+it), the same raise with a swapped SIM (**hard refusal, zero prompts** at the default `AEGIS_STEPUP=0` — the script counts
 elicitations and aborts if one is ever shown), and a high-tier go-live where the lookback
-widens to 72 h and, if `ADSPILOT_NV_SIMULATE` is set, a second evidence line appears. Act 3
+widens to 72 h and, if `AEGIS_NV_SIMULATE` is set, a second evidence line appears. Act 3
 skips itself rather than stage a scene whose evidence it cannot honestly produce, and any
 campaign it takes live is reverted and then **read back** to prove it.
 
@@ -276,9 +276,9 @@ The three Meta tools are not a second, looser path: they call the same `onayAl` 
 the same risk tiers, so the CAMARA chain runs before the human prompt on Meta exactly as
 it does on Google.
 
-**Resources** — browsable data that costs no tool call: `adspilot://accounts` ·
-`adspilot://accounts/{id}/campaigns` · `adspilot://accounts/{id}/limits` (your active
-guardrails) · `adspilot://gaql-sema` (field reference, so the agent stops inventing
+**Resources** — browsable data that costs no tool call: `aegis://accounts` ·
+`aegis://accounts/{id}/campaigns` · `aegis://accounts/{id}/limits` (your active
+guardrails) · `aegis://gaql-sema` (field reference, so the agent stops inventing
 GAQL fields).
 
 **Prompts** — ready-made workflows that appear as slash commands: `/reklam-kur`
@@ -298,7 +298,7 @@ creative work, and a human approves before anything serves.
 sequenceDiagram
     participant U as You
     participant A as Agent
-    participant S as AdsPilot
+    participant S as Aegis
     participant G as Google Ads
 
     U->>A: /reklam-kur https://example.com
@@ -374,7 +374,7 @@ flowchart LR
         CD["Claude Desktop<br/>Cursor · others"]
     end
 
-    subgraph server["AdsPilot server"]
+    subgraph server["Aegis server"]
         direction TB
         T["stdio · Streamable HTTP + Bearer"]
         M["MCP surface<br/>15 tools · 4 resources · 5 prompts"]
@@ -412,7 +412,7 @@ Two deployment shapes share the same core:
 
 ## How it compares
 
-| | Google official MCP | AdsPilot |
+| | Google official MCP | Aegis |
 |---|---|---|
 | **Campaign writes** | ❌ read-only by design | ✅ create, budget, keywords, ads, enable/pause |
 | **Approval model** | n/a | Human asked via MCP elicitation; agent cannot fabricate consent |
@@ -437,7 +437,7 @@ docker compose up --build
 curl http://localhost:8787/health          # -> {"ok":true,...}
 ```
 
-Image layout, the environment table, the jury demo mode (`ADSPILOT_NAC_SIMULATE`, the
+Image layout, the environment table, the jury demo mode (`AEGIS_NAC_SIMULATE`, the
 simulated CAMARA channel), and troubleshooting live in
 **[docs/DOCKER.md](docs/DOCKER.md)**.
 
@@ -461,7 +461,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 972 offline tests
+npm test           # 975 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
 npm run metatest   # live checks of the Meta path (add --write to create a paused campaign)
@@ -479,7 +479,7 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-972 tests · 0 failures        line 89.95%  ·  branch 90.43%  ·  function 89.76%
+975 tests · 0 failures        line 89.95%  ·  branch 90.43%  ·  function 89.76%
 ```
 
 Those three figures are the test runner's own **all files** row
@@ -563,7 +563,7 @@ Claude Desktop does, and verifies each guarantee against Google's live servers.
 | Reports are typed | `structuredContent` matches the declared `outputSchema` |
 | Multi-line GAQL loses no field | last `SELECT` field present in returned rows |
 | LIMIT ceiling bites | unclamped count measured first, then proven to be cut |
-| Guardrails are readable | `adspilot://accounts/{id}/limits` reports cap and write flag |
+| Guardrails are readable | `aegis://accounts/{id}/limits` reports cap and write flag |
 | Completion suggests real accounts | `completion/complete` returns the live account ID |
 | Over-cap budget is refused | refusal **and** the live budget verified unchanged |
 | Unapproved go-live is refused | refusal **and** the live status verified unchanged |
@@ -590,5 +590,5 @@ You may use, modify and redistribute this software. **If you run a modified vers
 a network service, AGPL §13 requires you to offer its source to that service's users.**
 This project honours that itself: every page footer and the `/source` endpoint link to
 the source, and the MCP `instructions` field carries it too. If you fork and deploy,
-point `ADSPILOT_SOURCE_URL` at *your* repository — the upstream default will not
+point `AEGIS_SOURCE_URL` at *your* repository — the upstream default will not
 satisfy your obligation.

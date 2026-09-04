@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
 /*
- * AdsPilot — Google Ads MCP server
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
+ * Aegis — Google Ads MCP server
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the Aegis contributors
  *
  * This program is free software: you may redistribute it and/or modify it under the
  * terms of the GNU Affero General Public License version 3 as published by the Free
@@ -20,7 +20,7 @@
  * Hiçbir yazma yapılmaz: canlı çağrı salt-okunurdur (list_accounts) ve senaryo kuru
  * modda çalışır — Perde 1 ve 3/A'da araç hiç çağrılmaz, Perde 2 ve 3/B ağ kapısında
  * yazmadan ÖNCE reddedilir. Sır sızdırmaz: .env değişkenleri yalnız "var/yok" olarak
- * raporlanır, değerleri (tanınmayan ADSPILOT_NAC_SIMULATE değeri dahil) asla yazılmaz.
+ * raporlanır, değerleri (tanınmayan AEGIS_NAC_SIMULATE değeri dahil) asla yazılmaz.
  *
  * Rapor biçimi `scripts/smoke.mjs` ile aynıdır; tek fark üç durumlu olmasıdır:
  *   GEÇTİ  — sahneye engel yok
@@ -241,8 +241,8 @@ await kontrol("Google Ads kimlik bilgileri tam", ".env zorunluları", async () =
   return gectiSonuc(`4/4 değişken dolu (değerler gösterilmez); GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${mcc ? "var" : "yok"}`);
 });
 
-await kontrol("Hosted mod anahtarı", "ADSPILOT_MASTER_KEY", async () => {
-  const ham = envDegeri("ADSPILOT_MASTER_KEY");
+await kontrol("Hosted mod anahtarı", "AEGIS_MASTER_KEY", async () => {
+  const ham = envDegeri("AEGIS_MASTER_KEY");
   if (!ham) {
     return uyariSonuc(
       "yok — yalnız hosted mod (`npm run serve`) için zorunlu; stdio sahne demosu etkilenmez"
@@ -255,10 +255,10 @@ await kontrol("Hosted mod anahtarı", "ADSPILOT_MASTER_KEY", async () => {
 });
 
 await kontrol("Demo ağ kapısı yapılandırması", ".env — NAC / onaylayıcı", async () => {
-  const simVar = envVar("ADSPILOT_NAC_SIMULATE");
-  const tokenVar = envVar("ADSPILOT_NAC_TOKEN");
-  const telefonVar = envVar("ADSPILOT_APPROVER_PHONE");
-  const ozet = [varYok("ADSPILOT_NAC_SIMULATE"), varYok("ADSPILOT_NAC_TOKEN"), varYok("ADSPILOT_APPROVER_PHONE")].join(", ");
+  const simVar = envVar("AEGIS_NAC_SIMULATE");
+  const tokenVar = envVar("AEGIS_NAC_TOKEN");
+  const telefonVar = envVar("AEGIS_APPROVER_PHONE");
+  const ozet = [varYok("AEGIS_NAC_SIMULATE"), varYok("AEGIS_NAC_TOKEN"), varYok("AEGIS_APPROVER_PHONE")].join(", ");
 
   // Kural sunucunun kapalı arıza davranışının aynasıdır ve saf fonksiyonda sınanır;
   // burada yalnız RAPORLANIR. (Değerler asla yazdırılmaz — sır olabilir.)
@@ -266,7 +266,7 @@ await kontrol("Demo ağ kapısı yapılandırması", ".env — NAC / onaylayıc�
     simVar,
     tokenVar,
     telefonVar,
-    simDeger: envDegeri("ADSPILOT_NAC_SIMULATE"),
+    simDeger: envDegeri("AEGIS_NAC_SIMULATE"),
   });
 
   switch (karar.kod) {
@@ -283,11 +283,11 @@ await kontrol("Demo ağ kapısı yapılandırması", ".env — NAC / onaylayıc�
     case "onaylayici-numarasi-yok":
       return kaldiSonuc(
         `${ozet} — ${tokenVar ? "token" : "simülasyon kanalı"} var ama onaylayıcı numarası yok: ` +
-          "kapalı arıza, her artış istem gösterilmeden reddedilir (ADSPILOT_APPROVER_PHONE ekle)"
+          "kapalı arıza, her artış istem gösterilmeden reddedilir (AEGIS_APPROVER_PHONE ekle)"
       );
     case "simulasyon-degeri-tanimsiz":
       return uyariSonuc(
-        `${ozet} — ADSPILOT_NAC_SIMULATE değeri tanınmadı (gösterilmez; geçerli: "temiz" | "degisti"). ` +
+        `${ozet} — AEGIS_NAC_SIMULATE değeri tanınmadı (gösterilmez; geçerli: "temiz" | "degisti"). ` +
           "Senaryo betiği kendi değerini geçirdiği için `npm run demo` etkilenmez, betik dışı sürüşte reddedilir"
       );
     default:
@@ -360,7 +360,7 @@ async function hesaplariOku() {
     const init = await istek("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "adspilot-prova", version: "1.0.0" },
+      clientInfo: { name: "aegis-prova", version: "1.0.0" },
     });
     if (init.error) throw new Error(`initialize başarısız: ${init.error.message}`);
     proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
@@ -464,7 +464,7 @@ const genislik = Math.max(...sonuclar.map((s) => s.soz.length), 10);
 const YAVAS_ESIK_MS = 15_000;
 const sure = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} sn` : `${ms} ms`);
 
-console.log("\n  AdsPilot — sahne öncesi ön-uçuş (prova)\n");
+console.log("\n  Aegis — sahne öncesi ön-uçuş (prova)\n");
 for (const s of sonuclar) {
   const damga = s.ms >= YAVAS_ESIK_MS ? `  [yavaş: ${sure(s.ms)}]` : "";
   console.log(`  ${s.durum}  ${s.soz.padEnd(genislik)}  ${s.ad}${damga}`);

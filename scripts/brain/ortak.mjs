@@ -2,7 +2,7 @@
 /**
  * Growth Brain — ortak altyapı.
  *
- * Anthropic istemcisi, LLM yardımcıları (metinUret/jsonUret) ve AdsPilot MCP
+ * Anthropic istemcisi, LLM yardımcıları (metinUret/jsonUret) ve Aegis MCP
  * sunucusuna stdio bağlantısı (mcpBaglan). Desenler scripts/demo-agent.mjs'ten
  * uyarlanmıştır (fallback sınırı filtresi ve 30000 karakter sonuç kırpma dahil).
  *
@@ -24,7 +24,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const KOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
- * MODELİ SAĞLAYAN SERVİS — `ADSPILOT_BRAIN_PROVIDER` ile seçilir.
+ * MODELİ SAĞLAYAN SERVİS — `AEGIS_BRAIN_PROVIDER` ile seçilir.
  *
  * NEDEN SEÇİLEBİLİR: MENA Ignite'ın Resource & Tooling Guide'ında ajanın MODELİ, 3.
  * bölümde ("LLMs and Model APIs — Agents need a brain") listelenen sağlayıcılardan
@@ -40,9 +40,9 @@ const KOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
  * de aynı kodla koşar — uyarlayıcı, Anthropic'in yanıt ŞEKLİNİ taklit ettiği için
  * (bkz. geminiIstemcisi). Böylece sağlayıcı değiştirmek hiçbir kapıyı zayıflatmaz.
  */
-export const BRAIN_SAGLAYICI = (process.env.ADSPILOT_BRAIN_PROVIDER || "gemini").trim().toLowerCase();
+export const BRAIN_SAGLAYICI = (process.env.AEGIS_BRAIN_PROVIDER || "gemini").trim().toLowerCase();
 
-/** Sağlayıcı başına varsayılan model. `ADSPILOT_BRAIN_MODEL` ikisini de geçersiz kılar. */
+/** Sağlayıcı başına varsayılan model. `AEGIS_BRAIN_MODEL` ikisini de geçersiz kılar. */
 const VARSAYILAN_MODELLER = Object.freeze({
   gemini: "gemini-2.5-flash",
   anthropic: "claude-sonnet-5",
@@ -50,7 +50,7 @@ const VARSAYILAN_MODELLER = Object.freeze({
 
 /** Kullanılacak model — ortam değişkeniyle geçersiz kılınabilir. */
 export const BRAIN_MODEL =
-  process.env.ADSPILOT_BRAIN_MODEL || VARSAYILAN_MODELLER[BRAIN_SAGLAYICI] || VARSAYILAN_MODELLER.gemini;
+  process.env.AEGIS_BRAIN_MODEL || VARSAYILAN_MODELLER[BRAIN_SAGLAYICI] || VARSAYILAN_MODELLER.gemini;
 
 /** Araç sonucu başına karakter tavanı (demo-agent.mjs SONUC_TAVANI deseni). */
 export const SONUC_TAVANI = 30_000;
@@ -103,13 +103,13 @@ function bitisSebebiCevir(sebep) {
  * unutulmuş bir kontrol de olamaz.
  */
 export function geminiIstemcisi() {
-  const anahtar = (process.env.ADSPILOT_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "").trim();
+  const anahtar = (process.env.AEGIS_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "").trim();
   if (!anahtar) {
     throw new Error(
-      "ADSPILOT_GEMINI_API_KEY ortam değişkeni tanımlı değil. aistudio.google.com üzerinden " +
+      "AEGIS_GEMINI_API_KEY ortam değişkeni tanımlı değil. aistudio.google.com üzerinden " +
         "ücretsiz bir API anahtarı oluştur ve onu kabuk profilinde ya da projenin .env dosyasında " +
-        "ADSPILOT_GEMINI_API_KEY olarak tanımla. Anahtarı komut satırı argümanı olarak verme — " +
-        "kabuk geçmişine sızar. (Anthropic ile koşmak için: ADSPILOT_BRAIN_PROVIDER=anthropic)"
+        "AEGIS_GEMINI_API_KEY olarak tanımla. Anahtarı komut satırı argümanı olarak verme — " +
+        "kabuk geçmişine sızar. (Anthropic ile koşmak için: AEGIS_BRAIN_PROVIDER=anthropic)"
     );
   }
   return {
@@ -187,7 +187,7 @@ export function beyinIstemcisi() {
   if (BRAIN_SAGLAYICI === "anthropic") return anthropicIstemci();
   if (BRAIN_SAGLAYICI === "gemini") return geminiIstemcisi();
   throw new Error(
-    `ADSPILOT_BRAIN_PROVIDER değeri tanınmadı: '${BRAIN_SAGLAYICI}'. ` +
+    `AEGIS_BRAIN_PROVIDER değeri tanınmadı: '${BRAIN_SAGLAYICI}'. ` +
       `Geçerli değerler: gemini (varsayılan) | anthropic.`
   );
 }
@@ -368,7 +368,7 @@ export function cagirSarmala(mcp) {
       return metin || "(boş yanıt)";
     },
     /**
-     * Salt-okunur MCP kaynağı okur (ör. adspilot://accounts/{id}/limits).
+     * Salt-okunur MCP kaynağı okur (ör. aegis://accounts/{id}/limits).
      * Orkestratör bununla sunucu bütçe tavanını öğrenip efektif tavanı
      * min(CLI tavanı, sunucu tavanı) olarak tekleştirir. Sonuç SONUC_TAVANI'nda
      * kırpılır; içerik güvenilmez veri sayılır (çağıran doğrulamak zorundadır).
@@ -392,7 +392,7 @@ export function cagirSarmala(mcp) {
 }
 
 /**
- * AdsPilot MCP sunucusuna stdio üzerinden bağlanır (dist/index.js).
+ * Aegis MCP sunucusuna stdio üzerinden bağlanır (dist/index.js).
  * Elicitation yeteneği BİLEREK İLAN EDİLMEZ: sunucunun onay kapıları (approval.ts)
  * elicitation'sız istemcide ajanın confirm bayrağına düşer; cagir() confirm'i
  * her koşulda sildiği için onay gerektiren her işlem tasarım gereği REDDEDİLİR —
@@ -406,7 +406,7 @@ export async function mcpBaglan() {
     throw new Error("dist/index.js bulunamadı — önce `npm run build` çalıştır.");
   }
   const mcp = new Client(
-    { name: "adspilot-growth-brain", version: "1.0.0" },
+    { name: "aegis-growth-brain", version: "1.0.0" },
     { capabilities: {} } // elicitation YOK — yukarıdaki nota bak
   );
   const transport = new StdioClientTransport({

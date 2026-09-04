@@ -30,15 +30,15 @@ message that leaks a secret is itself the bug (see [SECURITY.md](../../SECURITY.
 
 ## Environment
 
-- AdsPilot version / commit:
+- Aegis version / commit:
 - Node version (`node -v`):
 - Mode: stdio (`npm start`) / hosted (`npm run serve`) / Docker
 - MCP client:
 
 ## Trust chain, if the network gate is involved
 
-- Which links are enabled (`ADSPILOT_*_CHECK`), and which are simulated (`ADSPILOT_*_SIMULATE`)?
-- Decision-log line if you have one (`ADSPILOT_DECISION_LOG`) — it contains no secrets by
+- Which links are enabled (`AEGIS_*_CHECK`), and which are simulated (`AEGIS_*_SIMULATE`)?
+- Decision-log line if you have one (`AEGIS_DECISION_LOG`) — it contains no secrets by
   design, only a masked number and a fixed reason code
 
 ## Anything else

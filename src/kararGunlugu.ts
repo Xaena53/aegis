@@ -45,7 +45,7 @@
  *    akışı düşürmediği için iz SESSİZCE durur. Tavana ulaşan dosya `<yol>.1` olarak
  *    devredilir (bkz. GUNLUK_AZAMI_BAYT).
  *
- * Günlük varsayılan olarak KAPALIDIR: ADSPILOT_DECISION_LOG tanımlı değilse hiçbir
+ * Günlük varsayılan olarak KAPALIDIR: AEGIS_DECISION_LOG tanımlı değilse hiçbir
  * dosya oluşturulmaz ve hiçbir şey yazılmaz (demo/compose ortamı açar).
  */
 import { appendFileSync, renameSync, statSync } from "node:fs";
@@ -174,7 +174,7 @@ function maskeliDogrula(numara: string | undefined): string | undefined {
   if (numara === undefined) return undefined;
   if (MASKELI_NUMARA_DESENI.test(numara)) return numara;
   console.error(
-    "[adspilot] karar günlüğü: maskesiz görünen numara alanı kayda YAZILMADI (sır sızıntısı önlendi)"
+    "[aegis] karar günlüğü: maskesiz görünen numara alanı kayda YAZILMADI (sır sızıntısı önlendi)"
   );
   return undefined;
 }
@@ -194,7 +194,7 @@ function tutarDogrula(tutar: number | undefined): number | undefined {
   if (tutar === undefined) return undefined;
   if (typeof tutar === "number" && Number.isFinite(tutar) && tutar >= 0) return tutar;
   console.error(
-    "[adspilot] karar günlüğü: geçersiz riskteki tutar kayda YAZILMADI (uydurma büyüklük önlendi)"
+    "[aegis] karar günlüğü: geçersiz riskteki tutar kayda YAZILMADI (uydurma büyüklük önlendi)"
   );
   return undefined;
 }
@@ -260,7 +260,7 @@ export function agKararKaydiOlustur(
 }
 
 /**
- * Kaydı JSONL olarak ekler. ADSPILOT_DECISION_LOG tanımsızsa GÜNLÜK KAPALIDIR:
+ * Kaydı JSONL olarak ekler. AEGIS_DECISION_LOG tanımsızsa GÜNLÜK KAPALIDIR:
  * dosya oluşturulmaz, hiçbir yan etki üretilmez.
  *
  * Env karar anında okunur (modül yüklenirken değil): tek bir süreçte günlüğü açıp
@@ -295,13 +295,13 @@ function dosyayiDevret(hedef: string): void {
     // ENOENT = dosya henüz yok: devredilecek bir şey de yok, sessiz geçilir.
     if (e?.code === "ENOENT") return;
     console.error(
-      `[adspilot] karar günlüğü devredilemedi (${hedef}): ${e?.message ?? e} — satır yine de eklenecek`
+      `[aegis] karar günlüğü devredilemedi (${hedef}): ${e?.message ?? e} — satır yine de eklenecek`
     );
   }
 }
 
 export function kararYaz(kayit: KararKaydi): void {
-  const hedef = process.env.ADSPILOT_DECISION_LOG?.trim();
+  const hedef = process.env.AEGIS_DECISION_LOG?.trim();
   if (!hedef) return;
   dosyayiDevret(hedef);
   try {
@@ -344,7 +344,7 @@ export function kararYaz(kayit: KararKaydi): void {
      * tutulmadığını fark edemezdi. Tek satır, akış etkilenmeden devam eder.
      */
     console.error(
-      `[adspilot] karar günlüğü yazılamadı (${hedef}): ${e?.message ?? e} — onay akışı etkilenmedi`
+      `[aegis] karar günlüğü yazılamadı (${hedef}): ${e?.message ?? e} — onay akışı etkilenmedi`
     );
   }
 }

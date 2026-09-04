@@ -2,7 +2,7 @@
 
 # Aegis Demo Runbook — Network-Verified Trust for AI Agents That Spend Money
 
-This is the jury-facing runbook for the AdsPilot demo of **Aegis**: a trust gate that
+This is the jury-facing runbook for the Aegis demo of **Aegis**: a trust gate that
 consults the mobile network (GSMA Open Gateway / CAMARA, via the Nokia Network-as-Code
 platform) **before** an AI agent is allowed to increase real ad spend.
 
@@ -66,15 +66,15 @@ default) and the second chain link may run.
 | # | Act | Gate behavior |
 |---|-----|---------------|
 | 1 | Budget raise with a **clean** network signal (`temiz`) | SIM-swap check passes → the human approval prompt appears **with the network evidence line inside it**. In the default **dry run** the script stops right before the write call and prints an explicitly labeled prediction of the prompt instead; with `--canli` the prompt is real and a human must type exactly `Evet` at the keyboard — any other answer is an honored decline, not an error. On approval the +1 is applied, then immediately reverted (decreases need no approval) |
-| 2 | The same budget raise with a **swapped** SIM (`degisti`) | **HARD REFUSAL before any prompt** (with `ADSPILOT_STEPUP=0`, the default — see 3.3) — the human is never asked, the agent's `confirm=true` is ignored, nothing is written. The script *verifies* this: it counts elicitations and aborts with an error if a prompt is ever shown. Safe even in dry mode, because the gate refuses before any write |
-| 3/A | **Go-live** with a clean signal (`temiz`) — the **high** tier | Same gate, wider window: the evidence line now says **72 h** (or your configured window), not 24. With `ADSPILOT_NV_SIMULATE` set, the prompt carries a **second** evidence line from the Number Verification link, and the script highlights it as `zincir 2 ▶` ("chain 2"). In `--canli` the campaign really goes `ENABLED` and is put back to `PAUSED` the moment the scene ends — **verified by reading the status back from the account**, not by trusting the tool's reply |
-| 3/B | The same go-live with a **swapped** SIM (`degisti`) | The identical hard refusal, this time on the high tier: zero elicitations while `ADSPILOT_STEPUP=0` (the default — see 3.3), and the refusal text carries the 72 h window instead of 24. After the refusal the script **reads the campaign status back** and aborts with a security error if it is `ENABLED` |
+| 2 | The same budget raise with a **swapped** SIM (`degisti`) | **HARD REFUSAL before any prompt** (with `AEGIS_STEPUP=0`, the default — see 3.3) — the human is never asked, the agent's `confirm=true` is ignored, nothing is written. The script *verifies* this: it counts elicitations and aborts with an error if a prompt is ever shown. Safe even in dry mode, because the gate refuses before any write |
+| 3/A | **Go-live** with a clean signal (`temiz`) — the **high** tier | Same gate, wider window: the evidence line now says **72 h** (or your configured window), not 24. With `AEGIS_NV_SIMULATE` set, the prompt carries a **second** evidence line from the Number Verification link, and the script highlights it as `zincir 2 ▶` ("chain 2"). In `--canli` the campaign really goes `ENABLED` and is put back to `PAUSED` the moment the scene ends — **verified by reading the status back from the account**, not by trusting the tool's reply |
+| 3/B | The same go-live with a **swapped** SIM (`degisti`) | The identical hard refusal, this time on the high tier: zero elicitations while `AEGIS_STEPUP=0` (the default — see 3.3), and the refusal text carries the 72 h window instead of 24. After the refusal the script **reads the campaign status back** and aborts with a security error if it is `ENABLED` |
 
 Three things about act 3 that are worth saying out loud on stage:
 
 - **It can honestly skip itself.** Two server-side gates answer *before* the network gate
   on a go-live: the campaign's daily budget must be under the account's safety ceiling
-  (read from the read-only `adspilot://accounts/<id>/limits` resource), and the campaign
+  (read from the read-only `aegis://accounts/<id>/limits` resource), and the campaign
   must have a servable ad (an `ENABLED` ad inside an `ENABLED` ad group). The script
   checks both with read-only queries *first*; if no candidate qualifies it prints
   `PERDE 3 ATLANDI — uydurma kanıt üretilmez` ("Act 3 skipped — no fabricated evidence")
@@ -120,12 +120,12 @@ Prefer containers? The image build, data volume, and healthcheck are documented 
 | | **Real NaC mode** | **Simulation demo mode** |
 |---|---|---|
 | What talks to the network | Nokia Network-as-Code SDK → live CAMARA SIM Swap API | **Nothing.** The real SDK is never even imported |
-| `ADSPILOT_NAC_TOKEN` | **Required** — register at https://networkascode.nokia.io (free tier) | Not needed |
-| `ADSPILOT_NAC_SIMULATE` | Unset | `temiz` ("clean" — no swap) or `degisti` ("swapped") |
-| `ADSPILOT_APPROVER_PHONE` | **Required** (E.164, e.g. `+9055…`) — missing = fail-closed refusal | **Still required** — the masking and refusal paths mirror the real flow exactly |
-| `ADSPILOT_SIMSWAP_WINDOW_HOURS` | High-risk lookback window, default 72, clamped to CAMARA's 1–2400 | Same — window math is shared code with the real flow |
-| `ADSPILOT_NV_SIMULATE` | **Simulation only in both modes** — `dogrulandi` / `uyusmadi`; see §3.3. Independent of the SIM-swap channel: it may be combined with a real token | Same |
-| `ADSPILOT_DECISION_LOG` | Path to a JSONL audit file; unset = logging **off**. Same in both modes; see §3.5 | Same |
+| `AEGIS_NAC_TOKEN` | **Required** — register at https://networkascode.nokia.io (free tier) | Not needed |
+| `AEGIS_NAC_SIMULATE` | Unset | `temiz` ("clean" — no swap) or `degisti` ("swapped") |
+| `AEGIS_APPROVER_PHONE` | **Required** (E.164, e.g. `+9055…`) — missing = fail-closed refusal | **Still required** — the masking and refusal paths mirror the real flow exactly |
+| `AEGIS_SIMSWAP_WINDOW_HOURS` | High-risk lookback window, default 72, clamped to CAMARA's 1–2400 | Same — window math is shared code with the real flow |
+| `AEGIS_NV_SIMULATE` | **Simulation only in both modes** — `dogrulandi` / `uyusmadi`; see §3.3. Independent of the SIM-swap channel: it may be combined with a real token | Same |
+| `AEGIS_DECISION_LOG` | Path to a JSONL audit file; unset = logging **off**. Same in both modes; see §3.5 | Same |
 | On-screen honesty | SIM-swap evidence line cites "GSMA Open Gateway" | **Every** line of output — evidence, refusal, stderr — carries an explicit **"SİMÜLASYON"** ("SIMULATION") marker |
 
 > **⚠ Honesty guarantee — please hold us to it.** Simulation mode exists so the demo
@@ -143,26 +143,26 @@ Prefer containers? The image build, data volume, and healthcheck are documented 
 
 The gate runs **six links, in a fixed order**:
 
-1. **SIM Swap** (`ADSPILOT_NAC_SIMULATE`, or the real CAMARA API with a token) — "was the
+1. **SIM Swap** (`AEGIS_NAC_SIMULATE`, or the real CAMARA API with a token) — "was the
    owner's line taken over recently?" Runs on **every** risk-tagged action.
-2. **Number Verification** (`ADSPILOT_NV_SIMULATE`) — "is this approval coming from the
+2. **Number Verification** (`AEGIS_NV_SIMULATE`) — "is this approval coming from the
    owner's own device?" **Simulation only, permanently for now** — see the box below.
-3. **Device Reachability** (`ADSPILOT_REACH_CHECK` for the live query, or
-   `ADSPILOT_REACH_SIMULATE`) — "is the line reachable on the network right now?"
-4. **Roaming / expected country** (`ADSPILOT_EXPECTED_COUNTRY`, or `ADSPILOT_LOC_SIMULATE`)
+3. **Device Reachability** (`AEGIS_REACH_CHECK` for the live query, or
+   `AEGIS_REACH_SIMULATE`) — "is the line reachable on the network right now?"
+4. **Roaming / expected country** (`AEGIS_EXPECTED_COUNTRY`, or `AEGIS_LOC_SIMULATE`)
    — "is the line outside the country we expect?" Without an expected country the link does
    not run at all; no default is invented, because a default would answer "clean" forever.
-5. **Device Swap** (`ADSPILOT_DEVICESWAP_CHECK`, or `ADSPILOT_DEVICESWAP_SIMULATE`) — "was
+5. **Device Swap** (`AEGIS_DEVICESWAP_CHECK`, or `AEGIS_DEVICESWAP_SIMULATE`) — "was
    the line moved to a *new device*?" The attack SIM Swap cannot see: the card never moves,
    the line does.
-6. **Call Forwarding** (`ADSPILOT_CALLFWD_CHECK`, or `ADSPILOT_CALLFWD_SIMULATE`) — "is
+6. **Call Forwarding** (`AEGIS_CALLFWD_CHECK`, or `AEGIS_CALLFWD_SIMULATE`) — "is
    unconditional call forwarding active?" Invisible to all five links above: same SIM, same
    device, line reachable, expected country — and the verification call goes to the attacker.
 
 **Links 2–6 run on the high tier only** (go-live, changes to a serving campaign), and each
 runs **only when its own variable is set**. On the medium tier (budget raises) they do not
 exist at all, and a `high`-tier run with nothing but a token exercises link 1 alone: holding
-`ADSPILOT_NAC_TOKEN` switches on no other link, because each live link costs another CAMARA
+`AEGIS_NAC_TOKEN` switches on no other link, because each live link costs another CAMARA
 round trip (10 s timeout each) on every approval, and another way to refuse a legitimate
 spend. A link that is configured but switched off records `kapali` in the audit trail — "I
 did not ask" is written down, never left to look like "asked and passed".
@@ -171,7 +171,7 @@ The scripted demo sets only the link-1 channel itself; links 2–6 appear on sta
 export their variables (§3.6).
 
 The order is one-directional *within a run*: a swapped SIM refuses immediately (step-up
-off, `ADSPILOT_STEPUP=0`, the default), so no later link gets a chance to soften that
+off, `AEGIS_STEPUP=0`, the default), so no later link gets a chance to soften that
 verdict — a later link can only add another reason to refuse. **That is a default, not an
 invariant.** With step-up on, the same swapped SIM does not end the request: it is carried
 to a human prompt if — and only if — every remaining link vouches for it over a real
@@ -201,13 +201,13 @@ unrecognized value refused at decision time without echoing it):
 - `uyusmadi` — **hard refusal**, even when the SIM-swap check was clean: the approval
   prompt is never shown.
 
-#### Step-up (`ADSPILOT_STEPUP`) — the switch that changes what a refusal means
+#### Step-up (`AEGIS_STEPUP`) — the switch that changes what a refusal means
 
 This is the one setting in the whole runbook that turns a **refusal** into a **prompt**,
 and it is easy to miss: it defaults to `0` and lives outside the per-link variables.
 Everything the acts below show — hard refusal, zero prompts — is the step-up-off behaviour.
 
-With `ADSPILOT_STEPUP=1`, a refusal reason that describes an ordinary human situation is
+With `AEGIS_STEPUP=1`, a refusal reason that describes an ordinary human situation is
 *escalated* instead: the remaining links are asked anyway, and if every one of them
 answers clean **over a real channel**, the action reaches a human prompt that leads with
 the broken signal by name. The reasons that qualify are exactly these five:
@@ -249,9 +249,9 @@ code.
 | Tier | Actions | SIM-swap lookback | Chain links 2–6 |
 |---|---|---|---|
 | **medium** | budget increases | **24 h** (the tighter of 24 h and the configured window) | never run |
-| **high** | go-live, changes to an already-serving campaign | configured window, **72 h** by default (clamped to 1–2400) | each runs when its own variable is set: `ADSPILOT_NV_SIMULATE`, `ADSPILOT_REACH_CHECK`/`_SIMULATE`, `ADSPILOT_EXPECTED_COUNTRY`/`ADSPILOT_LOC_SIMULATE`, `ADSPILOT_DEVICESWAP_CHECK`/`_SIMULATE`, `ADSPILOT_CALLFWD_CHECK`/`_SIMULATE` |
+| **high** | go-live, changes to an already-serving campaign | configured window, **72 h** by default (clamped to 1–2400) | each runs when its own variable is set: `AEGIS_NV_SIMULATE`, `AEGIS_REACH_CHECK`/`_SIMULATE`, `AEGIS_EXPECTED_COUNTRY`/`AEGIS_LOC_SIMULATE`, `AEGIS_DEVICESWAP_CHECK`/`_SIMULATE`, `AEGIS_CALLFWD_CHECK`/`_SIMULATE` |
 
-The device-swap link reuses `ADSPILOT_SIMSWAP_WINDOW_HOURS` rather than introducing a second
+The device-swap link reuses `AEGIS_SIMSWAP_WINDOW_HOURS` rather than introducing a second
 window variable — but it is logged under its **own** field (`devSwapPencereSaat`), so an
 auditor can always tell which question was asked with which window.
 
@@ -259,10 +259,10 @@ auditor can always tell which question was asked with which window.
 
 The gate tells the *agent* why it refused. It cannot, by itself, answer the account
 owner's later question: "how many spend increases were refused last month, over which
-window, through which channel?" `ADSPILOT_DECISION_LOG` answers that one.
+window, through which channel?" `AEGIS_DECISION_LOG` answers that one.
 
 ```bash
-ADSPILOT_DECISION_LOG=/var/log/adspilot/kararlar.jsonl
+AEGIS_DECISION_LOG=/var/log/aegis/kararlar.jsonl
 ```
 
 - **Off by default.** Unset → no file is created and nothing is written. The variable is
@@ -299,10 +299,10 @@ looks like "empty"):
 | `karar` | `gecti` (passed) / `kademeli` (step-up: a signal was broken, the remaining links came back clean over a **real** channel, so the action was escalated instead of refused) / `ret` (refused) / `kapali` — `kapali` means **no link actually queried anything**; a gate that was off is never logged as "passed", and `kademeli` is never folded into `gecti`: the moments the gate softened must stay distinguishable from the moments it was never tested |
 | `simSwapKanali` | link 1 — `gercek` / `simulasyon` / `kapali` (deliberately disabled) / `calismadi` (config error, never queried) |
 | `nvKanali` | link 2 (Number Verification) — `simulasyon` / `calismadi` only. There is no `gercek`: the type itself has no such value (§3.3). **Absent** when the link did not run |
-| `reachKanali` | link 3 (device reachability) — same four values as `simSwapKanali`; `kapali` means `ADSPILOT_REACH_CHECK` is off. **Absent** when the link was never configured |
-| `locKanali` | link 4 (roaming / expected country) — same four values; `kapali` means `ADSPILOT_EXPECTED_COUNTRY` is unset. **Absent** when never configured |
-| `devSwapKanali` | link 5 (device swap) — same four values; `kapali` means `ADSPILOT_DEVICESWAP_CHECK` is off. **Absent** when never configured |
-| `callFwdKanali` | link 6 (call forwarding) — same four values; `kapali` means `ADSPILOT_CALLFWD_CHECK` is off. **Absent** when never configured |
+| `reachKanali` | link 3 (device reachability) — same four values as `simSwapKanali`; `kapali` means `AEGIS_REACH_CHECK` is off. **Absent** when the link was never configured |
+| `locKanali` | link 4 (roaming / expected country) — same four values; `kapali` means `AEGIS_EXPECTED_COUNTRY` is unset. **Absent** when never configured |
+| `devSwapKanali` | link 5 (device swap) — same four values; `kapali` means `AEGIS_DEVICESWAP_CHECK` is off. **Absent** when never configured |
+| `callFwdKanali` | link 6 (call forwarding) — same four values; `kapali` means `AEGIS_CALLFWD_CHECK` is off. **Absent** when never configured |
 | `pencereSaat` | the SIM-swap lookback window actually queried |
 | `devSwapPencereSaat` | link 5's **own** lookback window — never merged into `pencereSaat`, because link 5 can run while the SIM-swap layer is off, and writing its window into link 1's field would show an auditor a query that never happened |
 | `tutar` | the **daily amount at risk**, in the account's own currency and in currency units — never micros (`50`, not `50000000`). For a budget change it is the **new** budget (the ceiling the money would run to); for a go-live, and for writing into a campaign that is already serving (a new ad, new keywords), it is that campaign's current daily budget. **An absent `tutar` does not mean "no money was at stake" — it means the budget could not be read.** `0` is a real measurement ("read as zero") and *is* written; an unreadable budget writes no field at all, because logging `0` would record "I don't know" as "zero spend". There is deliberately **no currency field**: the unit is already the account's context (`hesapId` and that account's own currency), and inventing a `paraBirimi` would record something the gate never measured |
@@ -363,29 +363,29 @@ A hit in what remains is worth investigating.
 In containers, put the file on the existing data volume so it survives restarts:
 
 ```bash
-docker run -d --name adspilot -p 127.0.0.1:8787:8787 \
-  --env-file .env -e PORT=8787 -e ADSPILOT_DB=/data/adspilot.db \
-  -e ADSPILOT_DECISION_LOG=/data/kararlar.jsonl \
-  -v adspilot-data:/data --restart unless-stopped adspilot
+docker run -d --name aegis -p 127.0.0.1:8787:8787 \
+  --env-file .env -e PORT=8787 -e AEGIS_DB=/data/aegis.db \
+  -e AEGIS_DECISION_LOG=/data/kararlar.jsonl \
+  -v aegis-data:/data --restart unless-stopped aegis
 ```
 
 ### 3.6 Demo environment
 
 The scripted demo needs **no** `.env` additions for the gate: `scripts/demo-senaryo.mjs`
-sets `ADSPILOT_NAC_SIMULATE` itself per act (`temiz` for acts 1 and 3/A, `degisti` for
+sets `AEGIS_NAC_SIMULATE` itself per act (`temiz` for acts 1 and 3/A, `degisti` for
 acts 2 and 3/B — each act gets its own server process) and passes a fixed demo approver
 number (`+905550001122`) through the spawn environment. You never flip values between
 scenes.
 
-Everything else is **forwarded, not decided**: the script copies every `ADSPILOT_*` and
+Everything else is **forwarded, not decided**: the script copies every `AEGIS_*` and
 `GOOGLE_ADS_*` variable from your shell into each server process untouched. So
-`ADSPILOT_NV_SIMULATE` and `ADSPILOT_DECISION_LOG` work with the demo exactly as they do
+`AEGIS_NV_SIMULATE` and `AEGIS_DECISION_LOG` work with the demo exactly as they do
 in production — the script never invents a value for them:
 
 ```bash
 # Add the second chain link to act 3, and record every decision:
-ADSPILOT_NV_SIMULATE=dogrulandi \
-ADSPILOT_DECISION_LOG=$PWD/kararlar.jsonl \
+AEGIS_NV_SIMULATE=dogrulandi \
+AEGIS_DECISION_LOG=$PWD/kararlar.jsonl \
 npm run demo -- --musteri <customer-id>
 ```
 
@@ -399,11 +399,11 @@ client):
 
 ```bash
 # Simulation without the demo script (no NaC token needed):
-ADSPILOT_APPROVER_PHONE=+905551112233
-ADSPILOT_NAC_SIMULATE=temiz        # or "degisti" for the attack scene
-ADSPILOT_NV_SIMULATE=dogrulandi    # optional; second chain link, high tier only
-ADSPILOT_SIMSWAP_WINDOW_HOURS=72   # optional; also forwarded to the demo script if set
-ADSPILOT_DECISION_LOG=./kararlar.jsonl   # optional; audit trail, off when unset
+AEGIS_APPROVER_PHONE=+905551112233
+AEGIS_NAC_SIMULATE=temiz        # or "degisti" for the attack scene
+AEGIS_NV_SIMULATE=dogrulandi    # optional; second chain link, high tier only
+AEGIS_SIMSWAP_WINDOW_HOURS=72   # optional; also forwarded to the demo script if set
+AEGIS_DECISION_LOG=./kararlar.jsonl   # optional; audit trail, off when unset
 ```
 
 ### 3.7 Preflight — `npm run prova`
@@ -423,19 +423,19 @@ npm run prova -- --musteri <customer-id> [--kampanya <campaign-id>]
 | Node version vs `engines.node` | older than required |
 | `dist/` freshness vs `src/` | `dist/index.js` is missing — a merely *stale* build is a warning |
 | `.env` credentials | any of the four Google Ads variables is empty |
-| `ADSPILOT_MASTER_KEY` | never — hosted mode only, so absence is a warning |
-| `.env` network gate | `ADSPILOT_NAC_TOKEN` and `ADSPILOT_NAC_SIMULATE` both set (contradictory config: every spend increase is refused, act 1 breaks), or a token with no approver phone |
+| `AEGIS_MASTER_KEY` | never — hosted mode only, so absence is a warning |
+| `.env` network gate | `AEGIS_NAC_TOKEN` and `AEGIS_NAC_SIMULATE` both set (contradictory config: every spend increase is refused, act 1 breaks), or a token with no approver phone |
 | Live `list_accounts` | the refresh token is dead (`invalid_grant`) or no usable ad account is reachable; `--musteri` not in that list is a warning |
 | Demo dry run | `scripts/demo-senaryo.mjs` exits non-zero, **or fewer than 3 acts actually played** — the act headings are counted in the output, because a silently dropped scene still exits 0. A missing `AĞ DOĞRULAMASI BAŞARISIZ` line is a warning |
 | Docker CLI + daemon | never — a missing CLI or a stopped daemon is a warning |
 
 Nothing is written: the live call is read-only and the scenario runs in dry mode.
 Environment variables are reported as present/absent only — values are never printed, not
-even an unrecognized `ADSPILOT_NAC_SIMULATE` (it may hold a secret by mistake). The run
+even an unrecognized `AEGIS_NAC_SIMULATE` (it may hold a secret by mistake). The run
 ends with `SAHNEYE HAZIR` ("ready for the stage") or the list of blockers, and exits 1
 when any blocker was found.
 
-> The preflight does **not** inspect `ADSPILOT_NV_SIMULATE` or `ADSPILOT_DECISION_LOG`.
+> The preflight does **not** inspect `AEGIS_NV_SIMULATE` or `AEGIS_DECISION_LOG`.
 > Both are optional and neither can break the three acts: an unusable NV value refuses
 > act 3/A (visibly, on stage) and a broken log path only prints a stderr line. If you
 > intend to demo either, run the dry run once with them exported and look at the output.
@@ -463,7 +463,7 @@ desktop assistant uses — and pauses at each beat so you can narrate. All three
 in that one command; you never touch `.env` between them. (For a fully AI-driven variant
 where Claude decides the tool calls itself, see `npm run agent`, section 5.3.)
 
-### Act 1 — Budget raise on a clean signal (`ADSPILOT_NAC_SIMULATE=temiz`, set by the script)
+### Act 1 — Budget raise on a clean signal (`AEGIS_NAC_SIMULATE=temiz`, set by the script)
 
 The script reads the campaign and its current daily budget via `run_gaql` (read-only),
 then attempts `update_campaign_budget` to current **+1**. A budget increase is a
@@ -479,7 +479,7 @@ appended:
 
 ```
 Ağ doğrulaması [SİMÜLASYON]: SIM değişimi yok (son 24 saat, +905*******22) —
-simüle kanal (ADSPILOT_NAC_SIMULATE=temiz), gerçek ağ sorgusu YAPILMADI
+simüle kanal (AEGIS_NAC_SIMULATE=temiz), gerçek ağ sorgusu YAPILMADI
 ```
 
 *Translation:* "Network verification [SIMULATION]: no SIM swap (last 24 h, +905\*\*\*\*\*\*\*22) —
@@ -504,7 +504,7 @@ Note two details:
 - The approver number is **masked** everywhere — prompts never leak it in full.
 - In real NaC mode this same line reads `… — GSMA Open Gateway` with no simulation marker.
 
-### Act 2 — The attack scene: HARD REFUSAL (`ADSPILOT_NAC_SIMULATE=degisti`, set by the script)
+### Act 2 — The attack scene: HARD REFUSAL (`AEGIS_NAC_SIMULATE=degisti`, set by the script)
 
 No env flipping: the script starts a **second server process** with the swapped-SIM
 simulation value and repeats the exact same +1 budget raise. Expected output:
@@ -538,7 +538,7 @@ the refusal doesn't arrive or if the approval prompt is shown even once.
 
 `set_campaign_status` → `ENABLED` is **high**-risk, so the same gate runs with the
 configured window (**72 h** by default) instead of 24, and the Number Verification link
-runs if you exported `ADSPILOT_NV_SIMULATE`. The act header states the window it expects,
+runs if you exported `AEGIS_NV_SIMULATE`. The act header states the window it expects,
 and whenever a prompt actually appears the script *verifies* that it carries that window,
 declining on the spot if it does not — a high-tier scene showing a 24 h line would be a
 bug, not a demo.
@@ -555,7 +555,7 @@ evidence line it finds:
 ```
   zincir 1 ▶ Ağ doğrulaması [SİMÜLASYON]: SIM değişimi yok (son 72 saat, +905*******22) — …
   zincir 2 ▶ Numara doğrulaması [SİMÜLASYON]: onay isteği hat sahibinin cihazından geliyor
-             SAYILDI (+905*******22) — simüle kanal (ADSPILOT_NV_SIMULATE=dogrulandi),
+             SAYILDI (+905*******22) — simüle kanal (AEGIS_NV_SIMULATE=dogrulandi),
              gerçek CAMARA Number Verification sorgusu YAPILMADI (cihaz-taraflı OIDC gerektirir)
 ```
 
@@ -569,7 +569,7 @@ The operator types `Evet`, the campaign goes live, and the scene immediately rev
 (refusal, dropped call, unreadable status), the run's final word is the safety lock
 described in §2.
 
-With `ADSPILOT_NV_SIMULATE=uyusmadi`, act 3/A becomes a *second* refusal scene, and a
+With `AEGIS_NV_SIMULATE=uyusmadi`, act 3/A becomes a *second* refusal scene, and a
 sharper one: the SIM-swap check was clean and the action is still refused, with **zero**
 prompts —
 
@@ -607,18 +607,18 @@ broken, and it says so loudly rather than passing quietly.
 
 ### Fail-closed matrix (worth showing if asked "what if it breaks?")
 
-The **Behavior** column is the `ADSPILOT_STEPUP=0` behaviour — the default, and what the
+The **Behavior** column is the `AEGIS_STEPUP=0` behaviour — the default, and what the
 scripted demo shows. The **With step-up on** column says what changes at
-`ADSPILOT_STEPUP=1`; "unchanged" there means the reason is not escalatable at all (3.3).
+`AEGIS_STEPUP=1`; "unchanged" there means the reason is not escalatable at all (3.3).
 
 | Condition | Behavior | With step-up on |
 |---|---|---|
 | Feature unconfigured (no token, no simulation) | Pass-through, but the evidence line honestly says the gate is off — and the audit log records `"karar":"kapali"`, never "passed" | unchanged — nothing ran, so there is nothing to escalate |
 | Token set, approver phone missing | **Refuse** (config error) | unchanged — `onaylayici-numarasi-yok` is the operator's state |
-| `ADSPILOT_NV_SIMULATE` set without an approver phone | **Refuse** — the link cannot verify a number it does not have | unchanged — same config-fault rule |
+| `AEGIS_NV_SIMULATE` set without an approver phone | **Refuse** — the link cannot verify a number it does not have | unchanged — same config-fault rule |
 | CAMARA API unreachable / errors | **Refuse** — if the trust anchor cannot answer, the spend does not happen. Upstream error bodies are never echoed into the refusal (they can contain the phone number); details go to stderr, number redacted even there | **escalatable** (`ag-yanitsiz`): if every *other* link answers clean over a real channel, this becomes a prompt naming the silent network. With no corroborating real link — the usual case when the endpoint is down — it still refuses |
-| Invalid `ADSPILOT_NAC_SIMULATE` or `ADSPILOT_NV_SIMULATE` value | **Refuse** at decision time (server does not crash at startup); the value itself is never printed | unchanged — `simulasyon-degeri-tanimsiz` is a config fault |
-| `ADSPILOT_NAC_TOKEN` and `ADSPILOT_NAC_SIMULATE` both set | **Refuse** — contradictory configuration; ambiguity never selects the weaker channel | unchanged — `yapilandirma-celiskili` is a config fault |
+| Invalid `AEGIS_NAC_SIMULATE` or `AEGIS_NV_SIMULATE` value | **Refuse** at decision time (server does not crash at startup); the value itself is never printed | unchanged — `simulasyon-degeri-tanimsiz` is a config fault |
+| `AEGIS_NAC_TOKEN` and `AEGIS_NAC_SIMULATE` both set | **Refuse** — contradictory configuration; ambiguity never selects the weaker channel | unchanged — `yapilandirma-celiskili` is a config fault |
 | SIM swap says `degisti` | **Refuse before any prompt** while step-up is off | **escalatable** (`sim-degisti`) — the case step-up exists for; a genuine SIM replacement reaches a prompt that names it, provided the remaining real links are clean |
 | Unconditional call forwarding active | **Refuse** | unchanged **on purpose** — escalating would send the stronger check down the channel the attacker holds |
 | SIM swap clean but Number Verification says `uyusmadi` | **Refuse** — the second link can only add reasons to refuse, never overturn a pass | unchanged — `nv-uyusmadi` is a stated *mismatch*, not an unreadable signal |
@@ -635,8 +635,8 @@ gate.**
 
 ```bash
 # One terminal: the network says the approver's SIM was swapped.
-export ADSPILOT_NAC_SIMULATE=degisti
-export ADSPILOT_APPROVER_PHONE=+905551112222
+export AEGIS_NAC_SIMULATE=degisti
+export AEGIS_APPROVER_PHONE=+905551112222
 
 npm run brain -- \
   --hedef "yeni müşteri kaydı" \
@@ -651,11 +651,11 @@ server (`npm run build`), and write tools enabled for the account. Without the k
 stops with a Turkish error naming the environment variable; the key is never accepted as a
 CLI argument, because that leaks it into shell history.
 
-**Which model.** The provider is chosen by `ADSPILOT_BRAIN_PROVIDER`, and the default is
+**Which model.** The provider is chosen by `AEGIS_BRAIN_PROVIDER`, and the default is
 `gemini` — Google AI Studio, which is on the MENA Ignite tooling guide's section 3 list of
-model APIs for agents. It needs `ADSPILOT_GEMINI_API_KEY` (free tier available at
-aistudio.google.com). Setting `ADSPILOT_BRAIN_PROVIDER=anthropic` switches to Claude with
-`ANTHROPIC_API_KEY`; `ADSPILOT_BRAIN_MODEL` overrides the model name on either path, and an
+model APIs for agents. It needs `AEGIS_GEMINI_API_KEY` (free tier available at
+aistudio.google.com). Setting `AEGIS_BRAIN_PROVIDER=anthropic` switches to Claude with
+`ANTHROPIC_API_KEY`; `AEGIS_BRAIN_MODEL` overrides the model name on either path, and an
 unrecognised provider name is refused rather than silently defaulted.
 
 The provider only fetches bytes. The fallback boundary, the `stop_reason` fail-closed rule,
@@ -675,14 +675,14 @@ through the Gemini path.
    is `set_campaign_status → ENABLED`, that it is **high**-risk, and that the network gate
    fires before any prompt (step-up off, the default). This is a distinct question, not a
    continuation of #1.
-4. **The gate fires.** With `ADSPILOT_NAC_SIMULATE=degisti` the refusal from act 2 is
+4. **The gate fires.** With `AEGIS_NAC_SIMULATE=degisti` the refusal from act 2 is
    printed **verbatim** under `── Sunucunun cevabı (aynen) ──` ("the server's answer,
    as-is") and copied into the report. The report labels it
    `✔ GÜVENLİK KAPISI ÇALIŞTI — BU BİR BAŞARISIZLIK DEĞİLDİR` ("the security gate worked —
    this is NOT a failure"): the campaign stayed paused and nothing was spent. The process
    exits **0**, because a refusal is the system working, not breaking.
 
-Swap to `ADSPILOT_NAC_SIMULATE=temiz` and the second half of the design shows itself: the
+Swap to `AEGIS_NAC_SIMULATE=temiz` and the second half of the design shows itself: the
 network passes, its evidence line (`SIM değişimi yok…` — "no SIM swap") is carried into the
 report, and the server **still** refuses — because Growth Brain structurally cannot produce
 verified human consent. It advertises no elicitation capability and its `confirm` flag is
@@ -730,10 +730,10 @@ high-tier go-live chain — are demonstrated identically with zero LLM access.
 ### 5.4 "The refusal appeared but I expected the real network to be consulted"
 
 Read the refusal text. If it says `çelişkili yapılandırma` ("contradictory
-configuration"), both `ADSPILOT_NAC_TOKEN` and `ADSPILOT_NAC_SIMULATE` are set — the
+configuration"), both `AEGIS_NAC_TOKEN` and `AEGIS_NAC_SIMULATE` are set — the
 gate refuses every spend increase rather than guess which channel you meant. Unset
-`ADSPILOT_NAC_SIMULATE` to use the live CAMARA API (or unset the token to demo). Note
-that `ADSPILOT_NV_SIMULATE` is *not* part of that rule: it is simulation-only by nature
+`AEGIS_NAC_SIMULATE` to use the live CAMARA API (or unset the token to demo). Note
+that `AEGIS_NV_SIMULATE` is *not* part of that rule: it is simulation-only by nature
 (§3.3), so it combines with a real token without contradiction.
 
 ### 5.5 Real NaC mode stalls then refuses

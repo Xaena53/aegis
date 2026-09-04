@@ -47,7 +47,7 @@ export interface SahteAyar {
    */
   agPencereKaydi?: number[];
   /**
-   * SİMÜLASYON kanalı (ADSPILOT_NAC_SIMULATE karşılığı). Bilerek nacToken SET EDİLMEZ
+   * SİMÜLASYON kanalı (AEGIS_NAC_SIMULATE karşılığı). Bilerek nacToken SET EDİLMEZ
    * ve sahte kanal ENJEKTE EDİLMEZ: testin geçmesi, simülasyonun token'sız ve SDK'sız
    * çalıştığını kanıtlar. agDurumu ile birlikte kullanma.
    */

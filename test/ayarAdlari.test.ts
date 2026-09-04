@@ -3,11 +3,11 @@
  * AYAR ADI SÜRÜKLENMESİ — kullanıcıya var olmayan bir düğmeyi göstermeye karşı.
  *
  * Bu test bir denetimde bulunan gerçek bir hatadan doğdu: yazma araçları kapalıyken
- * Growth Brain operatöre "ADSPILOT_ENABLE_WRITE" ayarını gösteriyordu, oysa kodun
- * okuduğu değişken ADSPILOT_WRITE_ENABLED'dı. Operatör mesajın dediğini yapar, hiçbir
+ * Growth Brain operatöre "AEGIS_ENABLE_WRITE" ayarını gösteriyordu, oysa kodun
+ * okuduğu değişken AEGIS_WRITE_ENABLED'dı. Operatör mesajın dediğini yapar, hiçbir
  * şey değişmez ve elinde ne bir hata ne bir ipucu kalır — sessizce tıkanır.
  *
- * Kural: kaynakta geçen her ADSPILOT_* adı ya gerçekten okunmalı ya da bilinen bir
+ * Kural: kaynakta geçen her AEGIS_* adı ya gerçekten okunmalı ya da bilinen bir
  * istisna olmalı. İstisnalar tek tek gerekçelendirilir; liste kısa kalmalıdır.
  */
 import { test } from "node:test";
@@ -32,7 +32,7 @@ const BELGE_YOLLARI = ["README.md", "README.tr.md", ".env.example"];
 const ISTISNALAR = new Set<string>([
   // docs/CAMARA.md'de yalnız gelecekteki numberRecycling halkasının kuralını
   // adlandırmak için geçer; orada da bugün var olmadığı açıkça yazılıdır.
-  "ADSPILOT_APPROVER_SINCE",
+  "AEGIS_APPROVER_SINCE",
 ]);
 
 function dosyalar(dizin: string): string[] {
@@ -52,7 +52,7 @@ function belgeDosyalari(): string[] {
   return cikti;
 }
 
-test("kaynakta VE belgelerde geçen her ADSPILOT_* adı gerçekten okunuyor", () => {
+test("kaynakta VE belgelerde geçen her AEGIS_* adı gerçekten okunuyor", () => {
   const hepsi = [...KOD_DIZINLERI.flatMap((d) => dosyalar(path.join(KOK, d))), ...belgeDosyalari()];
   const metinler = new Map<string, string>();
   for (const f of hepsi) metinler.set(f, readFileSync(f, "utf8"));
@@ -60,7 +60,7 @@ test("kaynakta VE belgelerde geçen her ADSPILOT_* adı gerçekten okunuyor", ()
   const gecen = new Set<string>();
   const okunan = new Set<string>();
   for (const [, icerik] of metinler) {
-    for (const m of icerik.matchAll(/ADSPILOT_[A-Z0-9_]+/g)) gecen.add(m[0]);
+    for (const m of icerik.matchAll(/AEGIS_[A-Z0-9_]+/g)) gecen.add(m[0]);
     // Gerçekten okunma: process.env.X ya da process.env["X"] biçimleri.
     for (const m of icerik.matchAll(/process\.env(?:\.([A-Z0-9_]+)|\[\s*["']([A-Z0-9_]+)["']\s*\])/g)) {
       okunan.add(m[1] ?? m[2]);
@@ -71,13 +71,13 @@ test("kaynakta VE belgelerde geçen her ADSPILOT_* adı gerçekten okunuyor", ()
   assert.deepEqual(
     hayalet,
     [],
-    `Bu ADSPILOT_* adları kaynakta geçiyor ama hiçbir yerde OKUNMUYOR. ` +
+    `Bu AEGIS_* adları kaynakta geçiyor ama hiçbir yerde OKUNMUYOR. ` +
       `Kullanıcıya böyle bir ad göstermek onu çalışmayan bir düğmeye yönlendirir. ` +
       `Ya adı düzeltin ya da gerekçesiyle ISTISNALAR'a ekleyin: ${hayalet.join(", ")}`
   );
 });
 
-test("okunan her ADSPILOT_* ayarı .env.example'da belgeli", () => {
+test("okunan her AEGIS_* ayarı .env.example'da belgeli", () => {
   /**
    * Ters yön: kodun okuduğu ama hiçbir yerde anlatılmayan bir ayar, yalnız kaynağı
    * okuyanın bulabileceği gizli bir düğmedir.
@@ -87,7 +87,7 @@ test("okunan her ADSPILOT_* ayarı .env.example'da belgeli", () => {
   const okunan = new Set<string>();
   for (const f of hepsi) {
     for (const m of readFileSync(f, "utf8").matchAll(
-      /process\.env(?:\.(ADSPILOT_[A-Z0-9_]+)|\[\s*["'](ADSPILOT_[A-Z0-9_]+)["']\s*\])/g
+      /process\.env(?:\.(AEGIS_[A-Z0-9_]+)|\[\s*["'](AEGIS_[A-Z0-9_]+)["']\s*\])/g
     )) {
       okunan.add(m[1] ?? m[2]);
     }

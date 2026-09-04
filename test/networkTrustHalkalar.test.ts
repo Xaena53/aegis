@@ -13,9 +13,9 @@
  *    bile karar üretmez.
  *  - Zincir sırası TEK YÖNLÜDÜR: önceki halkanın reti kesindir, sonraki halka ne koşar
  *    ne de o kararı yumuşatır.
- *  - Beklenti UYDURULMAZ: ADSPILOT_EXPECTED_COUNTRY yoksa konum halkası koşmaz ("kapali"
+ *  - Beklenti UYDURULMAZ: AEGIS_EXPECTED_COUNTRY yoksa konum halkası koşmaz ("kapali"
  *    izi), varsayılan bir ülke türetilmez.
- *  - Erişilebilirlik halkasının GERÇEK kanalı OPT-IN'dir: ADSPILOT_REACH_CHECK açılmadıkça
+ *  - Erişilebilirlik halkasının GERÇEK kanalı OPT-IN'dir: AEGIS_REACH_CHECK açılmadıkça
  *    NaC token'ı olsa bile sorgu yapılmaz (meşru dalgalanmanın yanlış-pozitif reti).
  *  - HAM DEĞER YANKILANMAZ: ne ham env değeri, ne upstream hata metni, ne de ağdan gelen
  *    GÖZLENEN ülke ajana giden hiçbir metne girer.
@@ -100,7 +100,7 @@ test("reach: 'anormal' SERT RET — SIM ve NV temiz olsa bile onay istemi hiç g
 test("reach: tanınmayan simülasyon değeri karar anında RET — ham env değeri YANKILANMAZ", async () => {
   const k = await agDogrula({ ...TEMEL, reachSimulate: "sanirim-aciktir" }, "high");
   assert.ok(k.engel, "tanınmayan değer fail-open olamaz");
-  assert.match(k.engel!, /ADSPILOT_REACH_SIMULATE/);
+  assert.match(k.engel!, /AEGIS_REACH_SIMULATE/);
   assert.match(k.engel!, /tanınmadı/);
   assert.match(k.engel!, /"erisilebilir" \| "anormal"/, "geçerli değerler operatöre söylenmeli");
   assert.doesNotMatch(k.engel!, /sanirim-aciktir/, "ham env değeri ret metnine yankılanmaz");
@@ -114,7 +114,7 @@ test("reach: approverPhone yoksa kapalı arıza — sorgulanacak numara olmadan 
   const k = await agDogrula({ simSwapWindowHours: 72, reachSimulate: "erisilebilir" }, "high");
   assert.ok(k.engel);
   assert.match(k.engel!, /SİMÜLASYON/);
-  assert.match(k.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.match(k.engel!, /AEGIS_APPROVER_PHONE/);
   assert.equal(k.kanit.length, 0);
   assert.equal(k.iz.reach, "calismadi");
   assert.equal(k.iz.retNedeni, "onaylayici-numarasi-yok");
@@ -186,7 +186,7 @@ test("reach: okunamayan yanıt ve fırlatma KAPALI ARIZA — upstream metin ajan
   }
 });
 
-test("reach: gerçek kanal OPT-IN — ADSPILOT_REACH_CHECK kapalıyken SORGU YOK, iz 'kapali'", async () => {
+test("reach: gerçek kanal OPT-IN — AEGIS_REACH_CHECK kapalıyken SORGU YOK, iz 'kapali'", async () => {
   simSwapTemiz();
   let cagriSayisi = 0;
   __setErisimKanalForTests({
@@ -216,7 +216,7 @@ test("reach: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapalı
   );
   assert.ok(celiski.engel, "belirsizlikte gevşek kanal SEÇİLMEZ");
   assert.match(celiski.engel!, /çelişkili yapılandırma/);
-  assert.match(celiski.engel!, /ADSPILOT_REACH_CHECK/);
+  assert.match(celiski.engel!, /AEGIS_REACH_CHECK/);
   assert.equal(celiski.iz.reach, "calismadi");
   assert.equal(celiski.iz.retNedeni, "yapilandirma-celiskili");
 
@@ -232,7 +232,7 @@ test("reach: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapalı
 
 /* ── Halka 4: beklenti yapılandırması ─────────────────────────────────────────── */
 
-test("loc: ADSPILOT_EXPECTED_COUNTRY yoksa halka KOŞMAZ — beklenen ülke UYDURULMAZ", async () => {
+test("loc: AEGIS_EXPECTED_COUNTRY yoksa halka KOŞMAZ — beklenen ülke UYDURULMAZ", async () => {
   simSwapTemiz();
   let cagriSayisi = 0;
   __setKonumKanalForTests({
@@ -261,7 +261,7 @@ test("loc: geçersiz ülke kodu KAPALI ARIZA — ham değer ret metnine yankıla
   for (const bozuk of ["Türkiye", "TRX", "T", "90"]) {
     const k = await agDogrula({ ...TEMEL, locSimulate: "beklenen", expectedCountry: bozuk }, "high");
     assert.ok(k.engel, `'${bozuk}' fail-open olamaz`);
-    assert.match(k.engel!, /ADSPILOT_EXPECTED_COUNTRY/);
+    assert.match(k.engel!, /AEGIS_EXPECTED_COUNTRY/);
     assert.match(k.engel!, /ISO 3166-1 alpha-2/, "operatöre beklenen biçim söylenmeli");
     assert.equal(k.iz.loc, "calismadi", "yapılandırma hatası 'kapali' değildir");
     assert.equal(k.iz.retNedeni, "beklenen-ulke-gecersiz");
@@ -273,7 +273,7 @@ test("loc: geçersiz ülke kodu KAPALI ARIZA — ham değer ret metnine yankıla
   assert.doesNotMatch(uzun.engel!, /Türkiye/, "ham env değeri ret metnine yankılanmaz");
 });
 
-test("loc: NAC token + ADSPILOT_LOC_SIMULATE birlikte tanımlıysa çelişki RET", async () => {
+test("loc: NAC token + AEGIS_LOC_SIMULATE birlikte tanımlıysa çelişki RET", async () => {
   simSwapTemiz();
   const k = await agDogrula(
     { ...TEMEL, nacToken: "gercek-token", locSimulate: "beklenen", expectedCountry: "TR" },
@@ -725,7 +725,7 @@ test("KRİTİK devSwap: 'degisti' SERT RET — SIM/NV/reach/konum temiz olsa bil
 test("devSwap: tanınmayan değer ve numarasız yapılandırma KAPALI ARIZA — ham değer YANKILANMAZ", async () => {
   const tanimsiz = await agDogrula({ ...TEMEL, devSwapSimulate: "belki-degismistir" }, "high");
   assert.ok(tanimsiz.engel, "tanınmayan değer fail-open olamaz");
-  assert.match(tanimsiz.engel!, /ADSPILOT_DEVICESWAP_SIMULATE/);
+  assert.match(tanimsiz.engel!, /AEGIS_DEVICESWAP_SIMULATE/);
   assert.match(tanimsiz.engel!, /"temiz" \| "degisti"/, "geçerli değerler operatöre söylenmeli");
   assert.doesNotMatch(tanimsiz.engel!, /belki-degismistir/, "ham env değeri ret metnine yankılanmaz");
   assert.equal(tanimsiz.iz.devSwap, "calismadi", "yapılandırma hatası 'kapali' ile karıştırılamaz");
@@ -734,7 +734,7 @@ test("devSwap: tanınmayan değer ve numarasız yapılandırma KAPALI ARIZA — 
 
   const numarasiz = await agDogrula({ simSwapWindowHours: 72, devSwapSimulate: "temiz" }, "high");
   assert.ok(numarasiz.engel);
-  assert.match(numarasiz.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.match(numarasiz.engel!, /AEGIS_APPROVER_PHONE/);
   assert.equal(numarasiz.kanit.length, 0);
   assert.equal(numarasiz.iz.devSwap, "calismadi");
   assert.equal(numarasiz.iz.retNedeni, "onaylayici-numarasi-yok");
@@ -816,7 +816,7 @@ test("devSwap: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapal
   );
   assert.ok(celiski.engel, "belirsizlikte gevşek kanal SEÇİLMEZ");
   assert.match(celiski.engel!, /çelişkili yapılandırma/);
-  assert.match(celiski.engel!, /ADSPILOT_DEVICESWAP_CHECK/);
+  assert.match(celiski.engel!, /AEGIS_DEVICESWAP_CHECK/);
   assert.equal(celiski.iz.devSwap, "calismadi");
   assert.equal(celiski.iz.retNedeni, "yapilandirma-celiskili");
 
@@ -857,7 +857,7 @@ test("callFwd: 'kapali' kanıt yazar, 'acik' SERT REDDEDER — ikisi de SİMÜLA
   assert.equal(tanimsiz.iz.retNedeni, "simulasyon-degeri-tanimsiz");
 
   const numarasiz = await agDogrula({ simSwapWindowHours: 72, callFwdSimulate: "kapali" }, "high");
-  assert.match(numarasiz.engel!, /ADSPILOT_APPROVER_PHONE/);
+  assert.match(numarasiz.engel!, /AEGIS_APPROVER_PHONE/);
   assert.equal(numarasiz.iz.callFwd, "calismadi");
   assert.equal(numarasiz.iz.retNedeni, "onaylayici-numarasi-yok");
 });

@@ -3,7 +3,7 @@
  * Ağ kapısı KARAR GÜNLÜĞÜ (denetlenebilirlik izi).
  *
  * Merkezi iddialar:
- *  - Günlük VARSAYILAN KAPALI: ADSPILOT_DECISION_LOG yoksa dosya bile oluşmaz.
+ *  - Günlük VARSAYILAN KAPALI: AEGIS_DECISION_LOG yoksa dosya bile oluşmaz.
  *  - Ret ve geçiş kayıtları gerçek onay akışından, doğru alanlarla düşer.
  *  - Kayıt YAPISAL İZDEN üretilir, metinden değil: iki halka (SIM-Swap + Number
  *    Verification) AYRI alanlara yazılır ve birbirinin gerçekliğini gizleyemez.
@@ -80,13 +80,13 @@ let kok: string;
 let gunluk: string;
 
 beforeEach(() => {
-  kok = mkdtempSync(path.join(tmpdir(), "adspilot-karar-"));
+  kok = mkdtempSync(path.join(tmpdir(), "aegis-karar-"));
   gunluk = path.join(kok, "kararlar.jsonl");
-  delete process.env.ADSPILOT_DECISION_LOG;
+  delete process.env.AEGIS_DECISION_LOG;
 });
 
 afterEach(() => {
-  delete process.env.ADSPILOT_DECISION_LOG;
+  delete process.env.AEGIS_DECISION_LOG;
   agKanaliniSifirla();
   rmSync(kok, { recursive: true, force: true });
 });
@@ -130,7 +130,7 @@ async function cagir(client: Client, name: string, args: Record<string, unknown>
 
 /* ── günlük kapalı ────────────────────────────────────────────────────────────── */
 
-test("KRİTİK: ADSPILOT_DECISION_LOG yoksa günlük KAPALI — dosya bile oluşmaz", async () => {
+test("KRİTİK: AEGIS_DECISION_LOG yoksa günlük KAPALI — dosya bile oluşmaz", async () => {
   // env bilerek TANIMSIZ (beforeEach siler): varsayılan kapalı olmalı.
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agSimulasyon: "temiz" });
   const { client } = await elicitationliIstemci(ctx, "accept");
@@ -151,7 +151,7 @@ test("KRİTİK: ADSPILOT_DECISION_LOG yoksa günlük KAPALI — dosya bile oluş
 /* ── ret kaydı ────────────────────────────────────────────────────────────────── */
 
 test("RET kaydı: SIM değişti → karar 'ret', kanal ve pencere doğru, numara maskeli", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agSimulasyon: "degisti" });
   const { client, sorulanlar } = await elicitationliIstemci(ctx, "accept");
 
@@ -181,7 +181,7 @@ test("RET kaydı: SIM değişti → karar 'ret', kanal ve pencere doğru, numara
 });
 
 test("RET kaydı: ağ yanıtsız (gerçek kanal hata verirse) → 'ag-yanitsiz', kanal 'gercek'", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "hata" });
   const { client } = await elicitationliIstemci(ctx, "accept");
 
@@ -208,7 +208,7 @@ test("RET kaydı: ağ yanıtsız (gerçek kanal hata verirse) → 'ag-yanitsiz',
 /* ── geçiş kaydı ──────────────────────────────────────────────────────────────── */
 
 test("GEÇİŞ kaydı: gerçek kanal temiz → karar 'gecti', kanal 'gercek', pencere 72", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "temiz" });
   const { client } = await elicitationliIstemci(ctx, "accept");
 
@@ -230,7 +230,7 @@ test("GEÇİŞ kaydı: gerçek kanal temiz → karar 'gecti', kanal 'gercek', pe
 });
 
 test("GEÇİŞ kaydı: bütçe artışı 'medium' riski ve 24 saatlik pencereyi kaydeder", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const butce: Array<[RegExp, any[]]> = [
     [
       /campaign_budget\.explicitly_shared/,
@@ -253,10 +253,10 @@ test("GEÇİŞ kaydı: bütçe artışı 'medium' riski ve 24 saatlik pencereyi 
 });
 
 test("ağ doğrulaması KAPALIYKEN karar 'kapali' olarak kaydedilir (geçişle karışmaz)", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   kararYaz(
     agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", {
-      kanit: ["Ağ doğrulaması: kapalı (ADSPILOT_NAC_TOKEN tanımlı değil)"],
+      kanit: ["Ağ doğrulaması: kapalı (AEGIS_NAC_TOKEN tanımlı değil)"],
       iz: { simSwap: "kapali" },
     })
   );
@@ -276,7 +276,7 @@ test("ağ doğrulaması KAPALIYKEN karar 'kapali' olarak kaydedilir (geçişle k
  * doğrulanmış gösteriyordu.
  */
 test("KRİTİK iz: SIM-Swap kapalı (token yok) + NV simülasyonu → karar 'kapali', halkalar AYRI yazılır", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR }); // token YOK, simülasyon YOK
   ctx.config.approverPhone = "+905551112233";
   ctx.config.simSwapWindowHours = 72;
@@ -304,7 +304,7 @@ test("KRİTİK iz: SIM-Swap kapalı (token yok) + NV simülasyonu → karar 'kap
  * "simulasyon" yazıyor, yani GERÇEK ağ doğrulamasını simülasyon gibi gösteriyordu.
  */
 test("KRİTİK iz: GERÇEK CAMARA sorgusu + NV simülasyonu → simSwapKanali 'gercek', nvKanali 'simulasyon'", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const pencereler: number[] = [];
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "temiz", agPencereKaydi: pencereler });
   ctx.config.nvSimulate = "dogrulandi";
@@ -328,7 +328,7 @@ test("KRİTİK iz: GERÇEK CAMARA sorgusu + NV simülasyonu → simSwapKanali 'g
 
 /** Hata 2: NV reti eskiden sözlükte yoktu ve "bilinmeyen-ret" olarak düşüyordu. */
 test("iz: NV reti sabit sözlükten 'nv-uyusmadi' kodunu yazar (bilinmeyen-ret değil)", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "temiz" });
   ctx.config.nvSimulate = "uyusmadi";
   const { client, sorulanlar } = await elicitationliIstemci(ctx, "accept");
@@ -351,7 +351,7 @@ test("iz: NV reti sabit sözlükten 'nv-uyusmadi' kodunu yazar (bilinmeyen-ret d
 });
 
 test("iz: YAPILANDIRMA hatasında simSwapKanali 'calismadi' ve pencereSaat YOK", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   // Çelişkili yapılandırma: gerçek token VE simülasyon birlikte → hiç sorgu yapılamaz.
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "temiz" });
   ctx.config.nacSimulate = "temiz";
@@ -384,7 +384,7 @@ test("iz: YAPILANDIRMA hatasında simSwapKanali 'calismadi' ve pencereSaat YOK",
 /* ── hesap kimliği ────────────────────────────────────────────────────────────── */
 
 test("hesapId: risk etiketli ÜÇ çağrı noktası da kararı hesabıyla birlikte kaydeder", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const IKINCI_HESAP = "9876543210";
 
   // 1) Yayına alma (high)
@@ -429,7 +429,7 @@ test("hesapId: risk etiketli ÜÇ çağrı noktası da kararı hesabıyla birlik
 });
 
 test("hesapId verilmezse alan HİÇ yazılmaz (boş dize 'bilinmiyor' ile karışmaz)", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   kararYaz(
     agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", { kanit: [], iz: { simSwap: "kapali" } }, "   ")
   );
@@ -447,7 +447,7 @@ test("hesapId verilmezse alan HİÇ yazılmaz (boş dize 'bilinmiyor' ile karı�
  */
 
 test("TUTAR: yayına alma kararı kampanyanın GÜNLÜK BÜTÇESİNİ kaydeder (micros değil)", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR, agDurumu: "temiz" });
   const { client } = await elicitationliIstemci(ctx, "accept");
 
@@ -466,7 +466,7 @@ test("TUTAR: yayına alma kararı kampanyanın GÜNLÜK BÜTÇESİNİ kaydeder (
 });
 
 test("TUTAR: REDDEDİLEN harcamanın büyüklüğü de kayda geçer (denetçinin asıl sorusu)", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const butce: Array<[RegExp, any[]]> = [
     [
       /campaign_budget\.explicitly_shared/,
@@ -492,7 +492,7 @@ test("TUTAR: REDDEDİLEN harcamanın büyüklüğü de kayda geçer (denetçinin
 });
 
 test("TUTAR: eski bütçe OKUNAMASA bile yeni bütçe bilinir ve yazılır", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   // amount_micros YOK: kod bunu "artış olabilir" sayıp onay ister (mevcut fail-closed).
   const butce: Array<[RegExp, any[]]> = [
     [
@@ -515,7 +515,7 @@ test("TUTAR: eski bütçe OKUNAMASA bile yeni bütçe bilinir ve yazılır", asy
 });
 
 test("TUTAR: canlı kampanyaya reklam eklerken okunabilen bütçe kaydedilir", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const canli: Array<[RegExp, any[]]> = [
     [/FROM ad_group\b/, [{ campaign: { id: 7, name: "Canlı", status: 2 /* ENABLED */ }, ad_group: { status: 2 } }]],
     [/campaign_budget\.amount_micros/, [{ campaign_budget: { amount_micros: 25_000_000 } }]],
@@ -540,7 +540,7 @@ test("TUTAR: canlı kampanyaya reklam eklerken okunabilen bütçe kaydedilir", a
 });
 
 test("KRİTİK TUTAR: bütçe OKUNAMAZSA alan HİÇ yazılmaz — akış da düşmez", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   // Bütçe sorgusuna karşılık YOK: sahte API boş satır kümesi döner (okunamadı).
   const canli: Array<[RegExp, any[]]> = [
     [/FROM ad_group\b/, [{ campaign: { id: 7, name: "Canlı", status: 2 }, ad_group: { status: 2 } }]],
@@ -578,7 +578,7 @@ test("KRİTİK TUTAR: NEGATİF bütçe kayda negatif diye giremez — bilinmeyen
    * Kural bu dosyanın her yerindekiyle aynı: anlamsız değer bilinmeyendir ve
    * bilinmeyen alan HİÇ yazılmaz.
    */
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const canli: Array<[RegExp, any[]]> = [
     [/FROM ad_group\b/, [{ campaign: { id: 7, name: "Canlı", status: 2 }, ad_group: { status: 2 } }]],
     [/campaign_budget\.amount_micros/, [{ campaign_budget: { amount_micros: -50_000_000 } }]],
@@ -612,7 +612,7 @@ test("KRİTİK TUTAR: kayıt katmanı negatifi TEK BAŞINA reddeder", () => {
    * Bu yüzden kayıt katmanı burada DOĞRUDAN sınanıyor. Fazlalık bilinçli — biri
    * kaldırılırsa sistem hâlâ doğru davranır, ama artık hangisinin kaldırıldığı görülür.
    */
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const eskiError = console.error;
   const uyarilar: string[] = [];
   console.error = (...a: unknown[]) => void uyarilar.push(a.map(String).join(" "));
@@ -635,7 +635,7 @@ test("KRİTİK TUTAR: kayıt katmanı negatifi TEK BAŞINA reddeder", () => {
 });
 
 test("TUTAR: geçersiz sayı (NaN) kayda giremez — sessizce de yutulmaz", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const eskiError = console.error;
   const uyarilar: string[] = [];
   console.error = (...a: unknown[]) => void uyarilar.push(a.map(String).join(" "));
@@ -668,7 +668,7 @@ test("TUTAR: geçersiz sayı (NaN) kayda giremez — sessizce de yutulmaz", () =
  * ─────────────────────────────────────────────────────────────────────────────── */
 
 test("KRİTİK kademeli: yükseltilerek geçen harcama 'gecti' DEĞİL 'kademeli' kaydedilir", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   /**
    * Düzenek: 1. halka GERÇEK kanaldan temiz döner (kefil olabilecek tek halka),
    * 3. halka simülasyonda "anormal" verir (yükseltilebilir bozuk sinyal) ve kademe
@@ -715,7 +715,7 @@ test("KRİTİK kademeli: yükseltilerek geçen harcama 'gecti' DEĞİL 'kademeli
 });
 
 test("kademeli DEĞİLKEN kefil alanı HİÇ yazılmaz (yükseltme olmadı ≠ kefili kaydedilmedi)", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   kararYaz(
     agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", {
       kanit: [],
@@ -739,7 +739,7 @@ test("KRİTİK: iki bozuk sinyalli ret, tek sinyalli retten AYIRT EDİLEBİLİR 
    * saptanmış bir SIM değişimi, hiç sorun çıkmamış temiz bir sorgu gibi okunuyordu ve
    * "sim-degisti" diye sayan denetçi olayı hiç göremiyordu.
    */
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const ayar = {
     approverPhone: "+905551112233",
     simSwapWindowHours: 72,
@@ -782,7 +782,7 @@ test("KRİTİK pencere: 5. halkanın penceresi KENDİ alanıyla JSONL'e düşer"
    * (aşağıdaki düzenek) bu, satırdaki TEK penceredir; düşerse "hangi soru hangi
    * pencereyle soruldu" bilgisi tamamen kaybolur.
    */
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   kararYaz(
     agKararKaydiOlustur("Kampanya YAYINA ALINACAK.", "high", {
       kanit: [],
@@ -805,7 +805,7 @@ test("KRİTİK: kayıttaki DOLU her alan JSONL satırında da bulunur (elle list
    * yoktu. ALANLAR listesi yalnız FAZLA alanı yakalıyordu; bu test EKSİK yönünü kapar:
    * bütün alanları dolduran TEK bir kayıt kurulur ve her biri satırda aranır.
    */
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const kayit = agKararKaydiOlustur(
     "Kampanya YAYINA ALINACAK.",
     "high",
@@ -859,7 +859,7 @@ test("KRİTİK: kayıttaki DOLU her alan JSONL satırında da bulunur (elle list
 /* ── sır sızıntısı ────────────────────────────────────────────────────────────── */
 
 test("KRİTİK: kayıtta tam numara / token / 'Bearer' benzeri sır kalıbı YOK", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
 
   // Aynı dosyaya birden çok karar: ret, geçiş ve yapılandırma hatası bir arada taransın.
   for (const durum of ["degisti", "temiz"] as const) {
@@ -958,7 +958,7 @@ test("KRİTİK: zincirin HER halkası kayda geçer — hiçbiri sessizce düşü
   }
 
   // Diske düşen satırda da bulunmalı: kayıt nesnesi doğru olup JSON'a girmemesi de aynı hata.
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   kararYaz(kayit as never);
   const yazilan = satirlar()[0] as Record<string, unknown>;
   for (const { kayit: kayitAlani } of HALKA_ALANLARI) {
@@ -967,7 +967,7 @@ test("KRİTİK: zincirin HER halkası kayda geçer — hiçbiri sessizce düşü
 });
 
 test("KRİTİK: iz maskesiz numara taşısa bile günlük onu YAZMAZ (son savunma hattı)", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const eskiError = console.error;
   const uyarilar: string[] = [];
   console.error = (...a: unknown[]) => void uyarilar.push(a.map(String).join(" "));
@@ -992,7 +992,7 @@ test("KRİTİK: iz maskesiz numara taşısa bile günlük onu YAZMAZ (son savunm
 
 test("KRİTİK: yazılamayan yol akışı DÜŞÜRMEZ — işlem yine gerçekleşir, stderr uyarır", async () => {
   // Var olmayan bir dizinin altı: appendFileSync ENOENT ile patlar.
-  process.env.ADSPILOT_DECISION_LOG = path.join(kok, "olmayan-dizin", "alt", "kararlar.jsonl");
+  process.env.AEGIS_DECISION_LOG = path.join(kok, "olmayan-dizin", "alt", "kararlar.jsonl");
 
   const uyarilar: string[] = [];
   const eskiError = console.error;
@@ -1017,7 +1017,7 @@ test("KRİTİK: yazılamayan yol akışı DÜŞÜRMEZ — işlem yine gerçekle�
 });
 
 test("bozuk yol RET akışını da düşürmez — ret ajana ulaşır, yazma yok", async () => {
-  process.env.ADSPILOT_DECISION_LOG = path.join(kok, "olmayan-dizin", "kararlar.jsonl");
+  process.env.AEGIS_DECISION_LOG = path.join(kok, "olmayan-dizin", "kararlar.jsonl");
   const eskiError = console.error;
   console.error = () => {};
   try {
@@ -1039,7 +1039,7 @@ test("bozuk yol RET akışını da düşürmez — ret ajana ulaşır, yazma yok
 /* ── kapsam ───────────────────────────────────────────────────────────────────── */
 
 test("risk ETİKETSİZ işlem hiç kaydedilmez (günlük ağ kapısının izidir)", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   const paused: Array<[RegExp, any[]]> = [
     [/FROM ad_group\b/, [{ campaign: { id: 1, name: "Taslak", status: 3 /* PAUSED */ } }]],
   ];
@@ -1060,7 +1060,7 @@ test("risk ETİKETSİZ işlem hiç kaydedilmez (günlük ağ kapısının izidir
 });
 
 test("agAyar onay kapısına ulaşmazsa: RET kaydı 'calismadi' kanalla ve hesabıyla düşer", async () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   // Gerçek onay kapısı üzerinden: risk etiketi var, agAyar yok (sunucu tarafı hata).
   const sonuc = await onayAl(
     { server: { getClientCapabilities: () => ({}) } } as any,
@@ -1077,7 +1077,7 @@ test("agAyar onay kapısına ulaşmazsa: RET kaydı 'calismadi' kanalla ve hesab
 });
 
 test("uzun kampanya adı kaydı şişirmez (eylem kısaltılır) ve satır tek satır kalır", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   kararYaz(
     agKararKaydiOlustur(`"${"A".repeat(400)}"\nkampanyası YAYINA ALINACAK.`, "high", {
       kanit: ["Ağ doğrulaması: SIM değişimi yok (son 72 saat, +905*******33) — GSMA Open Gateway"],
@@ -1113,7 +1113,7 @@ function ornekKayit() {
 }
 
 test("tavana ulaşan günlük DEVREDİLİR: eski dosya .1 olur, yeni dosya taze başlar", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   // Tavanı aşan bir dosya kur; içeriği ayırt edilebilir olsun ki devredildiği ölçülebilsin.
   writeFileSync(gunluk, "ESKI-KUSAK\n" + "x".repeat(AZAMI_BAYT), "utf8");
 
@@ -1129,7 +1129,7 @@ test("tavana ulaşan günlük DEVREDİLİR: eski dosya .1 olur, yeni dosya taze 
 });
 
 test("tavanın ALTINDAKİ günlük devredilmez (gereksiz kuşak üretilmez)", () => {
-  process.env.ADSPILOT_DECISION_LOG = gunluk;
+  process.env.AEGIS_DECISION_LOG = gunluk;
   writeFileSync(gunluk, "KUCUK\n", "utf8");
 
   kararYaz(ornekKayit());
@@ -1139,7 +1139,7 @@ test("tavanın ALTINDAKİ günlük devredilmez (gereksiz kuşak üretilmez)", ()
 });
 
 test("devretme günlük KAPALIYKEN hiç çalışmaz (dosya oluşturmaz)", () => {
-  delete process.env.ADSPILOT_DECISION_LOG;
+  delete process.env.AEGIS_DECISION_LOG;
   kararYaz(ornekKayit());
   assert.equal(existsSync(gunluk), false);
   assert.equal(existsSync(`${gunluk}.1`), false);

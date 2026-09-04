@@ -15,7 +15,7 @@
  * Yeşil çıktı, karar mantığının VE telin birlikte çalıştığının kanıtıdır — birim testler
  * sahte kanal enjekte ettiği için tek başına o kanıtı veremez.
  *
- * GEREKSİNİM: Nokia NaC Simulator katmanı ve .env içinde ADSPILOT_NAC_TOKEN. Kullanılan
+ * GEREKSİNİM: Nokia NaC Simulator katmanı ve .env içinde AEGIS_NAC_TOKEN. Kullanılan
  * numaralar simülatörün tanımlı hatlarıdır (…1001 temiz, …0404 HTTP 404 döndürür).
  */
 import path from "node:path";
@@ -25,11 +25,11 @@ import { config } from "dotenv";
 const kok = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 config({ path: path.join(kok, ".env"), quiet: true });
 
-if (!process.env.ADSPILOT_NAC_TOKEN?.trim()) {
+if (!process.env.AEGIS_NAC_TOKEN?.trim()) {
   console.error(
     [
       "",
-      "  ADSPILOT_NAC_TOKEN tanımlı değil.",
+      "  AEGIS_NAC_TOKEN tanımlı değil.",
       "  Bu betik canlı Network-as-Code çağrıları yapar; token olmadan doğrulayacak bir şey yok.",
       "  Simülatör katmanı ücretsiz: https://developer.networkascode.nokia.io",
       "",
@@ -55,20 +55,20 @@ function env(v: Record<string, string | undefined>) {
 }
 
 const TEMEL = {
-  ADSPILOT_APPROVER_PHONE: "+99999991001",
-  ADSPILOT_REACH_CHECK: "1",
-  ADSPILOT_EXPECTED_COUNTRY: undefined,
-  ADSPILOT_DEVICESWAP_CHECK: undefined,
-  ADSPILOT_CALLFWD_CHECK: undefined,
-  ADSPILOT_CALLFWD_SIMULATE: undefined,
-  ADSPILOT_NAC_SIMULATE: undefined,
-  ADSPILOT_NV_SIMULATE: undefined,
-  ADSPILOT_STEPUP: "0",
+  AEGIS_APPROVER_PHONE: "+99999991001",
+  AEGIS_REACH_CHECK: "1",
+  AEGIS_EXPECTED_COUNTRY: undefined,
+  AEGIS_DEVICESWAP_CHECK: undefined,
+  AEGIS_CALLFWD_CHECK: undefined,
+  AEGIS_CALLFWD_SIMULATE: undefined,
+  AEGIS_NAC_SIMULATE: undefined,
+  AEGIS_NV_SIMULATE: undefined,
+  AEGIS_STEPUP: "0",
 };
 
 console.log("\n╔══ Q1 — Device Status canlı mı (halka 3 ve 4) ══════════════════════════════╗");
 {
-  env({ ...TEMEL, ADSPILOT_EXPECTED_COUNTRY: "HU" }); // simülatör hattı HU'da: beklenen = HU
+  env({ ...TEMEL, AEGIS_EXPECTED_COUNTRY: "HU" }); // simülatör hattı HU'da: beklenen = HU
   const k = await agDogrula(nacConfigFromEnv() as any, "high");
   const iz = k.iz as any;
   kayit(
@@ -90,7 +90,7 @@ console.log("\n╔══ Q1 — Device Status canlı mı (halka 3 ve 4) ══�
 
 console.log("\n╔══ Q1b — beklenen ülke yanlışsa GERÇEK ret üretiyor mu ═════════════════════╗");
 {
-  env({ ...TEMEL, ADSPILOT_EXPECTED_COUNTRY: "TR" });
+  env({ ...TEMEL, AEGIS_EXPECTED_COUNTRY: "TR" });
   const k = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(
     "hat TR dışındayken canlı RET",
@@ -137,7 +137,7 @@ console.log("\n╔══ Q3a — geriye bakış pencereleri (24s / 72s) ══�
 console.log("\n╔══ Q3b — 200 DIŞINDAKİ yanıt sonuçsuz sayılıyor mu (Aleksi: 404) ═══════════╗");
 {
   // Simülatörün 404 döndüren numarası; Aleksi 404 IDENTIFIER_NOT_FOUND/TARGET_NOT_FOUND dedi.
-  env({ ...TEMEL, ADSPILOT_APPROVER_PHONE: "+99999990404" });
+  env({ ...TEMEL, AEGIS_APPROVER_PHONE: "+99999990404" });
   const k = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(
     "404 dönen numara için kapı REDDEDİYOR (kapalı arıza)",
@@ -158,7 +158,7 @@ console.log("\n╔══ Q3b — 200 DIŞINDAKİ yanıt sonuçsuz sayılıyor mu
 
 console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══════════════════════════════╗");
 {
-  env({ ...TEMEL, ADSPILOT_EXPECTED_COUNTRY: "TR", ADSPILOT_STEPUP: "1" });
+  env({ ...TEMEL, AEGIS_EXPECTED_COUNTRY: "TR", AEGIS_STEPUP: "1" });
   const k = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(
     "yükseltilebilir sinyal RET yerine YÜKSELTME üretiyor",
@@ -189,7 +189,7 @@ console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══�
   );
 
   // GÜVENLİK SINIRI: çağrı yönlendirme açıkken yükseltme YASAK
-  env({ ...TEMEL, ADSPILOT_STEPUP: "1", ADSPILOT_CALLFWD_SIMULATE: "acik" });
+  env({ ...TEMEL, AEGIS_STEPUP: "1", AEGIS_CALLFWD_SIMULATE: "acik" });
   const y = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(
     "çağrı yönlendirme AÇIKKEN yükseltme YAPILMIYOR",
@@ -198,7 +198,7 @@ console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══�
   );
 
   // 404 + kademe açık: doğrulayan yok, yine ret
-  env({ ...TEMEL, ADSPILOT_APPROVER_PHONE: "+99999990404", ADSPILOT_STEPUP: "1" });
+  env({ ...TEMEL, AEGIS_APPROVER_PHONE: "+99999990404", AEGIS_STEPUP: "1" });
   const z = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(
     "sinyal okunamıyorsa kademe de kurtarmıyor (doğrulayan yok)",
@@ -209,7 +209,7 @@ console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══�
 
 console.log("\n╔══ Q4 — risk-orantılı halka eşlemesi ══════════════════════════════════════╗");
 {
-  env({ ...TEMEL, ADSPILOT_EXPECTED_COUNTRY: "HU", ADSPILOT_DEVICESWAP_CHECK: "1", ADSPILOT_CALLFWD_CHECK: "1" });
+  env({ ...TEMEL, AEGIS_EXPECTED_COUNTRY: "HU", AEGIS_DEVICESWAP_CHECK: "1", AEGIS_CALLFWD_CHECK: "1" });
   const kosdu = (v: unknown) => v !== undefined && v !== "kapali" && v !== "calismadi";
   const kosanlar = (iz: any) =>
     ["simSwap", "nv", "reach", "loc", "devSwap", "callFwd"].filter((k) => kosdu(iz[k]));

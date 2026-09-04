@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
 /*
- * AdsPilot — Google Ads MCP server
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
+ * Aegis — Google Ads MCP server
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the Aegis contributors
  *
  * This program is free software: you may redistribute it and/or modify it under the
  * terms of the GNU Affero General Public License version 3 as published by the Free
@@ -14,8 +14,8 @@
  * (ANTHROPIC_API_KEY gerektirmeden) oynatır. Sunucu dist/index.js'ten stdio ile
  * başlatılır; bu betik elicitation form yeteneği ilan eden bir MCP istemcisidir.
  *
- *   Perde 1 (ADSPILOT_NAC_SIMULATE=temiz)  : ağ temiz → onay istemi → BAŞARI
- *   Perde 2 (ADSPILOT_NAC_SIMULATE=degisti): SIM değişmiş sayılır → SERT RET,
+ *   Perde 1 (AEGIS_NAC_SIMULATE=temiz)  : ağ temiz → onay istemi → BAŞARI
+ *   Perde 2 (AEGIS_NAC_SIMULATE=degisti): SIM değişmiş sayılır → SERT RET,
  *                                            onay istemi HİÇ gösterilmez
  *   Perde 3 (temiz + degisti, iki alt sahne): AYNI kapının HIGH katmanı —
  *                                            set_campaign_status → ENABLED (go-live),
@@ -36,7 +36,7 @@
  * reddeder. Beklenen ret gelmezse (ya da istem bir kez bile gösterilirse) demo HATA ile
  * biter; bu perdelerin elicitation handler'ı her ihtimale karşı DAİMA reddeder (fail-closed).
  *
- * ADSPILOT_NV_SIMULATE tanımlıysa (değerini bu betik BELİRLEMEZ, yalnız sunucu süreçlerine
+ * AEGIS_NV_SIMULATE tanımlıysa (değerini bu betik BELİRLEMEZ, yalnız sunucu süreçlerine
  * olduğu gibi geçirir) Perde 3'te zincirin 2. halkasının kanıt satırı da vurgulanır.
  *
  * Kullanım:
@@ -78,18 +78,18 @@ const KENDINI_SINA = process.argv.includes("--kendini-sina");
  * satırını doğrulamak için hesaplanır; kararı her zaman sunucu verir.
  */
 function yuksekPencereSaat() {
-  const ham = Number(process.env.ADSPILOT_SIMSWAP_WINDOW_HOURS);
+  const ham = Number(process.env.AEGIS_SIMSWAP_WINDOW_HOURS);
   if (!Number.isFinite(ham) || ham < 1) return 72;
   return Math.min(2400, Math.round(ham));
 }
 const PENCERE_YUKSEK = yuksekPencereSaat();
 
 /**
- * Zincirin 2. halkası (ADSPILOT_NV_SIMULATE). Değerini BU BETİK BELİRLEMEZ: yalnız
+ * Zincirin 2. halkası (AEGIS_NV_SIMULATE). Değerini BU BETİK BELİRLEMEZ: yalnız
  * tanımlı mı diye bakar ve sunucu süreçlerine mevcut değeriyle geçirir (bkz. sunucuBaslat,
- * ADSPILOT_ önekli tüm değişkenler aynen iletilir).
+ * AEGIS_ önekli tüm değişkenler aynen iletilir).
  */
-const ZINCIR_2 = Boolean(process.env.ADSPILOT_NV_SIMULATE?.trim());
+const ZINCIR_2 = Boolean(process.env.AEGIS_NV_SIMULATE?.trim());
 
 /**
  * Onay isteyen araç çağrıları için İSTEMCİ tarafı zaman aşımı. MCP SDK varsayılanı 60
@@ -166,15 +166,15 @@ const ilkMetin = (res) => String(res?.content?.[0]?.text ?? "");
  * dist/index.js'i stdio ile başlatır ve elicitation FORM yeteneği ilan eden bir
  * istemciyle bağlanır. Simülasyon kanalı + demo onaylayıcı numarası SPAWN ENV'iyle
  * geçirilir; Google kimlik bilgileri sunucunun kendi .env yüklemesinden gelir
- * (GOOGLE_ADS_ ve ADSPILOT_ önekli kabuk değişkenleri de aynen iletilir).
+ * (GOOGLE_ADS_ ve AEGIS_ önekli kabuk değişkenleri de aynen iletilir).
  */
 async function sunucuBaslat(simDegeri, elicitHandler) {
   const env = getDefaultEnvironment();
   for (const [k, v] of Object.entries(process.env)) {
-    if ((k.startsWith("GOOGLE_ADS_") || k.startsWith("ADSPILOT_")) && v !== undefined) env[k] = v;
+    if ((k.startsWith("GOOGLE_ADS_") || k.startsWith("AEGIS_")) && v !== undefined) env[k] = v;
   }
-  env.ADSPILOT_NAC_SIMULATE = simDegeri;
-  env.ADSPILOT_APPROVER_PHONE = DEMO_TELEFON;
+  env.AEGIS_NAC_SIMULATE = simDegeri;
+  env.AEGIS_APPROVER_PHONE = DEMO_TELEFON;
 
   /**
    * GERÇEK TOKEN BİLEREK BOŞALTILIR.
@@ -182,7 +182,7 @@ async function sunucuBaslat(simDegeri, elicitHandler) {
    * Sunucu, token ile simülasyon değişkeninin BİRLİKTE tanımlı olmasını çelişkili
    * yapılandırma sayar ve harcamayı reddeder (belirsizlikte gevşek kanal seçilmez).
    * O kural doğrudur ve kalmalıdır — ama sahne demosunu da kırar: .env'de gerçek bir
-   * ADSPILOT_NAC_TOKEN bulunduğu an, yukarıdaki döngü onu spawn ortamına kopyalar ve
+   * AEGIS_NAC_TOKEN bulunduğu an, yukarıdaki döngü onu spawn ortamına kopyalar ve
    * her perde "çelişkili yapılandırma" retiyle biter. Bu yaşandı: token geldiği gün
    * demo, kodda hiçbir şey değişmeden çalışmaz oldu.
    *
@@ -193,10 +193,10 @@ async function sunucuBaslat(simDegeri, elicitHandler) {
    * Demo bir SİMÜLASYON gösterisidir; gerçek CAMARA sorgusu için demo değil,
    * `docs/CAMARA.md` §3 kontrol listesi izlenir.
    */
-  env.ADSPILOT_NAC_TOKEN = "";
+  env.AEGIS_NAC_TOKEN = "";
 
   const client = new Client(
-    { name: "adspilot-demo-senaryo", version: "1.0.0" },
+    { name: "aegis-demo-senaryo", version: "1.0.0" },
     { capabilities: { elicitation: { form: {} } } } // form yeteneği açıkça İLAN edilir
   );
   client.setRequestHandler(ElicitRequestSchema, elicitHandler);
@@ -259,7 +259,7 @@ async function kampanyaOku(client, kampanyaId) {
 /** Hesabın günlük bütçe tavanını SALT-OKUNUR limits kaynağından okur (okunamazsa undefined). */
 async function tavanOku(client) {
   try {
-    const res = await client.readResource({ uri: `adspilot://accounts/${MUSTERI}/limits` });
+    const res = await client.readResource({ uri: `aegis://accounts/${MUSTERI}/limits` });
     const tavan = Number(JSON.parse(String(res?.contents?.[0]?.text ?? "{}"))?.gunlukButceTavani);
     return Number.isFinite(tavan) ? tavan : undefined;
   } catch {
@@ -451,15 +451,15 @@ if (KENDINI_SINA) {
 
 try {
   kutu(
-    "AEGIS DEMO — Ağ Doğrulamalı Onay (AdsPilot MCP, LLM'siz)",
+    "AEGIS DEMO — Ağ Doğrulamalı Onay (Aegis MCP, LLM'siz)",
     [
       "Gerçek sunucu, gerçek MCP protokolü, gerçek Google Ads okuması.",
       `Mod: ${CANLI ? "CANLI (yazma araçları GERÇEKTEN çağrılır)" : "KURU (gerçek yazma yok; --canli ile açılır)"}`,
       `Müşteri: ${MUSTERI}   Onaylayıcı (demo): ${DEMO_TELEFON} — spawn env ile geçirildi`,
-      "SIM Swap kanalı: SİMÜLASYON (ADSPILOT_NAC_SIMULATE) — gerçek ağ sorgusu yapılmaz.",
+      "SIM Swap kanalı: SİMÜLASYON (AEGIS_NAC_SIMULATE) — gerçek ağ sorgusu yapılmaz.",
       `Perde 1: ${EYLEM_BUTCE} · Perde 2: aynı istek, SIM değişmiş · Perde 3: ${EYLEM_YAYIN}`,
       ...(ZINCIR_2
-        ? ["Zincirin 2. halkası etkin (ADSPILOT_NV_SIMULATE tanımlı) — kanıt satırı Perde 3'te vurgulanır."]
+        ? ["Zincirin 2. halkası etkin (AEGIS_NV_SIMULATE tanımlı) — kanıt satırı Perde 3'te vurgulanır."]
         : []),
     ],
     kalin
@@ -467,7 +467,7 @@ try {
   await bekle(900);
 
   /* ── PERDE 1: ağ temiz ─────────────────────────────────────────────────────── */
-  await perdeBasligi(1, `ADSPILOT_NAC_SIMULATE=temiz — ağ temiz: onay akışı normal işler`);
+  await perdeBasligi(1, `AEGIS_NAC_SIMULATE=temiz — ağ temiz: onay akışı normal işler`);
 
   let perde1IstemSayisi = 0;
   let perde1KanitVar = false;
@@ -570,7 +570,7 @@ try {
   await bekle(900);
 
   /* ── PERDE 2: SIM değişmiş ─────────────────────────────────────────────────── */
-  await perdeBasligi(2, `ADSPILOT_NAC_SIMULATE=degisti — İKİNCİ sunucu süreci: SIM değişmiş sayılır`);
+  await perdeBasligi(2, `AEGIS_NAC_SIMULATE=degisti — İKİNCİ sunucu süreci: SIM değişmiş sayılır`);
 
   let perde2IstemSayisi = 0;
   istemci = await sunucuBaslat("degisti", async () => {
@@ -622,7 +622,7 @@ try {
   yaz(soluk("İki alt sahne: 3/A ağ temiz (onay akışı işler) · 3/B SIM değişmiş (sert ret)."));
 
   /* ── PERDE 3/A: ağ temiz ───────────────────────────────────────────────────── */
-  yaz("\n" + kalin(`── PERDE 3/A ── ADSPILOT_NAC_SIMULATE=temiz — yayına alma denenir`));
+  yaz("\n" + kalin(`── PERDE 3/A ── AEGIS_NAC_SIMULATE=temiz — yayına alma denenir`));
 
   let perde3aIstemSayisi = 0;
   let perde3KanitVar = false;
@@ -643,7 +643,7 @@ try {
       yaz(ikinciHalkaMi(k) ? cyan(`  zincir 2 ▶ ${k}`) : soluk(`  zincir 1 ▶ ${k}`));
     }
     if (ZINCIR_2 && !kanitlar.some(ikinciHalkaMi)) {
-      yaz(sari("ADSPILOT_NV_SIMULATE tanımlı ama istemde 2. halkanın kanıt satırı YOK — vurgulanacak kanıt üretilmedi."));
+      yaz(sari("AEGIS_NV_SIMULATE tanımlı ama istemde 2. halkanın kanıt satırı YOK — vurgulanacak kanıt üretilmedi."));
     }
 
     if (!CANLI) {
@@ -730,7 +730,7 @@ try {
           "      Aşağıdaki TAHMİNDİR — onay istemi ve kanıt satırları yalnız --canli provasında gerçekten görünür:\n" +
             `      "Ağ doğrulaması [SİMÜLASYON]: SIM değişimi yok (son ${PENCERE_YUKSEK} saat, ...)" — HIGH katman penceresi\n` +
             (ZINCIR_2
-              ? '      "Numara doğrulaması [SİMÜLASYON]: ... cihazından geliyor SAYILDI" — zincirin 2. halkası (ADSPILOT_NV_SIMULATE tanımlı)\n'
+              ? '      "Numara doğrulaması [SİMÜLASYON]: ... cihazından geliyor SAYILDI" — zincirin 2. halkası (AEGIS_NV_SIMULATE tanımlı)\n'
               : "") +
             "      kararı klavyeden operatör verir; sahne biter bitmez kampanya PAUSED'a alınır ve durum GERİ OKUNUR."
         )
@@ -874,7 +874,7 @@ try {
         yazma: "yok (perde koşmadı)",
       });
     } else {
-      yaz("\n" + kalin("── PERDE 3/B ── ADSPILOT_NAC_SIMULATE=degisti — AYNI yayına alma isteği"));
+      yaz("\n" + kalin("── PERDE 3/B ── AEGIS_NAC_SIMULATE=degisti — AYNI yayına alma isteği"));
       let perde3bIstemSayisi = 0;
       istemci = await sunucuBaslat("degisti", async () => {
         perde3bIstemSayisi++;
@@ -960,7 +960,7 @@ try {
   yaz(kalin("\nAynı ajan, aynı istek, aynı sunucu kodu — tek fark ağın verdiği cevap."));
   yaz(`Katman farkı: bütçe artışı 24 saatlik pencereden, yayına alma ${PENCERE_YUKSEK} saatlik pencereden geçer.`);
   yaz("Fail-closed: ağ 'değişti' ya da 'yanıtsız' olduğunda harcama artışı uygulanmaz, istem insana gösterilmez.");
-  yaz(soluk("Not: tüm ağ metinleri SİMÜLASYON etiketlidir; gerçek CAMARA sorgusu için ADSPILOT_NAC_TOKEN kullanılır.\n"));
+  yaz(soluk("Not: tüm ağ metinleri SİMÜLASYON etiketlidir; gerçek CAMARA sorgusu için AEGIS_NAC_TOKEN kullanılır.\n"));
 } catch (e) {
   console.error(kirmizi(`\nDEMO HATASI: ${e?.message ?? e}`));
   cikisKodu = 1;

@@ -1,6 +1,6 @@
 # Güvenlik Politikası
 
-AdsPilot, kullanıcıların Google Ads hesaplarına yazma erişimi olan ve **gerçek
+Aegis, kullanıcıların Google Ads hesaplarına yazma erişimi olan ve **gerçek
 para harcatabilen** bir MCP sunucusudur. Güvenlik bildirimlerini ciddiye alıyoruz.
 
 ## Açık bildirimi

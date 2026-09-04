@@ -7,11 +7,11 @@
  * where the API rejects the write outright and asks for a retry.
  */
 import { GoogleAdsApi, Customer } from "google-ads-api";
-import { loadConfig, AdsPilotConfig } from "./config.js";
+import { loadConfig, AegisConfig } from "./config.js";
 import { normalizeCustomerId, withRetry, isConcurrentModificationError, normalizeGaql } from "./util.js";
 
 export { normalizeCustomerId, formatAdsError } from "./util.js";
-export type { AdsPilotConfig } from "./config.js";
+export type { AegisConfig } from "./config.js";
 
 /**
  * Tek hesap kaydı. `erisilemedi` ⇒ hesabın detayları okunamadı: yönetici olup olmadığı
@@ -53,7 +53,7 @@ export interface HesapSonucu {
 export class AdsContext {
   private api: GoogleAdsApi;
 
-  constructor(public readonly config: AdsPilotConfig) {
+  constructor(public readonly config: AegisConfig) {
     this.api = new GoogleAdsApi({
       client_id: config.clientId,
       client_secret: config.clientSecret,

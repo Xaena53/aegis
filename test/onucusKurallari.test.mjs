@@ -33,7 +33,7 @@ function dosyaYaz(yol, icerik, saniyeOnce) {
 }
 
 function sahteProje({ distVar = true, kaynakYeni = false, kaynakVar = true } = {}) {
-  const kok = mkdtempSync(join(tmpdir(), "adspilot-onucus-"));
+  const kok = mkdtempSync(join(tmpdir(), "aegis-onucus-"));
   mkdirSync(join(kok, "src"));
   mkdirSync(join(kok, "dist"));
   if (kaynakVar) dosyaYaz(join(kok, "src", "a.ts"), "export const a = 1;\n", kaynakYeni ? 10 : 1000);
@@ -151,9 +151,9 @@ test("prova bayat dist'te 1 ile çıkar ve ikiliyi HİÇ açmaz", async () => {
           ...process.env,
           PATH: "",
           Path: "",
-          ADSPILOT_NAC_SIMULATE: "temiz",
-          ADSPILOT_NAC_TOKEN: "",
-          ADSPILOT_APPROVER_PHONE: "",
+          AEGIS_NAC_SIMULATE: "temiz",
+          AEGIS_NAC_TOKEN: "",
+          AEGIS_APPROVER_PHONE: "",
         },
       });
       let cikti = "";

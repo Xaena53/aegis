@@ -14,7 +14,7 @@
  *   - Rapor "KURU MOD — HİÇBİR YAZMA YAPILMADI" damgası taşır.
  *
  * --uygula MODU (istemci-tarafı ikinci kemer):
- *   - adspilot://accounts/{id}/limits kaynağı okunur, efektif tavan =
+ *   - aegis://accounts/{id}/limits kaynağı okunur, efektif tavan =
  *     min(CLI tavanı, sunucu tavanı) olarak TEKLEŞTİRİLİR ve planDogrula'ya bu değer gider.
  *   - İlk yazmadan önce planın tam özeti terminalde gösterilir ve Türkçe onay istenir:
  *     'Evet' yazılmadıkça hiçbir yazma çağrısı yapılmaz.
@@ -271,11 +271,11 @@ function yayinSonucuYazdir(yayinSonucu) {
  */
 async function efektifTavanBelirle(mcp, musteri, cliTavan) {
   try {
-    const metin = await mcp.kaynakOku(`adspilot://accounts/${musteri.replace(/\D/g, "")}/limits`);
+    const metin = await mcp.kaynakOku(`aegis://accounts/${musteri.replace(/\D/g, "")}/limits`);
     const limits = JSON.parse(metin);
     if (limits?.yazmaIzni === false) {
       throw new Error(
-        "Sunucuda yazma araçları kapalı (ADSPILOT_WRITE_ENABLED) — --uygula çalıştırılamaz. " +
+        "Sunucuda yazma araçları kapalı (AEGIS_WRITE_ENABLED) — --uygula çalıştırılamaz. " +
           "Kuru modda rapor üretebilirsin."
       );
     }
@@ -369,7 +369,7 @@ async function ana() {
   const kuruMod = !girdi.uygula;
 
   /**
-   * Sağlayıcı `ADSPILOT_BRAIN_PROVIDER` ile seçilir (varsayılan: gemini). Anahtar yoksa
+   * Sağlayıcı `AEGIS_BRAIN_PROVIDER` ile seçilir (varsayılan: gemini). Anahtar yoksa
    * buradaki Türkçe hata üst katmanda aynen gösterilir ve hangi anahtarın gerektiğini
    * söyler.
    */
@@ -382,7 +382,7 @@ async function ana() {
     let efektifTavan = girdi.butce;
     let tavanKaynagi = "CLI --butce tavanı (kuru mod — sunucu tavanı okunmadı)";
     if (!kuruMod) {
-      console.log("AdsPilot MCP sunucusuna bağlanılıyor…");
+      console.log("Aegis MCP sunucusuna bağlanılıyor…");
       mcp = await mcpBaglan();
       const sonuc = await efektifTavanBelirle(mcp, girdi.musteri, girdi.butce);
       efektifTavan = sonuc.tavan;
@@ -417,8 +417,8 @@ async function ana() {
     console.log(`Kanal dağıtımı: ${dagitimOzeti(dagitim)}`);
     if (kanallar.length === 1) {
       console.log(
-        `  (yalnız '${kanallar[0]}' yapılandırılmış — Meta için ADSPILOT_META_TOKEN ve ` +
-          `ADSPILOT_META_AD_ACCOUNT_ID tanımlanmalı)`
+        `  (yalnız '${kanallar[0]}' yapılandırılmış — Meta için AEGIS_META_TOKEN ve ` +
+          `AEGIS_META_AD_ACCOUNT_ID tanımlanmalı)`
       );
     }
 

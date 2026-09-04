@@ -25,17 +25,17 @@ import {
 test("kullanilabilirKanallar: Google her zaman var, Meta yalnız TAM yapılandırmayla", () => {
   assert.deepEqual(kullanilabilirKanallar({}), ["google"]);
   assert.deepEqual(
-    kullanilabilirKanallar({ ADSPILOT_META_TOKEN: "t", ADSPILOT_META_AD_ACCOUNT_ID: "act_1" }),
+    kullanilabilirKanallar({ AEGIS_META_TOKEN: "t", AEGIS_META_AD_ACCOUNT_ID: "act_1" }),
     ["google", "meta"]
   );
 });
 
 test("kullanilabilirKanallar: Meta YARIM yapılandırmada sayılmaz (kapalı arıza)", () => {
   // Jeton var hesap yok: araç zaten kapalı arızaya gider, ona pay ayırmak boş vaat olur.
-  assert.deepEqual(kullanilabilirKanallar({ ADSPILOT_META_TOKEN: "t" }), ["google"]);
-  assert.deepEqual(kullanilabilirKanallar({ ADSPILOT_META_AD_ACCOUNT_ID: "act_1" }), ["google"]);
+  assert.deepEqual(kullanilabilirKanallar({ AEGIS_META_TOKEN: "t" }), ["google"]);
+  assert.deepEqual(kullanilabilirKanallar({ AEGIS_META_AD_ACCOUNT_ID: "act_1" }), ["google"]);
   assert.deepEqual(
-    kullanilabilirKanallar({ ADSPILOT_META_TOKEN: "  ", ADSPILOT_META_AD_ACCOUNT_ID: "act_1" }),
+    kullanilabilirKanallar({ AEGIS_META_TOKEN: "  ", AEGIS_META_AD_ACCOUNT_ID: "act_1" }),
     ["google"]
   );
 });

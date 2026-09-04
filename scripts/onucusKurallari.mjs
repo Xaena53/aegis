@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
 /*
- * AdsPilot — Google Ads MCP server
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
+ * Aegis — Google Ads MCP server
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the Aegis contributors
  *
  * This program is free software: you may redistribute it and/or modify it under the
  * terms of the GNU Affero General Public License version 3 as published by the Free

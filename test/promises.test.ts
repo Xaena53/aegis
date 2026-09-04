@@ -165,7 +165,7 @@ test("promise: 'limits kaynağındaki her kural gerçekten uygulanıyor'", async
     queries: [[/FROM customer\b/, [{ customer: { id: 1466231519 } }]]],
   });
   const c = await baglanti(ctx);
-  const res: any = await c.readResource({ uri: "adspilot://accounts/1466231519/limits" });
+  const res: any = await c.readResource({ uri: "aegis://accounts/1466231519/limits" });
   const veri = JSON.parse(res.contents[0].text);
 
   // The values the resource reports come from the live context, not from defaults

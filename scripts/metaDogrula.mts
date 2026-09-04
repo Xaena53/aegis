@@ -25,8 +25,8 @@ config({ path: path.join(kok, ".env"), quiet: true });
 const yazmaModu = process.argv.includes("--write");
 
 const eksik: string[] = [];
-if (!process.env.ADSPILOT_META_TOKEN?.trim()) eksik.push("ADSPILOT_META_TOKEN");
-if (!process.env.ADSPILOT_META_AD_ACCOUNT_ID?.trim()) eksik.push("ADSPILOT_META_AD_ACCOUNT_ID");
+if (!process.env.AEGIS_META_TOKEN?.trim()) eksik.push("AEGIS_META_TOKEN");
+if (!process.env.AEGIS_META_AD_ACCOUNT_ID?.trim()) eksik.push("AEGIS_META_AD_ACCOUNT_ID");
 if (eksik.length) {
   console.error(
     [
@@ -50,14 +50,14 @@ const kayit = (ad: string, gecti: boolean, not: string) => {
 };
 
 const ayar = {
-  metaToken: process.env.ADSPILOT_META_TOKEN!.trim(),
-  metaAdAccountId: process.env.ADSPILOT_META_AD_ACCOUNT_ID!.trim(),
+  metaToken: process.env.AEGIS_META_TOKEN!.trim(),
+  metaAdAccountId: process.env.AEGIS_META_AD_ACCOUNT_ID!.trim(),
 };
 
 __setMetaKanalForTests(undefined); // gerçek kanal kullanılsın
 const kanal = metaKanali(ayar);
 
-console.log("\n  AdsPilot — Meta canlı doğrulaması");
+console.log("\n  Aegis — Meta canlı doğrulaması");
 console.log(`  Reklam hesabı: ${ayar.metaAdAccountId}${yazmaModu ? "  ·  YAZMA MODU AÇIK" : "  ·  salt okunur"}\n`);
 
 /* ── 1. Kimlik ve erişim ─────────────────────────────────────────────────────── */
@@ -86,7 +86,7 @@ console.log(`  Reklam hesabı: ${ayar.metaAdAccountId}${yazmaModu ? "  ·  YAZMA
 let olusanId: string | undefined;
 let olusanAd: string | undefined;
 if (yazmaModu) {
-  const ad = `AdsPilot-dogrulama-${new Date().toISOString().slice(0, 16).replace(/[:T-]/g, "")}`;
+  const ad = `Aegis-dogrulama-${new Date().toISOString().slice(0, 16).replace(/[:T-]/g, "")}`;
   try {
     const k = await kanal.kampanyaOlustur({ ad, hedef: "OUTCOME_TRAFFIC", gunlukButce: 100 });
     olusanId = k.id;
@@ -139,7 +139,7 @@ console.log(`  ${sonuclar.length - kaldi.length}/${sonuclar.length} doğrulama g
 if (olusanId) {
   console.log(
     `\n  TEMİZLİK: "${olusanAd}" (id ${olusanId}) hesabınızda DURAKLATILMIŞ duruyor.\n` +
-      `  AdsPilot silme aracı sunmuyor (silme geri alınamaz); Ads Manager'dan kaldırabilirsiniz.`
+      `  Aegis silme aracı sunmuyor (silme geri alınamaz); Ads Manager'dan kaldırabilirsiniz.`
   );
 }
 if (kaldi.length) {

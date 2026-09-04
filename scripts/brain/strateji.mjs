@@ -111,7 +111,7 @@ function dizeKontrol(alanAdi, deger, maksUzunluk, { urlYasak = false } = {}) {
 /* ────────────────────────────────────────────────────────────────────────── */
 
 const SISTEM_PROMPT = [
-  "Sen AdsPilot Growth Brain'in strateji katmanısın. Görevin: operatörün hedefi, günlük bütçe",
+  "Sen Aegis Growth Brain'in strateji katmanısın. Görevin: operatörün hedefi, günlük bütçe",
   "tavanı ve araştırma verisinden TEK bir Google Ads Arama kampanyası planı kurmak.",
   "",
   "GÜVENLİK KURALLARI (ihlal edilemez):",
@@ -234,7 +234,7 @@ export function planDogrula(plan, butceTavaniTL) {
   if (b > SUNUCU_VARSAYILAN_TAVAN) {
     console.error(
       `[strateji] Uyarı: günlük bütçe ${b}, sunucu varsayılan tavanı ${SUNUCU_VARSAYILAN_TAVAN} üzerinde — ` +
-        "ADSPILOT_MAX_DAILY_BUDGET yükseltilmediyse sunucu bu bütçeyi reddeder."
+        "AEGIS_MAX_DAILY_BUDGET yükseltilmediyse sunucu bu bütçeyi reddeder."
     );
   }
 

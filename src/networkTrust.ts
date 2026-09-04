@@ -13,7 +13,7 @@
  * prompt is never shown, because the person who would answer it may be the attacker.
  *
  * Fail-closed contract, same as every money gate in this codebase:
- *   - Feature unconfigured (no ADSPILOT_NAC_TOKEN): pass-through, evidence line says so.
+ *   - Feature unconfigured (no AEGIS_NAC_TOKEN): pass-through, evidence line says so.
  *   - Configured but incomplete (token without approver phone): refuse with a config error.
  *   - Network API unreachable or throws: refuse. If the trust anchor cannot answer,
  *     the spend does not happen.
@@ -56,7 +56,7 @@
  * CAMARA Device Status / Reachability uç noktası bunu sunucudan cevaplayabilir —
  * tek tanımlayıcı olarak telefon numarası yeter, cihaz-taraflı akış GEREKMEZ.
  * Bu yüzden NV'nin aksine burada gerçek SDK kanalı VARDIR; simülasyon kanalı
- * (ADSPILOT_REACH_SIMULATE) yalnızca token'sız demo içindir.
+ * (AEGIS_REACH_SIMULATE) yalnızca token'sız demo içindir.
  *
  * DÜRÜST TAKAS — bilerek yazıyoruz: erişilebilirlik MEŞRU olarak dalgalanır
  * (uçak modu, kapsama boşluğu, kapalı telefon). Kapalı arıza ilkesi gereği
@@ -64,7 +64,7 @@
  * bu kapıdaki karşılığı budur, çünkü stdio MCP sunucusunun ikinci bir doğrulama
  * kanalı yoktur ve belirsizlikte harcama YAPILMAZ. Yanlış-pozitif riski iki
  * biçimde sınırlanır: (1) halka YALNIZ "high" katmanda koşar, (2) gerçek kanal
- * OPT-IN'dir — ADSPILOT_REACH_CHECK açıkça açılmadıkça, NaC token'ı olsa bile
+ * OPT-IN'dir — AEGIS_REACH_CHECK açıkça açılmadıkça, NaC token'ı olsa bile
  * sorgu yapılmaz ve iz "kapali" yazar. Böylece SIM-Swap için token tanımlayan
  * bir operatör, hiç istemediği bir erişilebilirlik retiyle karşılaşmaz.
  *
@@ -74,7 +74,7 @@
  * Ölçüt "beklenen ülke ağın bildirdiği kümede VAR MI" değil, "hat YALNIZCA beklenen
  * ülkede mi görüldü"dür: {NL, TR} gibi ÇELİŞKİLİ bir küme, TR'yi içerse bile RET
  * üretir (gerekçe ve dürüst takas: konumKatmani içindeki karşılaştırma yorumu).
- * Beklenti UYDURULMAZ: ADSPILOT_EXPECTED_COUNTRY (ISO 3166-1 alpha-2) tanımlı
+ * Beklenti UYDURULMAZ: AEGIS_EXPECTED_COUNTRY (ISO 3166-1 alpha-2) tanımlı
  * değilse halka hiç koşmaz ve izine "kapali" yazar. "Bugünün değeri" tipi bir
  * varsayılan üretmek, cevabı her zaman "temiz" çıkaran sessiz bir güvenlik kaybı
  * olurdu.
@@ -103,7 +103,7 @@
  * ({ phoneNumber, maxAge }), saat bazlı pencere, tek boolean çıktı ({ swapped }).
  * Bu yüzden pencere hesabı aynı koddan (pencereSec) geçer ve aynı CAMARA aralığına
  * (1–2400 saat) kelepçelenir; ayrı bir pencere değişkeni UYDURULMAZ, halka
- * ADSPILOT_SIMSWAP_WINDOW_HOURS'u paylaşır.
+ * AEGIS_SIMSWAP_WINDOW_HOURS'u paylaşır.
  *
  * Tek DÜRÜST FARK: yanıt okunamazsa "değişmedi" varsayılmaz. Tipte `swapped`
  * zorunlu boolean'dır ama tip garantisi çalışma zamanı garantisi değildir; okunamayan
@@ -130,8 +130,8 @@
  * Zincir uzadıkça HIGH katmandaki her onay, koşan her gerçek halka için bir CAMARA
  * gidiş-dönüşü daha bekler (halka başına 10 sn timeout). Bu yüzden HİÇBİR halka
  * varsayılan olarak açılmaz: 3., 5. ve 6. halkaların gerçek kanalları AYRI AYRI
- * opt-in anahtarlar (ADSPILOT_REACH_CHECK / ADSPILOT_DEVICESWAP_CHECK /
- * ADSPILOT_CALLFWD_CHECK) ister, 4. halka beklenen ülke tanımını ister. Yalnızca
+ * opt-in anahtarlar (AEGIS_REACH_CHECK / AEGIS_DEVICESWAP_CHECK /
+ * AEGIS_CALLFWD_CHECK) ister, 4. halka beklenen ülke tanımını ister. Yalnızca
  * SIM-Swap için token tanımlayan bir operatör, ne istemediği gecikmeyi ne de
  * istemediği yanlış-pozitif retleri üstlenir; kapalı halka sorgu yapmaz ve izine
  * "kapali" yazar.
@@ -233,9 +233,9 @@ export type NvIzi = "simulasyon" | "calismadi";
  *
  * "gercek"     : CAMARA sorgusu gerçekten yapıldı (ya da denendi ve yanıtsız kaldı).
  * "simulasyon" : simüle kanal karar verdi; hiçbir ağ sorgusu yapılmadı.
- * "kapali"     : halka BİLEREK koşmadı — reach için ADSPILOT_REACH_CHECK, devSwap için
- *                ADSPILOT_DEVICESWAP_CHECK, callFwd için ADSPILOT_CALLFWD_CHECK
- *                açılmamış; loc için ADSPILOT_EXPECTED_COUNTRY tanımsız. Yapılandırma hatası
+ * "kapali"     : halka BİLEREK koşmadı — reach için AEGIS_REACH_CHECK, devSwap için
+ *                AEGIS_DEVICESWAP_CHECK, callFwd için AEGIS_CALLFWD_CHECK
+ *                açılmamış; loc için AEGIS_EXPECTED_COUNTRY tanımsız. Yapılandırma hatası
  *                DEĞİLDİR (o "calismadi"dir) ve ret de üretmez; kapının "sormadım"
  *                beyanıdır — sessiz kalmak, denetimde "sordum ve geçti" ile karışırdı.
  * "calismadi"  : yapılandırma hatası yüzünden sorgu HİÇ yapılamadı (ret eşlik eder).
@@ -275,26 +275,26 @@ export type RetNedeni =
  */
 export interface AgIz {
   simSwap: SimSwapIzi;
-  /** Halka hiç koşmadıysa (medium katman ya da ADSPILOT_NV_SIMULATE yok) alan YOKTUR. */
+  /** Halka hiç koşmadıysa (medium katman ya da AEGIS_NV_SIMULATE yok) alan YOKTUR. */
   nv?: NvIzi;
   /**
    * Halka 3 (Device Reachability). Medium katmanda ya da halka hiç yapılandırılmamışsa
-   * alan YOKTUR; token varken ADSPILOT_REACH_CHECK kapalıysa "kapali" yazar.
+   * alan YOKTUR; token varken AEGIS_REACH_CHECK kapalıysa "kapali" yazar.
    */
   reach?: HalkaIzi;
   /**
    * Halka 4 (Location / beklenen ülke). Medium katmanda ya da halka hiç
-   * yapılandırılmamışsa alan YOKTUR; ADSPILOT_EXPECTED_COUNTRY tanımsızsa "kapali" yazar.
+   * yapılandırılmamışsa alan YOKTUR; AEGIS_EXPECTED_COUNTRY tanımsızsa "kapali" yazar.
    */
   loc?: HalkaIzi;
   /**
    * Halka 5 (Device Swap). Medium katmanda ya da halka hiç yapılandırılmamışsa alan
-   * YOKTUR; token varken ADSPILOT_DEVICESWAP_CHECK kapalıysa "kapali" yazar.
+   * YOKTUR; token varken AEGIS_DEVICESWAP_CHECK kapalıysa "kapali" yazar.
    */
   devSwap?: HalkaIzi;
   /**
    * Halka 6 (Call Forwarding). Medium katmanda ya da halka hiç yapılandırılmamışsa alan
-   * YOKTUR; token varken ADSPILOT_CALLFWD_CHECK kapalıysa "kapali" yazar.
+   * YOKTUR; token varken AEGIS_CALLFWD_CHECK kapalıysa "kapali" yazar.
    */
   callFwd?: HalkaIzi;
   /** YALNIZ SIM-Swap halkasının geriye bakış penceresi (saat); sorgu yoksa yok. */
@@ -305,7 +305,7 @@ export interface AgIz {
    * `pencereSaat`e YAZILMAZ, çünkü iki halka tek alana ezilmez: SIM-Swap katmanı
    * kapalıyken (token yok, simülasyon yok) `pencereSaat` boştur ve oraya cihaz-değişim
    * penceresini yazmak, denetçiye hiç yapılmamış bir SIM-Swap sorgusunun penceresi gibi
-   * okunurdu. Değer aynı yapılandırmadan (ADSPILOT_SIMSWAP_WINDOW_HOURS) türese bile
+   * okunurdu. Değer aynı yapılandırmadan (AEGIS_SIMSWAP_WINDOW_HOURS) türese bile
    * hangi halkanın sorusuna ait olduğu ayrı durur.
    */
   devSwapPencereSaat?: number;
@@ -393,7 +393,7 @@ export function halkaKosarMi(risk: AgRisk, halkaId: string): boolean {
  * KADEMEYE UYGUN RET NEDENLERİ — ve aynı zamanda BELGENİN tek kaynağı.
  *
  * `export` bir kullanım kolaylığı değil, ölçülmüş bir boşluğun kapatılmasıdır: bu küme
- * kapının "koşulsuz reddeder" davranışını KOŞULLU hâle getirir (ADSPILOT_STEPUP açıkken
+ * kapının "koşulsuz reddeder" davranışını KOŞULLU hâle getirir (AEGIS_STEPUP açıkken
  * buradaki her neden düz ret yerine insan istemine bağlanır), ama README ve runbook bunu
  * bilmediği için "SIM değişimi anında reddeder, sonraki hiçbir halka yumuşatamaz"
  * cümlesini KURAL diye yazıyordu — belge, tersine çalışan bir değişmezi ilan ediyordu.
@@ -510,13 +510,13 @@ interface HalkaSonuc {
   pencereSaat?: number;
 }
 
-/** The subset of AdsPilotConfig this module reads (kept narrow for testability). */
+/** The subset of AegisConfig this module reads (kept narrow for testability). */
 export interface AgAyar {
   nacToken?: string;
   approverPhone?: string;
   simSwapWindowHours: number;
   /**
-   * KADEMELİ DOĞRULAMA (ADSPILOT_STEPUP). Varsayılan KAPALI ve bu bilinçli.
+   * KADEMELİ DOĞRULAMA (AEGIS_STEPUP). Varsayılan KAPALI ve bu bilinçli.
    *
    * Açıldığında, olağan bir kullanıcı durumundan doğan bozuk sinyal (SIM/cihaz
    * değişimi, seyahat, kapalı telefon, cevapsız ağ) düz retle sonuçlanmaz: kalan
@@ -528,14 +528,14 @@ export interface AgAyar {
    */
   stepUp?: boolean;
   /**
-   * SİMÜLASYON kanalı (ADSPILOT_NAC_SIMULATE): "temiz" | "degisti". Tanımlıysa gerçek
+   * SİMÜLASYON kanalı (AEGIS_NAC_SIMULATE): "temiz" | "degisti". Tanımlıysa gerçek
    * SDK hiç kullanılmaz — jüri demoları NaC token'sız çalışır. Değer burada tip olarak
    * dar tutulmaz: doğrulama KARAR ANINDA yapılır ki bozuk bir env değeri sunucuyu
    * başlangıçta düşürmesin, sadece harcama kapısını kapalı arızaya götürsün.
    */
   nacSimulate?: string;
   /**
-   * Number Verification SİMÜLASYON kanalı (ADSPILOT_NV_SIMULATE):
+   * Number Verification SİMÜLASYON kanalı (AEGIS_NV_SIMULATE):
    * "dogrulandi" | "uyusmadi". Zincirin 2. halkası; YALNIZ simülasyon (gerçek CAMARA
    * NV cihaz-taraflı OIDC ister, sunucudan tek başına çağrılamaz — bkz. dosya başı).
    *
@@ -545,13 +545,13 @@ export interface AgAyar {
    */
   nvSimulate?: string;
   /**
-   * Device Reachability SİMÜLASYON kanalı (ADSPILOT_REACH_SIMULATE):
+   * Device Reachability SİMÜLASYON kanalı (AEGIS_REACH_SIMULATE):
    * "erisilebilir" | "anormal". Zincirin 3. halkası; tanımlıysa gerçek SDK'ya HİÇ
    * dokunulmaz. Değer burada tip olarak dar tutulmaz — doğrulama karar anında yapılır.
    */
   reachSimulate?: string;
   /**
-   * Halka 3'ün GERÇEK kanalının açma/kapama anahtarı (ADSPILOT_REACH_CHECK).
+   * Halka 3'ün GERÇEK kanalının açma/kapama anahtarı (AEGIS_REACH_CHECK).
    *
    * Bilerek OPT-IN: erişilebilirlik meşru olarak dalgalanır (uçak modu, kapsama), bu
    * yüzden yalnızca NaC token'ının varlığına bakıp sorguyu açmak, SIM-Swap için token
@@ -560,12 +560,12 @@ export interface AgAyar {
    */
   reachCheck?: boolean;
   /**
-   * Location SİMÜLASYON kanalı (ADSPILOT_LOC_SIMULATE): "beklenen" | "beklenmedik".
+   * Location SİMÜLASYON kanalı (AEGIS_LOC_SIMULATE): "beklenen" | "beklenmedik".
    * Zincirin 4. halkası; aynı kapalı-arıza gerekçesiyle değer karar anında doğrulanır.
    */
   locSimulate?: string;
   /**
-   * Halka 4'ün beklentisi (ADSPILOT_EXPECTED_COUNTRY, ISO 3166-1 alpha-2).
+   * Halka 4'ün beklentisi (AEGIS_EXPECTED_COUNTRY, ISO 3166-1 alpha-2).
    *
    * TANIMSIZSA HALKA KOŞMAZ ("kapali" izi): beklenen ülke UYDURULMAZ. Tanımlı ama iki
    * harfli kod değilse bu bir yapılandırma hatasıdır ve kapalı arızaya (RET) gider —
@@ -573,13 +573,13 @@ export interface AgAyar {
    */
   expectedCountry?: string;
   /**
-   * Device Swap SİMÜLASYON kanalı (ADSPILOT_DEVICESWAP_SIMULATE):
+   * Device Swap SİMÜLASYON kanalı (AEGIS_DEVICESWAP_SIMULATE):
    * "temiz" | "degisti". Zincirin 5. halkası; tanımlıysa gerçek SDK'ya HİÇ dokunulmaz.
    * Değer burada tip olarak dar tutulmaz — doğrulama karar anında yapılır.
    */
   devSwapSimulate?: string;
   /**
-   * Halka 5'in GERÇEK kanalının açma/kapama anahtarı (ADSPILOT_DEVICESWAP_CHECK).
+   * Halka 5'in GERÇEK kanalının açma/kapama anahtarı (AEGIS_DEVICESWAP_CHECK).
    *
    * Halka 3'le aynı gerekçeyle OPT-IN, artı GECİKME gerekçesi: HIGH katmandaki her onay,
    * koşan her gerçek halka için bir CAMARA gidiş-dönüşü daha bekler. Yalnızca token'ın
@@ -589,7 +589,7 @@ export interface AgAyar {
    */
   devSwapCheck?: boolean;
   /**
-   * Call Forwarding SİMÜLASYON kanalı (ADSPILOT_CALLFWD_SIMULATE):
+   * Call Forwarding SİMÜLASYON kanalı (AEGIS_CALLFWD_SIMULATE):
    * "kapali" | "acik". Zincirin 6. halkası; aynı kapalı-arıza gerekçesiyle değer karar
    * anında doğrulanır.
    *
@@ -598,7 +598,7 @@ export interface AgAyar {
    */
   callFwdSimulate?: string;
   /**
-   * Halka 6'nın GERÇEK kanalının açma/kapama anahtarı (ADSPILOT_CALLFWD_CHECK).
+   * Halka 6'nın GERÇEK kanalının açma/kapama anahtarı (AEGIS_CALLFWD_CHECK).
    * Halka 5'le aynı gerekçe: hiçbir halka varsayılan olarak açılmaz — gecikme ve ret
    * riski operatörün AÇIK niyetini ister.
    */
@@ -626,7 +626,7 @@ export interface ZincirHalkasi {
    * halkada (2., 3., 4., 6.) YOKTUR.
    *
    * Pencereler de halka alanları gibi ASLA tek alana ezilmez: 1. ve 5. halka aynı
-   * yapılandırma değerinden (ADSPILOT_SIMSWAP_WINDOW_HOURS) beslense bile "hangi soru
+   * yapılandırma değerinden (AEGIS_SIMSWAP_WINDOW_HOURS) beslense bile "hangi soru
    * hangi pencereyle soruldu" ayrımı kaybolmamalı. Kayda alınmasının sebebi ölçülmüş
    * bir boşluk: alan-alan mutasyonda `pencereSaat` bekçiliyken (2-7 test kızarıyor)
    * `devSwapPencereSaat` HEM üretim HEM yazım katmanında silindiğinde takım yeşil
@@ -690,7 +690,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     pencereIzAlani: "pencereSaat",
     pencereGunlukAlani: "pencereSaat",
     retIsaretleri: ["AĞ DOĞRULAMASI BAŞARISIZ", "GSMA Open Gateway SIM Swap"],
-    envler: ["ADSPILOT_NAC_TOKEN", "ADSPILOT_NAC_SIMULATE"],
+    envler: ["AEGIS_NAC_TOKEN", "AEGIS_NAC_SIMULATE"],
     ayarAlanlari: ["nacToken", "nacSimulate"],
     canliDogrulandi: "2026-08-28",
   },
@@ -701,7 +701,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
     retIsaretleri: ["NUMARA DOĞRULAMASI BAŞARISIZ", "numara doğrulaması aktif"],
     // YALNIZ simülasyon: gerçek CAMARA NV cihaz-taraflı OIDC ister (bkz. dosya başı),
     // bu yüzden halkanın bir token/opt-in env'i YOKTUR.
-    envler: ["ADSPILOT_NV_SIMULATE"],
+    envler: ["AEGIS_NV_SIMULATE"],
     ayarAlanlari: ["nvSimulate"],
     // canliDogrulandi YOK ve olamaz: gerçek NV cihaz-taraflı OIDC'dir, sunucudan
     // çağrılamaz (bkz. docs/CAMARA.md §4). Bu halka için "henüz koşmadı" bayat bir
@@ -716,7 +716,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
       "GSMA Open Gateway Device Reachability Status",
       "cihaz erişilebilirlik kontrolünden",
     ],
-    envler: ["ADSPILOT_REACH_SIMULATE", "ADSPILOT_REACH_CHECK"],
+    envler: ["AEGIS_REACH_SIMULATE", "AEGIS_REACH_CHECK"],
     ayarAlanlari: ["reachSimulate", "reachCheck"],
     canliDogrulandi: "2026-08-31",
   },
@@ -729,7 +729,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
       "GSMA Open Gateway Device Roaming Status",
       "konum kontrolünden",
     ],
-    envler: ["ADSPILOT_LOC_SIMULATE", "ADSPILOT_EXPECTED_COUNTRY"],
+    envler: ["AEGIS_LOC_SIMULATE", "AEGIS_EXPECTED_COUNTRY"],
     ayarAlanlari: ["locSimulate", "expectedCountry"],
     canliDogrulandi: "2026-08-31",
   },
@@ -745,7 +745,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
       "GSMA Open Gateway Device Swap",
       "cihaz değişimi kontrolünden",
     ],
-    envler: ["ADSPILOT_DEVICESWAP_SIMULATE", "ADSPILOT_DEVICESWAP_CHECK"],
+    envler: ["AEGIS_DEVICESWAP_SIMULATE", "AEGIS_DEVICESWAP_CHECK"],
     ayarAlanlari: ["devSwapSimulate", "devSwapCheck"],
     canliDogrulandi: "2026-08-28",
   },
@@ -758,7 +758,7 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
       "GSMA Open Gateway Call Forwarding Signal",
       "çağrı yönlendirme kontrolünden",
     ],
-    envler: ["ADSPILOT_CALLFWD_SIMULATE", "ADSPILOT_CALLFWD_CHECK"],
+    envler: ["AEGIS_CALLFWD_SIMULATE", "AEGIS_CALLFWD_CHECK"],
     ayarAlanlari: ["callFwdSimulate", "callFwdCheck"],
     canliDogrulandi: "2026-08-28",
   },
@@ -780,7 +780,7 @@ export const ZINCIR_ORTAK_AYARLARI: readonly (keyof AgAyar)[] = [
    * `stepUp` de zincir GENELİNE aittir: tek bir halkanın değil, zincirin BÜTÜN çıktısının
    * anlamını değiştirir — açıkken KADEME_UYGUN'daki her ret, düz ret olmak yerine insan
    * istemine bağlanır. Kayıtta olmaması ölçülebilir bir boşluktu: gözcüler onu aramadığı
-   * için `ADSPILOT_STEPUP` docs/ altında hiç geçmiyordu ve runbook'un kapalı-arıza
+   * için `AEGIS_STEPUP` docs/ altında hiç geçmiyordu ve runbook'un kapalı-arıza
    * matrisi, açıkken artık geçerli olmayan bir sonuç vaat ediyordu.
    */
   "stepUp",
@@ -788,9 +788,9 @@ export const ZINCIR_ORTAK_AYARLARI: readonly (keyof AgAyar)[] = [
 
 /** ZINCIR_ORTAK_AYARLARI'nın env karşılıkları (config.ts'te okunan adlar). */
 export const ZINCIR_ORTAK_ENVLERI: readonly string[] = [
-  "ADSPILOT_APPROVER_PHONE",
-  "ADSPILOT_SIMSWAP_WINDOW_HOURS",
-  "ADSPILOT_STEPUP",
+  "AEGIS_APPROVER_PHONE",
+  "AEGIS_SIMSWAP_WINDOW_HOURS",
+  "AEGIS_STEPUP",
 ] as const;
 
 const MEDIUM_WINDOW_HOURS = 24;
@@ -1162,8 +1162,8 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
      */
     return {
       engel:
-        "Reddedildi [SİMÜLASYON]: ADSPILOT_NAC_TOKEN ve ADSPILOT_NAC_SIMULATE birlikte tanımlı — " +
-        "çelişkili yapılandırma. Gerçek ağ doğrulaması isteniyorsa ADSPILOT_NAC_SIMULATE kaldırılmalı, " +
+        "Reddedildi [SİMÜLASYON]: AEGIS_NAC_TOKEN ve AEGIS_NAC_SIMULATE birlikte tanımlı — " +
+        "çelişkili yapılandırma. Gerçek ağ doğrulaması isteniyorsa AEGIS_NAC_SIMULATE kaldırılmalı, " +
         "demo isteniyorsa token kaldırılmalı. Güvenlik gereği belirsiz yapılandırmada harcama artışı uygulanmaz.",
       kanit: [],
       // Hiçbir kanal sorgulanmadı: yapılandırma çeliştiği için karar hiç verilemedi.
@@ -1173,7 +1173,7 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
   if (sim !== "temiz" && sim !== "degisti") {
     return {
       engel:
-        `Reddedildi [SİMÜLASYON]: ADSPILOT_NAC_SIMULATE değeri tanınmadı (değer, sır ihtimaline karşı burada gösterilmez) — geçerli değerler ` +
+        `Reddedildi [SİMÜLASYON]: AEGIS_NAC_SIMULATE değeri tanınmadı (değer, sır ihtimaline karşı burada gösterilmez) — geçerli değerler ` +
         `"temiz" | "degisti". Güvenlik gereği anlaşılamayan yapılandırmada harcama artışı uygulanmaz ` +
         `(kapalı arıza).`,
       kanit: [],
@@ -1183,7 +1183,7 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
   if (!ayar.approverPhone) {
     return {
       engel:
-        "Reddedildi [SİMÜLASYON]: simülasyon kanalı aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+        "Reddedildi [SİMÜLASYON]: simülasyon kanalı aktif ama AEGIS_APPROVER_PHONE boş. " +
         "Onaylayıcının numarası simülasyonda da zorunludur; güvenlik gereği harcama artışı uygulanmaz.",
       kanit: [],
       iz: { simSwap: "calismadi", retNedeni: "onaylayici-numarasi-yok" },
@@ -1196,7 +1196,7 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
       engel:
         `Reddedildi [SİMÜLASYON]: AĞ DOĞRULAMASI BAŞARISIZ (SİMÜLE) — onaylayıcının ` +
         `(${maskeli}) SIM kartı son ${pencere} saat içinde değişmiş SAYILDI ` +
-        `(ADSPILOT_NAC_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, hesap ele ` +
+        `(AEGIS_NAC_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, hesap ele ` +
         `geçirme saldırılarının tipik işaretidir; onay istemi hiç gösterilmedi ve harcama artışı ` +
         `uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.`,
       kanit: [],
@@ -1206,7 +1206,7 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
   return {
     kanit: [
       `Ağ doğrulaması [SİMÜLASYON]: SIM değişimi yok (son ${pencere} saat, ` +
-        `${maskeli}) — simüle kanal (ADSPILOT_NAC_SIMULATE=temiz), ` +
+        `${maskeli}) — simüle kanal (AEGIS_NAC_SIMULATE=temiz), ` +
         `gerçek ağ sorgusu YAPILMADI`,
     ],
     iz: { simSwap: "simulasyon", pencereSaat: pencere, maskeliNumara: maskeli },
@@ -1216,7 +1216,7 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
 /**
  * Zincirin 2. halkası: Number Verification — YALNIZ SİMÜLASYON.
  *
- * Ne zaman koşar: SADECE "high" katmanda ve SADECE ADSPILOT_NV_SIMULATE tanımlıysa.
+ * Ne zaman koşar: SADECE "high" katmanda ve SADECE AEGIS_NV_SIMULATE tanımlıysa.
  * Koşmadığında `undefined` döner (kanıt satırı bile üretmez) — medium katmanda halka
  * hiç yoktur, dolayısıyla değeri de doğrulanmaz; bu bir gevşeme değildir, çünkü o
  * katmanda halkanın verebileceği tek karar zaten yoktur.
@@ -1233,7 +1233,7 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
   if (nv !== "dogrulandi" && nv !== "uyusmadi") {
     return {
       engel:
-        `Reddedildi [SİMÜLASYON]: ADSPILOT_NV_SIMULATE değeri tanınmadı (değer, sır ihtimaline karşı ` +
+        `Reddedildi [SİMÜLASYON]: AEGIS_NV_SIMULATE değeri tanınmadı (değer, sır ihtimaline karşı ` +
         `burada gösterilmez) — geçerli değerler "dogrulandi" | "uyusmadi". Güvenlik gereği ` +
         `anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).`,
       kanit: [],
@@ -1244,7 +1244,7 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
   if (!ayar.approverPhone) {
     return {
       engel:
-        "Reddedildi [SİMÜLASYON]: numara doğrulaması aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+        "Reddedildi [SİMÜLASYON]: numara doğrulaması aktif ama AEGIS_APPROVER_PHONE boş. " +
         "Doğrulanacak numara olmadan bu halka çalışamaz; güvenlik gereği harcama artışı uygulanmaz.",
       kanit: [],
       nv: "calismadi",
@@ -1257,7 +1257,7 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
       engel:
         `Reddedildi [SİMÜLASYON]: NUMARA DOĞRULAMASI BAŞARISIZ (SİMÜLE) — onay isteği sahibin ` +
         `gerçek cihazından gelmiyor SAYILDI (${maskeli}; ` +
-        `ADSPILOT_NV_SIMULATE=uyusmadi, gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, onayı ` +
+        `AEGIS_NV_SIMULATE=uyusmadi, gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, onayı ` +
         `cevaplayanın hattın sahibi olmadığı anlamına gelir — SIM Swap kontrolü temiz olsa bile ` +
         `onay istemi gösterilmez ve harcama artışı uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON ` +
         `olduğunu MUTLAKA bildir.`,
@@ -1270,7 +1270,7 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
   return {
     kanit: [
       `Numara doğrulaması [SİMÜLASYON]: onay isteği hat sahibinin cihazından geliyor SAYILDI ` +
-        `(${maskeli}) — simüle kanal (ADSPILOT_NV_SIMULATE=dogrulandi), ` +
+        `(${maskeli}) — simüle kanal (AEGIS_NV_SIMULATE=dogrulandi), ` +
         `gerçek CAMARA Number Verification sorgusu YAPILMADI (cihaz-taraflı OIDC gerektirir)`,
     ],
     nv: "simulasyon",
@@ -1282,7 +1282,7 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
  * Zincirin 3. halkası: Device Reachability.
  *
  * Ne zaman koşar: SADECE "high" katmanda ve SADECE bir kanal yapılandırılmışsa
- * (ADSPILOT_REACH_SIMULATE ya da NaC token'ı). Hiç yapılandırılmamışsa `undefined`
+ * (AEGIS_REACH_SIMULATE ya da NaC token'ı). Hiç yapılandırılmamışsa `undefined`
  * döner — iz alanı bile yazılmaz, çünkü "kapali" bilinçli bir kapatma beyanıdır,
  * hiç istenmemiş bir halkanın sessizliği değil.
  *
@@ -1299,16 +1299,16 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
   if (sim) {
     /**
      * Çelişki ölçütü bilerek "token var mı" DEĞİL, "gerçek kanal AÇIK mı"dır: halka
-     * opt-in olduğu için ADSPILOT_REACH_CHECK kapalıyken sorgulanacak gerçek bir kanal
+     * opt-in olduğu için AEGIS_REACH_CHECK kapalıyken sorgulanacak gerçek bir kanal
      * yoktur, dolayısıyla simülasyon hiçbir gerçek doğrulamayı tiyatroya çevirmez.
      * Gerçek kanal açıkken ikisi birden tanımlıysa belirsizlikte gevşek kanal SEÇİLMEZ.
      */
     if (gercekAcik) {
       return {
         engel:
-          "Reddedildi [SİMÜLASYON]: ADSPILOT_REACH_CHECK açık (gerçek erişilebilirlik sorgusu) ve " +
-          "ADSPILOT_REACH_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu isteniyorsa " +
-          "simülasyon kaldırılmalı, demo isteniyorsa ADSPILOT_REACH_CHECK kapatılmalı. Güvenlik gereği " +
+          "Reddedildi [SİMÜLASYON]: AEGIS_REACH_CHECK açık (gerçek erişilebilirlik sorgusu) ve " +
+          "AEGIS_REACH_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu isteniyorsa " +
+          "simülasyon kaldırılmalı, demo isteniyorsa AEGIS_REACH_CHECK kapatılmalı. Güvenlik gereği " +
           "belirsiz yapılandırmada harcama artışı uygulanmaz.",
         kanit: [],
         halka: "calismadi",
@@ -1318,7 +1318,7 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
     if (sim !== "erisilebilir" && sim !== "anormal") {
       return {
         engel:
-          `Reddedildi [SİMÜLASYON]: ADSPILOT_REACH_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
+          `Reddedildi [SİMÜLASYON]: AEGIS_REACH_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
           `karşı burada gösterilmez) — geçerli değerler "erisilebilir" | "anormal". Güvenlik gereği ` +
           `anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).`,
         kanit: [],
@@ -1329,7 +1329,7 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
     if (!ayar.approverPhone) {
       return {
         engel:
-          "Reddedildi [SİMÜLASYON]: cihaz erişilebilirliği kontrolü aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+          "Reddedildi [SİMÜLASYON]: cihaz erişilebilirliği kontrolü aktif ama AEGIS_APPROVER_PHONE boş. " +
           "Sorgulanacak numara olmadan bu halka çalışamaz; güvenlik gereği harcama artışı uygulanmaz.",
         kanit: [],
         halka: "calismadi",
@@ -1341,7 +1341,7 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
       return {
         engel:
           `Reddedildi [SİMÜLASYON]: CİHAZ ERİŞİLEBİLİRLİĞİ ANORMAL (SİMÜLE) — onaylayıcının ` +
-          `(${maskeli}) cihazı ağdan erişilemez SAYILDI (ADSPILOT_REACH_SIMULATE=anormal; gerçek ağ ` +
+          `(${maskeli}) cihazı ağdan erişilemez SAYILDI (AEGIS_REACH_SIMULATE=anormal; gerçek ağ ` +
           `sorgusu YAPILMADI). Gerçek akışta bu, onayı cevaplayan tarafın hattıyla ulaşılamadığı ` +
           `anlamına gelir; kademeli doğrulama mümkün olmadığı için onay istemi gösterilmez ve harcama ` +
           `artışı uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.`,
@@ -1354,7 +1354,7 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
     return {
       kanit: [
         `Cihaz erişilebilirliği [SİMÜLASYON]: onaylayıcının hattı ağdan erişilebilir SAYILDI ` +
-          `(${maskeli}) — simüle kanal (ADSPILOT_REACH_SIMULATE=erisilebilir), gerçek ağ sorgusu YAPILMADI`,
+          `(${maskeli}) — simüle kanal (AEGIS_REACH_SIMULATE=erisilebilir), gerçek ağ sorgusu YAPILMADI`,
       ],
       halka: "simulasyon",
       maskeliNumara: maskeli,
@@ -1371,8 +1371,8 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
   if (!ayar.approverPhone) {
     return {
       engel:
-        "Reddedildi: cihaz erişilebilirliği kontrolü açık (ADSPILOT_REACH_CHECK) ama " +
-        "ADSPILOT_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
+        "Reddedildi: cihaz erişilebilirliği kontrolü açık (AEGIS_REACH_CHECK) ama " +
+        "AEGIS_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
         "güvenlik gereği harcama artışı uygulanmaz.",
       kanit: [],
       halka: "calismadi",
@@ -1423,7 +1423,7 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
   } catch (e: any) {
     // Upstream metin ASLA ret mesajına girmez; ayrıntı numara maskelenerek stderr'e.
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
-    console.error(`[adspilot] cihaz erişilebilirlik hatası (${maskeli}): ${detay}`);
+    console.error(`[aegis] cihaz erişilebilirlik hatası (${maskeli}): ${detay}`);
     return {
       engel:
         "Reddedildi: ağ doğrulaması tamamlanamadı — cihaz erişilebilirlik kontrolünden yanıt " +
@@ -1440,7 +1440,7 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
 /**
  * Zincirin 4. halkası: Location — "hat beklenen ülkenin dışında mı?".
  *
- * Beklenti UYDURULMAZ: ADSPILOT_EXPECTED_COUNTRY yoksa halka koşmaz ve "kapali" yazar.
+ * Beklenti UYDURULMAZ: AEGIS_EXPECTED_COUNTRY yoksa halka koşmaz ve "kapali" yazar.
  * Bugünün tarihi/varsayılan bir ülke türetmek, cevabı her zaman "temiz" çıkaran sessiz
  * bir güvenlik kaybı olurdu.
  *
@@ -1460,7 +1460,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
       // Operatör halkayı açıkça istemiş ama beklentiyi vermemiş: sessiz kalmak, demoyu
       // sessizce çalışmaz hâle getirirdi. Karar akışı ETKİLENMEZ, yalnız stderr'e yazılır.
       console.error(
-        "[adspilot] ADSPILOT_LOC_SIMULATE tanımlı ama ADSPILOT_EXPECTED_COUNTRY yok — " +
+        "[aegis] AEGIS_LOC_SIMULATE tanımlı ama AEGIS_EXPECTED_COUNTRY yok — " +
           "konum halkası KOŞMADI (beklenen ülke uydurulmaz)."
       );
     }
@@ -1470,8 +1470,8 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
   if (sim && ayar.nacToken) {
     return {
       engel:
-        "Reddedildi [SİMÜLASYON]: ADSPILOT_NAC_TOKEN ve ADSPILOT_LOC_SIMULATE birlikte tanımlı — " +
-        "çelişkili yapılandırma. Gerçek konum doğrulaması isteniyorsa ADSPILOT_LOC_SIMULATE " +
+        "Reddedildi [SİMÜLASYON]: AEGIS_NAC_TOKEN ve AEGIS_LOC_SIMULATE birlikte tanımlı — " +
+        "çelişkili yapılandırma. Gerçek konum doğrulaması isteniyorsa AEGIS_LOC_SIMULATE " +
         "kaldırılmalı, demo isteniyorsa token kaldırılmalı. Güvenlik gereği belirsiz yapılandırmada " +
         "harcama artışı uygulanmaz.",
       kanit: [],
@@ -1484,7 +1484,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
   if (!beklenen) {
     return {
       engel:
-        "Reddedildi: ADSPILOT_EXPECTED_COUNTRY değeri ISO 3166-1 alpha-2 (iki harf, ör. TR) " +
+        "Reddedildi: AEGIS_EXPECTED_COUNTRY değeri ISO 3166-1 alpha-2 (iki harf, ör. TR) " +
         "biçiminde değil (değer, sır ihtimaline karşı burada gösterilmez). Beklenen ülke " +
         "anlaşılamadığı için konum halkası çalışamaz; güvenlik gereği harcama artışı uygulanmaz " +
         "(kapalı arıza).",
@@ -1498,7 +1498,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
     if (sim !== "beklenen" && sim !== "beklenmedik") {
       return {
         engel:
-          `Reddedildi [SİMÜLASYON]: ADSPILOT_LOC_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
+          `Reddedildi [SİMÜLASYON]: AEGIS_LOC_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
           `karşı burada gösterilmez) — geçerli değerler "beklenen" | "beklenmedik". Güvenlik gereği ` +
           `anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).`,
         kanit: [],
@@ -1509,7 +1509,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
     if (!ayar.approverPhone) {
       return {
         engel:
-          "Reddedildi [SİMÜLASYON]: konum doğrulaması aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+          "Reddedildi [SİMÜLASYON]: konum doğrulaması aktif ama AEGIS_APPROVER_PHONE boş. " +
           "Sorgulanacak numara olmadan bu halka çalışamaz; güvenlik gereği harcama artışı uygulanmaz.",
         kanit: [],
         halka: "calismadi",
@@ -1521,7 +1521,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
       return {
         engel:
           `Reddedildi [SİMÜLASYON]: KONUM BEKLENMEDİK (SİMÜLE) — onaylayıcının (${maskeliSim}) hattı ` +
-          `beklenen ülkenin (${beklenen}) DIŞINDA SAYILDI (ADSPILOT_LOC_SIMULATE=beklenmedik; gerçek ağ ` +
+          `beklenen ülkenin (${beklenen}) DIŞINDA SAYILDI (AEGIS_LOC_SIMULATE=beklenmedik; gerçek ağ ` +
           `sorgusu YAPILMADI). Gerçek akışta bu, harcamayı onaylayan hattın beklenmedik bir coğrafyada ` +
           `olduğu anlamına gelir; onay istemi gösterilmez ve harcama artışı uygulanmaz. Kullanıcıya ` +
           `bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.`,
@@ -1534,7 +1534,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
     return {
       kanit: [
         `Konum doğrulaması [SİMÜLASYON]: onaylayıcının hattı beklenen ülkede (${beklenen}) SAYILDI ` +
-          `(${maskeliSim}) — simüle kanal (ADSPILOT_LOC_SIMULATE=beklenen), gerçek ağ sorgusu YAPILMADI`,
+          `(${maskeliSim}) — simüle kanal (AEGIS_LOC_SIMULATE=beklenen), gerçek ağ sorgusu YAPILMADI`,
       ],
       halka: "simulasyon",
       maskeliNumara: maskeliSim,
@@ -1544,8 +1544,8 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
   if (!ayar.approverPhone) {
     return {
       engel:
-        "Reddedildi: konum doğrulaması yapılandırılmış (ADSPILOT_EXPECTED_COUNTRY) ama " +
-        "ADSPILOT_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
+        "Reddedildi: konum doğrulaması yapılandırılmış (AEGIS_EXPECTED_COUNTRY) ama " +
+        "AEGIS_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
         "güvenlik gereği harcama artışı uygulanmaz.",
       kanit: [],
       halka: "calismadi",
@@ -1664,7 +1664,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
     };
   } catch (e: any) {
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
-    console.error(`[adspilot] konum doğrulaması hatası (${maskeli}): ${detay}`);
+    console.error(`[aegis] konum doğrulaması hatası (${maskeli}): ${detay}`);
     return {
       engel:
         "Reddedildi: ağ doğrulaması tamamlanamadı — konum kontrolünden yanıt alınamadı. Güvenlik " +
@@ -1687,7 +1687,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
  * cevabı RET, "değişmiş" RET.
  *
  * Ne zaman koşar: SADECE "high" katmanda ve SADECE bir kanal yapılandırılmışsa. Gerçek
- * kanal ayrıca OPT-IN'dir (ADSPILOT_DEVICESWAP_CHECK): token'ın varlığı tek başına
+ * kanal ayrıca OPT-IN'dir (AEGIS_DEVICESWAP_CHECK): token'ın varlığı tek başına
  * sorguyu AÇMAZ — istenmemiş bir CAMARA gidiş-dönüşü her onaya gecikme eklerdi.
  */
 async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
@@ -1701,9 +1701,9 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
     if (gercekAcik) {
       return {
         engel:
-          "Reddedildi [SİMÜLASYON]: ADSPILOT_DEVICESWAP_CHECK açık (gerçek cihaz değişimi sorgusu) ve " +
-          "ADSPILOT_DEVICESWAP_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu " +
-          "isteniyorsa simülasyon kaldırılmalı, demo isteniyorsa ADSPILOT_DEVICESWAP_CHECK kapatılmalı. " +
+          "Reddedildi [SİMÜLASYON]: AEGIS_DEVICESWAP_CHECK açık (gerçek cihaz değişimi sorgusu) ve " +
+          "AEGIS_DEVICESWAP_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu " +
+          "isteniyorsa simülasyon kaldırılmalı, demo isteniyorsa AEGIS_DEVICESWAP_CHECK kapatılmalı. " +
           "Güvenlik gereği belirsiz yapılandırmada harcama artışı uygulanmaz.",
         kanit: [],
         halka: "calismadi",
@@ -1713,7 +1713,7 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
     if (sim !== "temiz" && sim !== "degisti") {
       return {
         engel:
-          `Reddedildi [SİMÜLASYON]: ADSPILOT_DEVICESWAP_SIMULATE değeri tanınmadı (değer, sır ` +
+          `Reddedildi [SİMÜLASYON]: AEGIS_DEVICESWAP_SIMULATE değeri tanınmadı (değer, sır ` +
           `ihtimaline karşı burada gösterilmez) — geçerli değerler "temiz" | "degisti". Güvenlik ` +
           `gereği anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).`,
         kanit: [],
@@ -1724,7 +1724,7 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
     if (!ayar.approverPhone) {
       return {
         engel:
-          "Reddedildi [SİMÜLASYON]: cihaz değişimi kontrolü aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+          "Reddedildi [SİMÜLASYON]: cihaz değişimi kontrolü aktif ama AEGIS_APPROVER_PHONE boş. " +
           "Sorgulanacak numara olmadan bu halka çalışamaz; güvenlik gereği harcama artışı uygulanmaz.",
         kanit: [],
         halka: "calismadi",
@@ -1738,7 +1738,7 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
         engel:
           `Reddedildi [SİMÜLASYON]: CİHAZ DEĞİŞİMİ SAPTANDI (SİMÜLE) — onaylayıcının (${maskeliSim}) ` +
           `hattı son ${pencereSim} saat içinde YENİ BİR CİHAZA taşınmış SAYILDI ` +
-          `(ADSPILOT_DEVICESWAP_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, SIM ` +
+          `(AEGIS_DEVICESWAP_SIMULATE=degisti; gerçek ağ sorgusu YAPILMADI). Gerçek akışta bu, SIM ` +
           `kartı hiç değişmeden hattın başka bir telefona alınması anlamına gelir — hesap ele ` +
           `geçirmenin SIM Swap kontrolüne yakalanmayan biçimidir; onay istemi gösterilmez ve harcama ` +
           `artışı uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu MUTLAKA bildir.`,
@@ -1752,7 +1752,7 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
     return {
       kanit: [
         `Cihaz değişimi [SİMÜLASYON]: yeni cihaza taşınma yok (son ${pencereSim} saat, ` +
-          `${maskeliSim}) — simüle kanal (ADSPILOT_DEVICESWAP_SIMULATE=temiz), gerçek ağ sorgusu YAPILMADI`,
+          `${maskeliSim}) — simüle kanal (AEGIS_DEVICESWAP_SIMULATE=temiz), gerçek ağ sorgusu YAPILMADI`,
       ],
       halka: "simulasyon",
       maskeliNumara: maskeliSim,
@@ -1767,8 +1767,8 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
   if (!ayar.approverPhone) {
     return {
       engel:
-        "Reddedildi: cihaz değişimi kontrolü açık (ADSPILOT_DEVICESWAP_CHECK) ama " +
-        "ADSPILOT_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
+        "Reddedildi: cihaz değişimi kontrolü açık (AEGIS_DEVICESWAP_CHECK) ama " +
+        "AEGIS_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
         "güvenlik gereği harcama artışı uygulanmaz.",
       kanit: [],
       halka: "calismadi",
@@ -1824,7 +1824,7 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
   } catch (e: any) {
     // Upstream metin ASLA ret mesajına girmez; ayrıntı numara maskelenerek stderr'e.
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
-    console.error(`[adspilot] cihaz değişimi hatası (${maskeli}): ${detay}`);
+    console.error(`[aegis] cihaz değişimi hatası (${maskeli}): ${detay}`);
     return {
       engel:
         "Reddedildi: ağ doğrulaması tamamlanamadı — cihaz değişimi kontrolünden yanıt alınamadı. " +
@@ -1859,9 +1859,9 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
     if (gercekAcik) {
       return {
         engel:
-          "Reddedildi [SİMÜLASYON]: ADSPILOT_CALLFWD_CHECK açık (gerçek çağrı yönlendirme sorgusu) ve " +
-          "ADSPILOT_CALLFWD_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu " +
-          "isteniyorsa simülasyon kaldırılmalı, demo isteniyorsa ADSPILOT_CALLFWD_CHECK kapatılmalı. " +
+          "Reddedildi [SİMÜLASYON]: AEGIS_CALLFWD_CHECK açık (gerçek çağrı yönlendirme sorgusu) ve " +
+          "AEGIS_CALLFWD_SIMULATE birlikte tanımlı — çelişkili yapılandırma. Gerçek sorgu " +
+          "isteniyorsa simülasyon kaldırılmalı, demo isteniyorsa AEGIS_CALLFWD_CHECK kapatılmalı. " +
           "Güvenlik gereği belirsiz yapılandırmada harcama artışı uygulanmaz.",
         kanit: [],
         halka: "calismadi",
@@ -1871,7 +1871,7 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
     if (sim !== "kapali" && sim !== "acik") {
       return {
         engel:
-          `Reddedildi [SİMÜLASYON]: ADSPILOT_CALLFWD_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
+          `Reddedildi [SİMÜLASYON]: AEGIS_CALLFWD_SIMULATE değeri tanınmadı (değer, sır ihtimaline ` +
           `karşı burada gösterilmez) — geçerli değerler "kapali" | "acik". Güvenlik gereği ` +
           `anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).`,
         kanit: [],
@@ -1882,7 +1882,7 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
     if (!ayar.approverPhone) {
       return {
         engel:
-          "Reddedildi [SİMÜLASYON]: çağrı yönlendirme kontrolü aktif ama ADSPILOT_APPROVER_PHONE boş. " +
+          "Reddedildi [SİMÜLASYON]: çağrı yönlendirme kontrolü aktif ama AEGIS_APPROVER_PHONE boş. " +
           "Sorgulanacak numara olmadan bu halka çalışamaz; güvenlik gereği harcama artışı uygulanmaz.",
         kanit: [],
         halka: "calismadi",
@@ -1894,7 +1894,7 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
       return {
         engel:
           `Reddedildi [SİMÜLASYON]: ÇAĞRI YÖNLENDİRME AÇIK (SİMÜLE) — onaylayıcının (${maskeliSim}) ` +
-          `hattında koşulsuz çağrı yönlendirme etkin SAYILDI (ADSPILOT_CALLFWD_SIMULATE=acik; gerçek ` +
+          `hattında koşulsuz çağrı yönlendirme etkin SAYILDI (AEGIS_CALLFWD_SIMULATE=acik; gerçek ` +
           `ağ sorgusu YAPILMADI). Gerçek akışta bu, hattın doğrulama çağrılarının başka bir numaraya ` +
           `aktarıldığı anlamına gelir — OTP/sesli doğrulama ele geçirmenin klasik yolu; onay istemi ` +
           `gösterilmez ve harcama artışı uygulanmaz. Kullanıcıya bunun bir SİMÜLASYON olduğunu ` +
@@ -1908,7 +1908,7 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
     return {
       kanit: [
         `Çağrı yönlendirme [SİMÜLASYON]: onaylayıcının hattında koşulsuz yönlendirme YOK SAYILDI ` +
-          `(${maskeliSim}) — simüle kanal (ADSPILOT_CALLFWD_SIMULATE=kapali), gerçek ağ sorgusu YAPILMADI`,
+          `(${maskeliSim}) — simüle kanal (AEGIS_CALLFWD_SIMULATE=kapali), gerçek ağ sorgusu YAPILMADI`,
       ],
       halka: "simulasyon",
       maskeliNumara: maskeliSim,
@@ -1920,8 +1920,8 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
   if (!ayar.approverPhone) {
     return {
       engel:
-        "Reddedildi: çağrı yönlendirme kontrolü açık (ADSPILOT_CALLFWD_CHECK) ama " +
-        "ADSPILOT_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
+        "Reddedildi: çağrı yönlendirme kontrolü açık (AEGIS_CALLFWD_CHECK) ama " +
+        "AEGIS_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
         "güvenlik gereği harcama artışı uygulanmaz.",
       kanit: [],
       halka: "calismadi",
@@ -1973,11 +1973,11 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
   } catch (e: any) {
     /**
      * 501 (NotImplementedError) dahil HER fırlatma buraya düşer ve RET üretir: operatörün
-     * şebekesi bu sinyali sunmuyorsa halka KAPATILMALIDIR (ADSPILOT_CALLFWD_CHECK), sessizce
+     * şebekesi bu sinyali sunmuyorsa halka KAPATILMALIDIR (AEGIS_CALLFWD_CHECK), sessizce
      * geçilmemelidir — "cevap alamadım" ile "yönlendirme yok" aynı şey değildir.
      */
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
-    console.error(`[adspilot] çağrı yönlendirme hatası (${maskeli}): ${detay}`);
+    console.error(`[aegis] çağrı yönlendirme hatası (${maskeli}): ${detay}`);
     return {
       engel:
         "Reddedildi: ağ doğrulaması tamamlanamadı — çağrı yönlendirme kontrolünden yanıt alınamadı " +
@@ -2219,13 +2219,13 @@ async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
 
   if (!ayar.nacToken) {
     // Katman BİLEREK kapalı: yapılandırma hatası değil, sorgu da yok.
-    return { kanit: ["Ağ doğrulaması: kapalı (ADSPILOT_NAC_TOKEN tanımlı değil)"], iz: { simSwap: "kapali" } };
+    return { kanit: ["Ağ doğrulaması: kapalı (AEGIS_NAC_TOKEN tanımlı değil)"], iz: { simSwap: "kapali" } };
   }
   if (!ayar.approverPhone) {
     return {
       engel:
-        "Reddedildi: ağ doğrulaması yapılandırması eksik — ADSPILOT_NAC_TOKEN tanımlı ama " +
-        "ADSPILOT_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
+        "Reddedildi: ağ doğrulaması yapılandırması eksik — AEGIS_NAC_TOKEN tanımlı ama " +
+        "AEGIS_APPROVER_PHONE boş. Onaylayıcının numarası olmadan ağ kontrolü yapılamaz; " +
         "güvenlik gereği harcama artışı uygulanmaz.",
       kanit: [],
       iz: { simSwap: "calismadi", retNedeni: "onaylayici-numarasi-yok" },
@@ -2280,7 +2280,7 @@ async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
      * with the approver number redacted even there.
      */
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
-    console.error(`[adspilot] ağ doğrulaması hatası (${maskeli}): ${detay}`);
+    console.error(`[aegis] ağ doğrulaması hatası (${maskeli}): ${detay}`);
     return {
       engel:
         "Reddedildi: ağ doğrulaması tamamlanamadı — SIM Swap kontrolünden yanıt alınamadı. " +

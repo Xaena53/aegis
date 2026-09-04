@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
- * AdsPilot — Google Ads MCP server
- * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the AdsPilot contributors
+ * Aegis — Google Ads MCP server
+ * Copyright (C) 2026 Xaena53 (github.com/Xaena53) and the Aegis contributors
  *
  * This program is free software: you may redistribute it and/or modify it under the
  * terms of the GNU Affero General Public License version 3 as published by the Free
@@ -9,12 +9,12 @@
  */
 
 /**
- * Self-contained AI agent demo: Claude drives the AdsPilot tools end to end.
+ * Self-contained AI agent demo: Claude drives the Aegis tools end to end.
  *
  * The MCP server's usual client is a desktop assistant; this script removes that
  * dependency so the whole loop can be shown from one terminal:
  *
- *   Claude (agent) ──MCP──► AdsPilot server ──► Google Ads API
+ *   Claude (agent) ──MCP──► Aegis server ──► Google Ads API
  *                              │
  *                              └─ network trust: CAMARA SIM Swap via Nokia NaC
  *                              └─ approval: elicitation ► THIS terminal (a human)
@@ -49,10 +49,10 @@ if (!existsSync(join(ROOT, "dist", "index.js"))) {
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-/* ── MCP: connect to the AdsPilot server over stdio ─────────────────────────── */
+/* ── MCP: connect to the Aegis server over stdio ─────────────────────────── */
 
 const mcp = new Client(
-  { name: "adspilot-demo-agent", version: "1.0.0" },
+  { name: "aegis-demo-agent", version: "1.0.0" },
   { capabilities: { elicitation: {} } } // strong consent path: the human is asked here
 );
 
@@ -85,7 +85,7 @@ const tools = mcpTools.map((t) => ({
   description: t.description ?? "",
   input_schema: t.inputSchema,
 }));
-console.log(`AdsPilot bağlı — ${tools.length} araç yüklendi. Görev: ${GOREV}\n`);
+console.log(`Aegis bağlı — ${tools.length} araç yüklendi. Görev: ${GOREV}\n`);
 
 /* ── Agent loop: Claude decides, the server guards ──────────────────────────── */
 
@@ -93,7 +93,7 @@ const anthropic = new Anthropic();
 const messages = [{ role: "user", content: GOREV }];
 
 const SISTEM =
-  "Sen AdsPilot ajanısın: kullanıcının Google Ads hesabını AdsPilot araçlarıyla yönetirsin. " +
+  "Sen Aegis ajanısın: kullanıcının Google Ads hesabını Aegis araçlarıyla yönetirsin. " +
   "Araç açıklamalarındaki KULLAN/KULLANMA yönergelerine uy. Para harcayan işlemleri sunucu " +
   "zaten insana onaylatır; onay reddedilirse kararı sorgulamadan kabul et. Türkçe yanıt ver.";
 

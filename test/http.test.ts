@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 const PORT = 8800 + (process.pid % 500);
 const BASE = `http://localhost:${PORT}`;
-const DB = join(tmpdir(), `adspilot-http-${process.pid}.db`);
+const DB = join(tmpdir(), `aegis-http-${process.pid}.db`);
 const MASTER = "a".repeat(64); // 64 hex chars → used directly as the key
 const KABUL = "application/json, text/event-stream";
 
@@ -30,13 +30,13 @@ before(async () => {
     env: {
       ...process.env,
       PORT: String(PORT),
-      ADSPILOT_PUBLIC_URL: BASE,
-      ADSPILOT_DB: DB,
-      ADSPILOT_MASTER_KEY: MASTER,
+      AEGIS_PUBLIC_URL: BASE,
+      AEGIS_DB: DB,
+      AEGIS_MASTER_KEY: MASTER,
       GOOGLE_ADS_DEVELOPER_TOKEN: "sahte-token",
       GOOGLE_ADS_CLIENT_ID: "sahte-client-id",
       GOOGLE_ADS_CLIENT_SECRET: "sahte-secret",
-      ADSPILOT_RATE_PER_MINUTE: "8",
+      AEGIS_RATE_PER_MINUTE: "8",
     },
     // stdio yutulmaz: sunucu başlangıçta düşerse SEBEBİNİ görmek gerekir. Yutulduğunda
     // her arıza aynı "ayağa kalkmadı" cümlesine dönüşüyordu ve gerçek neden kayboluyordu.
@@ -91,7 +91,7 @@ after(() => {
 
 /** Inserts a user straight into the store, bypassing the OAuth flow. */
 async function kullaniciEkle(email: string, subject: string): Promise<string> {
-  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  process.env.AEGIS_MASTER_KEY = MASTER;
   const { UserStore } = await import("../src/store.js");
   const s = new UserStore(DB);
   const { apiKey } = s.upsertUser({ subject, email, refreshToken: `sahte-${subject}` });
@@ -196,7 +196,7 @@ test("hız sınırı: tavan aşılınca 429 + Retry-After", async () => {
  * limitin hiç görmediği bir çarpanla tüketilebiliyordu. Hiçbir test /mcp'ye dizi
  * göndermediği için boşluk sessizdi.
  *
- * NOT: sunucu ADSPILOT_RATE_PER_MINUTE=8 ile koşuyor (bkz. before).
+ * NOT: sunucu AEGIS_RATE_PER_MINUTE=8 ile koşuyor (bkz. before).
  * ─────────────────────────────────────────────────────────────────────────────── */
 
 test("KRİTİK: toplu istek MESAJ BAŞINA jeton düşer (tek POST, N işlem değil)", async () => {
@@ -233,7 +233,7 @@ test("OAuth: /connect imzalı state çerezi koyar ve önbelleklenmez", async () 
   const r = await fetch(`${BASE}/connect`);
   assert.equal(r.status, 200);
   const cookie = r.headers.get("set-cookie") ?? "";
-  assert.match(cookie, /adspilot_state=/);
+  assert.match(cookie, /aegis_state=/);
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
   assert.match(r.headers.get("cache-control") ?? "", /no-store/);
@@ -242,7 +242,7 @@ test("OAuth: /connect imzalı state çerezi koyar ve önbelleklenmez", async () 
 
 test("OAuth CSRF: çerezsiz ya da uydurma state ile callback 403", async () => {
   const connect = await fetch(`${BASE}/connect`);
-  const state = /adspilot_state=([^;]+)/.exec(connect.headers.get("set-cookie") ?? "")![1];
+  const state = /aegis_state=([^;]+)/.exec(connect.headers.get("set-cookie") ?? "")![1];
 
   // The attacker gets the victim to follow the link, but the victim's browser holds no cookie
   const cerezsiz = await fetch(`${BASE}/oauth/callback?code=x&state=${state}`, { redirect: "manual" });
@@ -250,7 +250,7 @@ test("OAuth CSRF: çerezsiz ya da uydurma state ile callback 403", async () => {
 
   // A forged state whose signature does not verify
   const uydurma = await fetch(`${BASE}/oauth/callback?code=x&state=uydurma.1.abc`, {
-    headers: { Cookie: "adspilot_state=uydurma.1.abc" },
+    headers: { Cookie: "aegis_state=uydurma.1.abc" },
   });
   assert.equal(uydurma.status, 403);
 });
@@ -279,7 +279,7 @@ test("API ANAHTARI ayar sayfasına giriş için KULLANILAMAZ (ajan kelepçeyi ge
   const bearer = await fetch(`${BASE}/settings`, { headers: { Authorization: `Bearer ${key}` } });
   assert.equal(bearer.status, 401, "bearer ile ayar sayfası açılmamalı");
 
-  const cerezOlarak = await fetch(`${BASE}/settings`, { headers: { Cookie: `adspilot_session=${key}` } });
+  const cerezOlarak = await fetch(`${BASE}/settings`, { headers: { Cookie: `aegis_session=${key}` } });
   assert.equal(cerezOlarak.status, 401, "API anahtarı oturum çerezi yerine geçmemeli");
 
   const post = await fetch(`${BASE}/settings`, {
@@ -291,7 +291,7 @@ test("API ANAHTARI ayar sayfasına giriş için KULLANILAMAZ (ajan kelepçeyi ge
 });
 
 test("uydurulmuş oturum çerezi imza doğrulamasına takılır", async () => {
-  const sahte = await fetch(`${BASE}/settings`, { headers: { Cookie: "adspilot_session=1.9999999999999.sahteimza" } });
+  const sahte = await fetch(`${BASE}/settings`, { headers: { Cookie: "aegis_session=1.9999999999999.sahteimza" } });
   assert.equal(sahte.status, 401);
 });
 
@@ -313,11 +313,11 @@ async function insanOturumu(userId: number): Promise<string> {
   const ts = Date.now();
   const body = `${userId}.${ts}`;
   const mac = createHmac("sha256", MASTER).update(`oturum:${body}`).digest("base64url");
-  return `adspilot_session=${encodeURIComponent(`${body}.${mac}`)}`;
+  return `aegis_session=${encodeURIComponent(`${body}.${mac}`)}`;
 }
 
 test("İNSAN oturumuyla ayar değişir ve MCP tarafına ANINDA yansır", async () => {
-  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  process.env.AEGIS_MASTER_KEY = MASTER;
   const { UserStore } = await import("../src/store.js");
   const s = new UserStore(DB);
   const { apiKey, userId } = s.upsertUser({ subject: "sub-ayar", email: "ayar@ornek.com", refreshToken: "sahte" });
@@ -391,7 +391,7 @@ test("KRİTİK CSRF: çapraz-site ayar gönderimi 403 ve kelepçeyi DEĞİŞTİR
    * kalıyordu. Aşağıda üç vaka ayrı ayrı çivileniyor ve her birinde tavanın GERÇEKTEN
    * değişmediği okunarak doğrulanıyor — durum kodu tek başına yeterli kanıt değil.
    */
-  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  process.env.AEGIS_MASTER_KEY = MASTER;
   const { UserStore } = await import("../src/store.js");
   const s2 = new UserStore(DB);
   const { userId } = s2.upsertUser({ subject: "sub-csrf", email: "csrf@ornek.com", refreshToken: "sahte" });
@@ -442,7 +442,7 @@ test("KRİTİK CSRF: çapraz-site ayar gönderimi 403 ve kelepçeyi DEĞİŞTİR
 });
 
 test("geçersiz tavan reddedilir (yazım hatası emniyeti)", async () => {
-  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  process.env.AEGIS_MASTER_KEY = MASTER;
   const { UserStore } = await import("../src/store.js");
   const s = new UserStore(DB);
   const { userId } = s.upsertUser({ subject: "sub-gecersiz", email: "gecersiz@ornek.com", refreshToken: "sahte" });
@@ -476,16 +476,16 @@ test("/health kimliksiz çalışır (izleme için)", async () => {
  * açılışta değil, sağlık yeşile döndükten SONRA gerçekleşiyordu.
  */
 async function zayifAnahtarlaBaslat(anahtar: string): Promise<{ kod: number | null; stderr: string }> {
-  const yalitikDB = join(tmpdir(), `adspilot-zayif-${process.pid}-${Math.random().toString(36).slice(2)}.db`);
+  const yalitikDB = join(tmpdir(), `aegis-zayif-${process.pid}-${Math.random().toString(36).slice(2)}.db`);
   const p = spawn(process.execPath, ["--import", "tsx", "src/http.ts"], {
     // Port BİLEREK farklı: aynı portu kullansaydık EADDRINUSE de sıfırdan farklı kod
     // verirdi ve test, anahtar kapısı hiç koşmasa bile yeşil kalırdı.
     env: {
       ...process.env,
       PORT: String(PORT + 1),
-      ADSPILOT_PUBLIC_URL: `http://localhost:${PORT + 1}`,
-      ADSPILOT_DB: yalitikDB,
-      ADSPILOT_MASTER_KEY: anahtar,
+      AEGIS_PUBLIC_URL: `http://localhost:${PORT + 1}`,
+      AEGIS_DB: yalitikDB,
+      AEGIS_MASTER_KEY: anahtar,
       GOOGLE_ADS_DEVELOPER_TOKEN: "sahte-token",
       GOOGLE_ADS_CLIENT_ID: "sahte-client-id",
       GOOGLE_ADS_CLIENT_SECRET: "sahte-secret",
@@ -526,9 +526,9 @@ test("KRİTİK: ana anahtar veritabanını ÇÖZEMİYORSA süreç açılmaz", as
    * Burada bir kullanıcı BİR anahtarla yazılıyor, süreç BAŞKA bir anahtarla açılıyor.
    * Beklenen: sıfırdan farklı çıkış kodu ve operatöre sebebi söyleyen bir mesaj.
    */
-  const db = join(tmpdir(), `adspilot-anahtar-${process.pid}.db`);
+  const db = join(tmpdir(), `aegis-anahtar-${process.pid}.db`);
   rmSync(db, { force: true });
-  process.env.ADSPILOT_MASTER_KEY = MASTER;
+  process.env.AEGIS_MASTER_KEY = MASTER;
   const { UserStore } = await import("../src/store.js");
   const s2 = new UserStore(db);
   s2.upsertUser({ subject: "sub-anahtar", email: "anahtar@ornek.com", refreshToken: "gizli-jeton" });
@@ -539,10 +539,10 @@ test("KRİTİK: ana anahtar veritabanını ÇÖZEMİYORSA süreç açılmaz", as
     cwd: process.cwd(),
     env: {
       ...process.env,
-      ADSPILOT_MASTER_KEY: baskaAnahtar,
-      ADSPILOT_DB: db,
-      ADSPILOT_PORT: String(PORT + 77),
-      ADSPILOT_PUBLIC_URL: `http://localhost:${PORT + 77}`,
+      AEGIS_MASTER_KEY: baskaAnahtar,
+      AEGIS_DB: db,
+      AEGIS_PORT: String(PORT + 77),
+      AEGIS_PUBLIC_URL: `http://localhost:${PORT + 77}`,
     },
   });
   let cikti = "";
@@ -575,7 +575,7 @@ test("ZAYIF ANA ANAHTAR: 8 karakterlik anahtarla süreç sıfırdan farklı kodl
   const { kod, stderr } = await zayifAnahtarlaBaslat("kisa1234");
   assert.notEqual(kod, 0, "zayıf anahtarla ayağa kalkmamalı");
   assert.notEqual(kod, null, "süreç ayakta kalmamalı — kapı geçirmiş demektir");
-  assert.match(stderr, /ADSPILOT_MASTER_KEY/, "hangi değişkenin sorunlu olduğu söylenmeli");
+  assert.match(stderr, /AEGIS_MASTER_KEY/, "hangi değişkenin sorunlu olduğu söylenmeli");
   assert.doesNotMatch(stderr, /kisa1234/, "anahtarın kendisi loga yazılmamalı");
 });
 

@@ -3,11 +3,11 @@
 
 *Last updated: 13 August 2026*
 
-This policy covers **AdsPilot**, an open-source MCP server that connects an AI assistant
+This policy covers **Aegis**, an open-source MCP server that connects an AI assistant
 to a Google Ads account. It applies to the software as published in this repository and
 to any hosted instance run from unmodified source.
 
-AdsPilot is self-hosted software. Whoever operates an instance is the data controller
+Aegis is self-hosted software. Whoever operates an instance is the data controller
 for that instance; this document describes what the software itself collects, stores and
 transmits, so both operators and their users know exactly what is at stake.
 
@@ -36,14 +36,14 @@ In local (stdio) mode there is no database at all: credentials live in the user'
 
 ## Google user data
 
-AdsPilot accesses Google user data (the `adwords` OAuth scope) strictly to execute the
+Aegis accesses Google user data (the `adwords` OAuth scope) strictly to execute the
 requests the authenticated user makes through their own MCP client — reading reports and
 managing campaigns in accounts that user already controls. Use of data received from
 Google APIs adheres to the
 [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
 including its Limited Use requirements.
 
-Users can revoke AdsPilot's access at any time at
+Users can revoke Aegis's access at any time at
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions); revocation
 immediately invalidates the stored refresh token.
 

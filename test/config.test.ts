@@ -105,9 +105,9 @@ test("boş değişken UYARI basmaz, bozuk değişken basar", () => {
     parseNumEnv("X", undefined, 72);
     assert.deepEqual(satirlar, [], "tanımsız/boş değişken olağandır, gürültü üretmemeli");
 
-    parseNumEnv("ADSPILOT_TEST", "abc", 72);
+    parseNumEnv("AEGIS_TEST", "abc", 72);
     assert.equal(satirlar.length, 1, "bozuk değer operatöre bildirilmeli");
-    assert.match(satirlar[0], /ADSPILOT_TEST/, "hangi değişken olduğu söylenmeli");
+    assert.match(satirlar[0], /AEGIS_TEST/, "hangi değişken olduğu söylenmeli");
     assert.match(satirlar[0], /72/, "hangi değerin kullanıldığı söylenmeli");
   } finally {
     console.error = gercek;
@@ -128,7 +128,7 @@ test("KRİTİK: geçersiz bütçe tavanı SESSİZCE devre dışı kalamaz, 500'e
    * görünür, hiçbir şeyi engellemez. Bu yüzden geçersiz değer varsayılana ZORLANIR.
    */
   for (const bozuk of ["abc", "0", "-100", "", "   ", "NaN"]) {
-    ayarla("ADSPILOT_MAX_DAILY_BUDGET", bozuk === "" ? "" : bozuk);
+    ayarla("AEGIS_MAX_DAILY_BUDGET", bozuk === "" ? "" : bozuk);
     const c = loadConfig();
     assert.equal(c.maxDailyBudget, 500, `'${bozuk}' tavanı devre dışı bırakmamalı`);
     assert.ok(Number.isFinite(c.maxDailyBudget), "tavan her zaman sonlu bir sayı olmalı");
@@ -136,23 +136,23 @@ test("KRİTİK: geçersiz bütçe tavanı SESSİZCE devre dışı kalamaz, 500'e
 });
 
 test("geçerli bütçe tavanı aynen kullanılır", () => {
-  ayarla("ADSPILOT_MAX_DAILY_BUDGET", "250");
+  ayarla("AEGIS_MAX_DAILY_BUDGET", "250");
   assert.equal(loadConfig().maxDailyBudget, 250);
 });
 
 /* ── yazma izni ───────────────────────────────────────────────────────────────── */
 
 test("yazma izni varsayılan AÇIK, ama açıkça kapatılabilir", () => {
-  ayarla("ADSPILOT_WRITE_ENABLED", undefined);
+  ayarla("AEGIS_WRITE_ENABLED", undefined);
   assert.equal(loadConfig().writeEnabled, true, "varsayılan davranış korunmalı");
-  ayarla("ADSPILOT_WRITE_ENABLED", "0");
+  ayarla("AEGIS_WRITE_ENABLED", "0");
   assert.equal(loadConfig().writeEnabled, false);
-  ayarla("ADSPILOT_WRITE_ENABLED", "hayır");
+  ayarla("AEGIS_WRITE_ENABLED", "hayır");
   assert.equal(loadConfig().writeEnabled, false, "Türkçe kapatma da geçmeli");
 });
 
 test("KRİTİK: yazma izninde yazım hatası sunucuyu AÇIK bırakmaz", () => {
-  ayarla("ADSPILOT_WRITE_ENABLED", "hayirr");
+  ayarla("AEGIS_WRITE_ENABLED", "hayirr");
   assert.equal(
     loadConfig().writeEnabled,
     false,
@@ -187,7 +187,7 @@ test("simülasyon kanalları HAM geçirilir — doğrulama karar anına bırakı
    * Düşseydi, tek bir yazım hatası tüm sunucuyu (okuma araçları dahil) kullanılmaz
    * hâle getirirdi. Değer karar anında Türkçe bir retle reddedilir — kapalı arıza.
    */
-  ayarla("ADSPILOT_NAC_SIMULATE", "saçmalık");
+  ayarla("AEGIS_NAC_SIMULATE", "saçmalık");
   const n = nacConfigFromEnv();
   assert.equal(n.nacSimulate, "saçmalık", "değer başlangıçta doğrulanmamalı");
 });
@@ -198,10 +198,10 @@ test("halka anahtarları varsayılan KAPALI — token varlığı halka açmaz", 
    * için token tanımlamış bir operatöre, istemediği halkaların yanlış-pozitif retlerini
    * dayatmamak için hiçbir halka token'ın varlığıyla kendiliğinden açılmaz.
    */
-  for (const k of ["ADSPILOT_REACH_CHECK", "ADSPILOT_DEVICESWAP_CHECK", "ADSPILOT_CALLFWD_CHECK"]) {
+  for (const k of ["AEGIS_REACH_CHECK", "AEGIS_DEVICESWAP_CHECK", "AEGIS_CALLFWD_CHECK"]) {
     ayarla(k, undefined);
   }
-  ayarla("ADSPILOT_NAC_TOKEN", "sahte-token");
+  ayarla("AEGIS_NAC_TOKEN", "sahte-token");
   const n = nacConfigFromEnv();
   assert.equal(n.reachCheck, false);
   assert.equal(n.devSwapCheck, false);
@@ -209,17 +209,17 @@ test("halka anahtarları varsayılan KAPALI — token varlığı halka açmaz", 
 });
 
 test("SIM-swap penceresi varsayılanı 72 saat; geçersiz değer onu bozamaz", () => {
-  ayarla("ADSPILOT_SIMSWAP_WINDOW_HOURS", undefined);
+  ayarla("AEGIS_SIMSWAP_WINDOW_HOURS", undefined);
   assert.equal(nacConfigFromEnv().simSwapWindowHours, 72);
-  ayarla("ADSPILOT_SIMSWAP_WINDOW_HOURS", "sıfır");
+  ayarla("AEGIS_SIMSWAP_WINDOW_HOURS", "sıfır");
   assert.equal(nacConfigFromEnv().simSwapWindowHours, 72, "geçersiz pencere varsayılana döner");
-  ayarla("ADSPILOT_SIMSWAP_WINDOW_HOURS", "0");
+  ayarla("AEGIS_SIMSWAP_WINDOW_HOURS", "0");
   assert.equal(
     nacConfigFromEnv().simSwapWindowHours,
     72,
     "KRİTİK: 0 saatlik pencere hiçbir SIM değişimini göremezdi"
   );
-  ayarla("ADSPILOT_SIMSWAP_WINDOW_HOURS", "24");
+  ayarla("AEGIS_SIMSWAP_WINDOW_HOURS", "24");
   assert.equal(nacConfigFromEnv().simSwapWindowHours, 24);
 });
 
@@ -288,24 +288,24 @@ function stderrYakala<T>(is: () => T): { sonuc: T; yazilanlar: string } {
 
 test("parseBool uyarısı HAM DEĞERİ yazmaz, değişken ADINI yazar", () => {
   const { sonuc, yazilanlar } = stderrYakala(() =>
-    parseBool(SIZINTI_SENTINELI, true, "ADSPILOT_WRITE_ENABLED")
+    parseBool(SIZINTI_SENTINELI, true, "AEGIS_WRITE_ENABLED")
   );
   assert.equal(sonuc, false, "anlaşılamayan değer yine de güvenli tarafa düşmeli");
   assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e yazılmamalı");
-  assert.match(yazilanlar, /ADSPILOT_WRITE_ENABLED/, "operatör hangi değişkeni düzelteceğini görmeli");
+  assert.match(yazilanlar, /AEGIS_WRITE_ENABLED/, "operatör hangi değişkeni düzelteceğini görmeli");
 });
 
 test("parseNumEnv uyarısı HAM DEĞERİ yazmaz", () => {
   const { sonuc, yazilanlar } = stderrYakala(() =>
-    parseNumEnv("ADSPILOT_SIMSWAP_WINDOW_HOURS", SIZINTI_SENTINELI, 72)
+    parseNumEnv("AEGIS_SIMSWAP_WINDOW_HOURS", SIZINTI_SENTINELI, 72)
   );
   assert.equal(sonuc, 72);
   assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e yazılmamalı");
-  assert.match(yazilanlar, /ADSPILOT_SIMSWAP_WINDOW_HOURS/);
+  assert.match(yazilanlar, /AEGIS_SIMSWAP_WINDOW_HOURS/);
 });
 
 test("bütçe tavanı uyarısı HAM DEĞERİ yazmaz", () => {
-  ayarla("ADSPILOT_MAX_DAILY_BUDGET", SIZINTI_SENTINELI);
+  ayarla("AEGIS_MAX_DAILY_BUDGET", SIZINTI_SENTINELI);
   ayarla("GOOGLE_ADS_DEVELOPER_TOKEN", "sahte");
   ayarla("GOOGLE_ADS_CLIENT_ID", "sahte");
   ayarla("GOOGLE_ADS_CLIENT_SECRET", "sahte");
@@ -313,7 +313,7 @@ test("bütçe tavanı uyarısı HAM DEĞERİ yazmaz", () => {
   const { sonuc, yazilanlar } = stderrYakala(() => loadConfig());
   assert.equal(sonuc.maxDailyBudget, 500, "geçersiz tavan varsayılana zorlanmalı");
   assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e yazılmamalı");
-  assert.match(yazilanlar, /ADSPILOT_MAX_DAILY_BUDGET/);
+  assert.match(yazilanlar, /AEGIS_MAX_DAILY_BUDGET/);
 });
 
 test("her nac bayrağı uyarıda KENDİ değişken adıyla anılır (ad kaybolmaz)", () => {
@@ -323,10 +323,10 @@ test("her nac bayrağı uyarıda KENDİ değişken adıyla anılır (ad kaybolma
    * devam eder. Bu yüzden gerçek çağrı yerleri üzerinden sınanır.
    */
   const eslesme = [
-    ["ADSPILOT_STEPUP", "stepUp"],
-    ["ADSPILOT_REACH_CHECK", "reachCheck"],
-    ["ADSPILOT_DEVICESWAP_CHECK", "devSwapCheck"],
-    ["ADSPILOT_CALLFWD_CHECK", "callFwdCheck"],
+    ["AEGIS_STEPUP", "stepUp"],
+    ["AEGIS_REACH_CHECK", "reachCheck"],
+    ["AEGIS_DEVICESWAP_CHECK", "devSwapCheck"],
+    ["AEGIS_CALLFWD_CHECK", "callFwdCheck"],
   ] as const;
   for (const [ad, alan] of eslesme) {
     ayarla(ad, SIZINTI_SENTINELI);
