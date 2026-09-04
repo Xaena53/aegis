@@ -43,9 +43,9 @@ export type MetaHedef =
 export type MetaDurum = "ACTIVE" | "PAUSED";
 
 /**
- * OKUMADA görülebilen durumlar. Yazarken yalnız ACTIVE/PAUSED gönderilir (MetaDurum),
- * ama Meta okurken ARCHIVED ve DELETED de döndürür. Bunları PAUSED'a katlamak
- * "arşivlenmiş" ile "duraklatılmış"ı aynı şey saymaktı; ikisi aynı şey değildir.
+ * The statuses that can be seen ON A READ. Writes send only ACTIVE or PAUSED, per
+ * MetaDurum, but on a read Meta also returns ARCHIVED and DELETED. Folding those into PAUSED
+ * meant treating "archived" and "paused" as the same thing; they are not.
  */
 export type MetaOkunanDurum = MetaDurum | "ARCHIVED" | "DELETED";
 
@@ -53,29 +53,31 @@ export interface MetaKampanya {
   id: string;
   ad: string;
   /**
-   * Meta'nın bildirdiği durum — YALNIZ kesin okunduysa.
+   * The status Meta reports — ONLY when it was read for certain.
    *
-   * Eskiden bu alan `status === "ACTIVE" ? ACTIVE : PAUSED` ile üretiliyordu: alan hiç
-   * gelmediğinde, tipi beklenmedik olduğunda ya da Meta yeni bir enum eklediğinde sonuç
-   * "PAUSED" oluyordu — yani "bilinmiyor", "harcamıyor" diye raporlanıyordu. Bu alana
-   * bakacak İLK kapı o gün sessizce fail-open olurdu. undefined artık "bilinmiyor"
-   * demektir ve tüketici onu temiz sayamaz.
+   * This field used to be produced with `status === "ACTIVE" ? ACTIVE : PAUSED`: when the
+   * field never arrived, when its type was unexpected, or when Meta added a new enum value,
+   * the result was "PAUSED" — that is, "unknown" was being reported as "not spending". The
+   * FIRST gate to consult this field would have failed open, quietly, on that day.
+   * undefined now means "unknown", and a consumer cannot treat it as clean.
    */
   durum?: MetaOkunanDurum;
-  /** Durum okunamadıysa SEBEBİ — ret/rapor metinleri bunu aynen taşıyabilsin diye. */
+  /** The REASON the status could not be read, so refusal and report text can carry it
+   * verbatim. */
   durumNotu?: string;
-  /** Günlük bütçe, hesabın para biriminde (minor unit DEĞİL — çeviri istemcide yapılır). */
+  /** The daily budget in the account's currency — NOT in minor units; the conversion
+   * happens in the client. */
   gunlukButce?: number;
   /**
-   * Rakamın NEREDEN geldiği. Meta bütçeyi iki yerden birinde tutar ve ikisi aynı şey
-   * değildir: kampanya düzeyi (CBO) tek bir sayıdır, reklam seti düzeyi ise toplamdır.
-   * Onay özetine bunu yazmak, operatörün gördüğü rakamı Ads Manager'da nerede
-   * arayacağını bilmesini sağlar.
+   * WHERE the figure came from. Meta holds the budget in one of two places, and they are
+   * not the same thing: at campaign level (CBO) it is a single number, while at ad-set level
+   * it is a sum. Putting this in the approval summary lets the operator know where to look
+   * for the figure they are seeing in Ads Manager.
    */
   butceKaynagi?: "kampanya" | "reklam-setleri";
   /**
-   * Bütçe okunamadıysa SEBEBİ — "okunamadı" tek başına operatöre ne yapacağını
-   * söylemez. Ret mesajı bu notu aynen taşır.
+   * The REASON the budget could not be read — "could not be read" on its own does not tell
+   * the operator what to do about it. The refusal message carries this note verbatim.
    */
   butceNotu?: string;
 }
@@ -91,7 +93,7 @@ export interface MetaKanali {
 /** The config slice this module reads (kept narrow, like AgAyar). */
 export interface MetaAyar {
   metaToken?: string;
-  /** act_<id> biçiminde ya da çıplak rakam; istemci normalize eder. */
+  /** Either in act_<id> form or bare digits; the client normalises it. */
   metaAdAccountId?: string;
 }
 
@@ -109,24 +111,25 @@ export function __setMetaKanalForTests(k: MetaKanali | undefined): void {
 let gercekKanal: MetaKanali | undefined;
 let gercekKanalAnahtari: string | undefined;
 
-/** "act_123" ve "123" aynı hesaba işaret eder; Graph yolu act_ öneki ister. */
+/** "act_123" and "123" point at the same account; the Graph path wants the act_
+ * prefix. */
 export function hesapYolu(ham: string): string {
   const temiz = ham.trim();
   return temiz.startsWith("act_") ? temiz : `act_${temiz.replace(/\D/g, "")}`;
 }
 
 /**
- * Bir Meta minor-unit alanını TAM SAYIYA çevirir — ya da okunamadığını söyler.
+ * Converts a Meta minor-unit field to an INTEGER — or says that it could not be read.
  *
- * `Number.isFinite(Number(x))` yetmez ve tam da bu yüzden değiştirildi: `Number("")`,
- * `Number(" ")` ve `Number([])` sıfırdır, `Number(true)` birdir. O kısayolla okunamayan
- * bir bütçe sessizce 0 sayılıyor, toplam gerçeğinden küçük çıkıyor ve harcama tavanı
- * yeşil yanıyordu. write.ts'teki `mikrodanTutar` sözleşmesinin aynısı burada da geçerli:
- * ÖNCE tip, SONRA sayı.
+ * `Number.isFinite(Number(x))` is not enough, and that is exactly why it was changed:
+ * `Number("")`, `Number(" ")` and `Number([])` are zero, and `Number(true)` is one. With that
+ * shortcut, a budget that could not be read counted silently as 0, the total came out smaller
+ * than the truth, and the spend ceiling showed green. The same contract as `mikrodanTutar` in
+ * write.ts applies here: TYPE FIRST, NUMBER SECOND.
  *
- * Meta minor unit'leri her zaman negatif olmayan TAM SAYIDIR; "1e3", "12.5", "-100" gibi
- * değerler Meta'nın göndermediği biçimlerdir ve "belki de şudur" diye yorumlanmaz — kapalı
- * arıza tarafına düşer.
+ * Meta's minor units are always non-negative INTEGERS; values such as "1e3", "12.5" and
+ * "-100" are shapes Meta does not send, and they are not interpreted as "well, it might mean
+ * this" — they fall on the fail-closed side.
  */
 export function minorTutar(ham: unknown): number | undefined {
   if (typeof ham === "number") return Number.isSafeInteger(ham) && ham >= 0 ? ham : undefined;
@@ -138,10 +141,10 @@ export function minorTutar(ham: unknown): number | undefined {
 }
 
 /**
- * Hesabın para birimi ve minor-unit ÇARPANI.
+ * The account's currency and its minor-unit MULTIPLIER.
  *
- * Çarpan para birimine göre DEĞİŞİR: USD'de 1 birim = 100 cent, JPY'de 1 birim = 1 yen.
- * Bu yüzden çarpan tahmin edilmez, hesaptan okunur (bkz. paraBirimiCoz).
+ * The multiplier VARIES with the currency: in USD one unit is 100 cents, in JPY one unit is
+ * 1 yen. So the multiplier is not guessed, it is read from the account — see paraBirimiCoz.
  */
 export interface MetaParaBirimi {
   kod: string;
@@ -149,54 +152,60 @@ export interface MetaParaBirimi {
 }
 
 /**
- * `/act_<id>?fields=currency,currency_offset` gövdesinden para birimi çözümü — KAPALI ARIZA.
+ * Resolving the currency from a `/act_<id>?fields=currency,currency_offset` body — FAILS
+ * CLOSED.
  *
- * Alan yoksa, tipi beklenmedikse ya da çarpan pozitif tam sayı değilse undefined döner.
- * Varsayılan olarak 100'e düşmek, işin en tehlikeli hâlini ("hesap JPY ama biz USD
- * sanıyoruz") normal gibi gösterirdi: yazarken 100 kat fazla harcatır, okurken gerçek
- * bütçeyi yüzde birine indirip tavan kapısını kör eder.
+ * It returns undefined when the field is absent, when its type is unexpected, or when the
+ * multiplier is not a positive integer. Defaulting to 100 would make the most dangerous state
+ * of this business — "the account is in JPY but we think it is USD" — look normal: on a write
+ * it spends 100 times too much, and on a read it shrinks the real budget to a hundredth and
+ * blinds the ceiling gate.
  */
 export function paraBirimiCoz(govde: any): MetaParaBirimi | undefined {
   const kod = govde?.currency;
   if (typeof kod !== "string" || !/^[A-Za-z]{3}$/.test(kod.trim())) return undefined;
   const carpan = minorTutar(govde?.currency_offset);
-  // 0 çarpan sıfıra bölme, saçma büyüklükteki çarpan da okunmuş bir değer değil bir arızadır.
+  // A multiplier of 0 is a division by zero, and an absurdly large one is not a value that
+  // was read, it is a malfunction.
   if (carpan === undefined || carpan < 1 || carpan > 1_000_000) return undefined;
   return { kod: kod.trim().toUpperCase(), carpan };
 }
 
 /**
- * Meta bütçeleri MINOR UNIT ister (kuruş/cent/yen) ve TAM SAYI bekler.
+ * Meta budgets are expected in MINOR UNITS — kurus, cents, yen — and as INTEGERS.
  *
- * Bu, Google Ads'in micros'una benzeyen ama ölçeği farklı olan ikinci bir tuzak: aynı
- * sayıyı iki API'ye göndermek, birinde 100 kat sapma demektir. Yuvarlama bilerek
- * Math.round: kesme (trunc) her seferinde müşterinin lehine değil ALEYHİNE sapardı ve
- * "1.005 istedim, 1.00 oldu" gibi sessiz bir eksiltme üretirdi.
+ * This is a second trap that resembles Google Ads's micros but is on a different scale:
+ * sending the same number to both APIs means being off by a factor of 100 on one of them. The
+ * rounding is deliberately Math.round: truncating would err AGAINST the customer rather than
+ * for them every single time, producing a silent shortfall of the "I asked for 1.005 and got
+ * 1.00" kind.
  *
- * ÇARPAN ZORUNLU PARAMETRE, varsayılanı YOK: varsayılan 100 olsaydı çağrı yerlerinden
- * birinin onu geçmeyi unutması JPY bir hesapta 100 katlık sessiz sapma demek olurdu.
- * Unutulduğunda derleme durur; sessizce yanlış para gitmez.
+ * THE MULTIPLIER IS A REQUIRED PARAMETER, with NO default: had it defaulted to 100, one call
+ * site forgetting to pass it would mean a silent hundredfold error on a JPY account. Forget
+ * it and compilation stops; the wrong amount of money does not go out quietly.
  */
 export function minorUnit(tutar: number, carpan: number): number {
   carpanDogrula(carpan);
   /**
-   * toFixed ARADA DURUYOR ve gerekli: `1.005 * 100` ikili gösterimde 100.49999999999999
-   * olur, dolayısıyla düz `Math.round(tutar * 100)` bunu 100'e indirirdi — yani tam da
-   * kaçınmak istediğimiz sessiz, müşteri aleyhine eksiltme. Önce sabit basamağa
-   * yuvarlayıp sonra tam sayıya çekmek bu sapmayı kapatır.
+   * The toFixed in the middle IS THERE ON PURPOSE and is necessary: `1.005 * 100` comes
+   * out as 100.49999999999999 in binary, so a plain `Math.round(tutar * 100)` would take it
+   * down to 100 — precisely the silent, customer-unfavourable shortfall we are trying to
+   * avoid. Rounding to a fixed number of places first and only then to an integer closes
+   * that gap.
    */
   return Math.round(Number((tutar * carpan).toFixed(4)));
 }
 
-/** minorUnit'in tersi — okuma yolunda kullanılır. */
+/** The inverse of minorUnit — used on the read path. */
 export function minorUnitTers(minor: number, carpan: number): number {
   carpanDogrula(carpan);
   return minor / carpan;
 }
 
 /**
- * Çarpan doğrulaması. Fırlatmak bilerek: okunamamış bir çarpanla üretilen sayı tavan
- * kapısına yanlış bir rakam sokardı — sessizce NaN/Infinity üretmektense hiç üretmemek.
+ * Multiplier validation. Throwing is deliberate: a number produced with a multiplier that
+ * was never read would push a wrong figure into the ceiling gate — better to produce nothing
+ * at all than to produce NaN or Infinity quietly.
  */
 function carpanDogrula(carpan: number): void {
   if (!Number.isInteger(carpan) || carpan < 1) {
@@ -205,11 +214,12 @@ function carpanDogrula(carpan: number): void {
 }
 
 /**
- * Beklenmedik bir alan değerini nota koymadan ÖNCE zararsızlaştırır.
+ * Defuses an unexpected field value BEFORE it goes into a note.
  *
- * Operatör "neyi düzelteceğini" ancak gördüğümüz değeri söylersek bilir; ama ham upstream
- * içeriğini olduğu gibi taşımak bu deponun her yerinde yasak (jeton/PII riski). Ortası:
- * tip adı, ya da yalnız harf-rakam bırakılmış kısa bir örnek.
+ * The operator can only know what to fix if we tell them the value we saw; but carrying raw
+ * upstream content through as-is is forbidden everywhere in this repository, for token and
+ * PII reasons. The middle ground: the type's name, or a short sample reduced to letters and
+ * digits.
  */
 export function gorunurDeger(x: unknown): string {
   if (x === undefined) return "alan yok";
@@ -220,12 +230,13 @@ export function gorunurDeger(x: unknown): string {
 }
 
 /**
- * Reklam setinin durumu — BEYAZ LİSTE. Tanınmayan her şey undefined'dır.
+ * An ad set's status — an ALLOWLIST. Anything unrecognised is undefined.
  *
- * Eskiden burada `String(r?.status) === "ACTIVE"` filtresi vardı ve tanınmayan durum
- * sessizce "harcamıyor" tarafına düşüyordu: `"active"`, alan yok, `["ACTIVE"]`,
- * `"ACTIVE_LEARNING"` gibi her değer seti toplamdan DÜŞÜRÜYORDU. Eksik toplam ise
- * tavanın altında görünen bir aşımdır — kapının en tehlikeli biçimde yanılması.
+ * There used to be a `String(r?.status) === "ACTIVE"` filter here, and an unrecognised status
+ * fell quietly onto the "not spending" side: `"active"`, a missing field, `["ACTIVE"]`,
+ * `"ACTIVE_LEARNING"` — every one of those values DROPPED that set from the total. And an
+ * incomplete total is an overrun that looks like it is under the ceiling — the most dangerous
+ * way for the gate to be wrong.
  */
 export function setDurumu(ham: unknown): "ACTIVE" | "PASIF" | undefined {
   if (ham === "ACTIVE") return "ACTIVE";
@@ -233,7 +244,8 @@ export function setDurumu(ham: unknown): "ACTIVE" | "PASIF" | undefined {
   return undefined;
 }
 
-/** Kampanya durumunun KESİN okunması — beyaz liste; tanınmayan değer "bilinmiyor"dur. */
+/** Reading a campaign's status FOR CERTAIN — an allowlist; an unrecognised value is
+ * "unknown". */
 export function kampanyaDurumu(ham: unknown): { durum?: MetaOkunanDurum; not?: string } {
   if (ham === "ACTIVE" || ham === "PAUSED" || ham === "ARCHIVED" || ham === "DELETED") {
     return { durum: ham };
@@ -246,13 +258,14 @@ export function kampanyaDurumu(ham: unknown): { durum?: MetaOkunanDurum; not?: s
 }
 
 /**
- * Upstream hata metnini ajana göstermeden önce temizler.
+ * Cleans upstream error text before it is shown to the agent.
  *
- * Meta'nın hata gövdeleri istek URL'sini yankılayabilir ve access_token bir SORGU
- * PARAMETRESİDİR — yani ham gövdeyi olduğu gibi göstermek token'ı ajana (ve çalınmış bir
- * oturuma) vermek olurdu. Aynı ders CAMARA tarafında da yaşandı; burada baştan uygulanır.
+ * Meta's error bodies can echo the request URL, and access_token is a QUERY PARAMETER — so
+ * showing the raw body as-is would be handing the token to the agent, and to a stolen session
+ * with it. The same lesson was learned on the CAMARA side; here it is applied from the
+ * start.
  */
-/** Bir istisnadan metin çıkarır — `String(e)` ile aynı, ama tek yerde. */
+/** Extracts text from an exception — the same as `String(e)`, but in one place. */
 function hataMetni(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -263,7 +276,7 @@ export function hataTemizle(ham: string, token?: string): string {
   return s.replace(/\s+/g, " ").slice(0, 300);
 }
 
-/** Graph API çağrısı — zaman aşımı sınırlı, token yalnız POST gövdesinde. */
+/** A Graph API call — bounded by a timeout, with the token only in the POST body. */
 async function graf(
   ayar: MetaAyar,
   yol: string,
@@ -274,8 +287,9 @@ async function graf(
   const url = `https://graph.facebook.com/${GRAPH_SURUM}/${yol}`;
   const kontrol = new AbortController();
   /**
-   * 15 saniye: onay akışının önünde duran bir çağrı dakikalarca asılı kalamaz. Google
-   * tarafındaki CAMARA çağrılarıyla aynı gerekçe — kapalı arıza HIZLI olmalı.
+   * Fifteen seconds: a call standing in front of an approval flow cannot hang for minutes.
+   * The same reasoning as the CAMARA calls on the Google side — failing closed must be
+   * FAST.
    */
   const zamanlayici = setTimeout(() => kontrol.abort(), 15_000);
   try {
@@ -290,15 +304,15 @@ async function graf(
       cevap = await fetch(hedefUrl, istek);
     } catch (e: any) {
       /**
-       * ZAMAN AŞIMINA UĞRAYAN BİR YAZMA "BAŞARISIZ" DEĞİLDİR — SONUCU BİLİNMEYENDİR.
+       * A WRITE THAT TIMED OUT IS NOT "FAILED" — ITS OUTCOME IS UNKNOWN.
        *
-       * İptal istemci tarafında olur; Meta isteği çoktan almış ve UYGULAMIŞ olabilir.
-       * "Meta işlemi başarısız" demek, ajanı ve kullanıcıyı hiçbir şey olmadığına
-       * inandırır; tipik sonraki hamle tekrar denemektir ve bu, bütçeyi ikinci kez
-       * değiştirmek ya da ikinci bir kampanya doğurmak demek olabilir.
+       * The abort happens on our side; Meta may already have received the request and
+       * APPLIED it. Saying "the Meta operation failed" convinces the agent and the user
+       * that nothing happened, and the typical next move is to retry — which can mean
+       * changing the budget a second time, or giving birth to a second campaign.
        *
-       * OKUMA farklıdır: bir GET'in iptali hiçbir şey değiştirmez, o gerçekten
-       * başarısızdır. Bu yüzden ayrım yönteme göre yapılır.
+       * A READ is different: aborting a GET changes nothing, so it really did fail. That is
+       * why the distinction is drawn by method.
        */
       if (e?.name === "AbortError" && yontem === "POST") {
         throw new Error(
@@ -321,21 +335,23 @@ async function graf(
 }
 
 /**
- * Tek çağrıda okunacak en fazla reklam seti. Aşılırsa toplam EKSİK olurdu ve eksik bir
- * toplam tavanı yanlışlıkla geçirir — bu yüzden sayfa taşması sessizce kırpılmaz, RET olur.
+ * The most ad sets to read in one call. Beyond it the total would be INCOMPLETE, and an
+ * incomplete total lets a campaign through the ceiling by mistake — so a page overflow is not
+ * silently truncated, it is REFUSED.
  */
 const REKLAM_SETI_TAVANI = 200;
 
 /**
- * KAMPANYA DÜZEYİNDE BÜTÇE YOKSA REKLAM SETLERİNDEN TOPLA.
+ * WHEN THERE IS NO BUDGET AT CAMPAIGN LEVEL, SUM THE AD SETS.
  *
- * Meta'da bütçe ya kampanyadadır (CBO) ya da reklam setlerinde. Yalnız `daily_budget`
- * alanına bakmak, CBO olmayan her kampanyayı "bütçesi okunamıyor" durumuna düşürüyordu;
- * o kampanyalar bu araçla yayına alınamıyordu. Doğru çözüm reddi gevşetmek değil,
- * GÖZLEMİ tamamlamaktı: burası o gözlem.
+ * On Meta the budget lives either on the campaign (CBO) or on the ad sets. Looking only at
+ * the `daily_budget` field dropped every non-CBO campaign into "its budget cannot be read",
+ * and those campaigns could not be taken live with this tool. The right fix was not to loosen
+ * the refusal but to complete the OBSERVATION: this is that observation.
  *
- * Her belirsizlik RET tarafına düşer, çünkü buradan çıkan sayı doğrudan harcama tavanına
- * karşı ölçülüyor: eksik bir toplam, tavanın altında görünen bir aşımdır.
+ * Every uncertainty falls on the REFUSE side, because the number coming out of here is
+ * measured directly against the spend ceiling: an incomplete total is an overrun that looks
+ * like it is under the ceiling.
  */
 async function reklamSetiButcesi(
   ayar: MetaAyar,
@@ -352,13 +368,13 @@ async function reklamSetiButcesi(
     );
   } catch (e) {
     /**
-     * SEBEP AJANA GİDER, AMA HAM GİTMEZ.
+     * THE REASON GOES TO THE AGENT, BUT NOT RAW.
      *
-     * Bu not `butceNotu` olarak set_meta_campaign_status'ün ret metnine giriyor, yani
-     * doğrudan ajanın gördüğü yüzeye. `graf` yalnız HTTP hatalarını temizliyordu; 200 +
-     * JSON olmayan gövdede atılan SyntaxError'ın mesajı UPSTREAM GÖVDENİN ÖNEKİNİ taşır
-     * ve buradan maskesiz, tavansız geçerdi. hataTemizle hem access_token'ı hem jetonun
-     * kendisini siler, hem de 300 karakterde keser.
+     * This note enters set_meta_campaign_status's refusal text as `butceNotu`, which is a
+     * surface the agent sees directly. `graf` only cleaned HTTP errors; on a 200 with a
+     * non-JSON body, the message of the SyntaxError thrown carries A PREFIX OF THE UPSTREAM
+     * BODY, and it used to pass through here unmasked and uncapped. hataTemizle removes both
+     * access_token and the token itself, and cuts at 300 characters.
      */
     return { not: `reklam setleri okunamadı (${hataTemizle(hataMetni(e), ayar.metaToken)})` };
   }
@@ -367,9 +383,10 @@ async function reklamSetiButcesi(
   if (!setler) return { not: "Meta reklam seti listesi beklenen biçimde gelmedi" };
 
   /**
-   * SAYFA TAŞMASI RET. `paging.next` varsa elimizdeki liste eksiktir ve eksik listeden
-   * çıkan toplam GERÇEĞİNDEN KÜÇÜKTÜR — yani tavanı aşan bir kampanya tavanın altında
-   * görünür. Sessizce ilk sayfayla yetinmek, kapının en tehlikeli biçimde yanılmasıdır.
+   * A PAGE OVERFLOW IS A REFUSAL. If `paging.next` is present, the list we hold is
+   * incomplete, and the total that comes out of an incomplete list is SMALLER THAN THE TRUTH
+   * — so a campaign that exceeds the ceiling appears to be under it. Quietly settling for
+   * the first page is the most dangerous way for the gate to be wrong.
    */
   if (yanit?.paging?.next) {
     return {
@@ -380,16 +397,17 @@ async function reklamSetiButcesi(
   }
 
   /**
-   * Yalnız ACTIVE setler harcar. Duraklatılmış bir setin bütçesini toplama katmak,
-   * kampanyayı olmadığı kadar pahalı gösterip meşru bir yayına almayı engellerdi.
-   * Setin KENDİ `status` alanı doğru olandır: kampanya ACTIVE olduğunda yayına girecek
-   * olanlar bunlardır (`effective_status` üst nesnenin bugünkü hâlini de katar).
+   * Only ACTIVE sets spend. Counting a paused set's budget into the total would make the
+   * campaign look more expensive than it is and block a legitimate go-live. The set's OWN
+   * `status` field is the right one: these are the sets that will start delivering once the
+   * campaign is ACTIVE, whereas `effective_status` also folds in the parent's current state.
    *
-   * DURUMU OKUNAMAYAN SET TOPLAMI GEÇERSİZ KILAR — atlanmaz. Eski filtre bir beyaz liste
-   * gibi görünüyordu ama sessiz bir ELEME idi: tanınmayan durum "harcamıyor" sayılıyor ve
-   * o setin bütçesi toplamdan düşüyordu. Karışık bir listede (biri tanınır, biri tanınmaz)
-   * bu, tavanın altında görünen bir aşım üretir. Bilinmeyen durum, bilinmeyen bütçeyle
-   * aynı disipline tabidir: RET + sebebi söyleyen not.
+   * A SET WHOSE STATUS CANNOT BE READ INVALIDATES THE TOTAL — it is not skipped. The old
+   * filter looked like an allowlist but was a silent EXCLUSION: an unrecognised status
+   * counted as "not spending", and that set's budget dropped out of the total. On a mixed
+   * list, where one set is recognised and another is not, that produces an overrun that
+   * looks like it is under the ceiling. An unknown status is held to the same discipline as
+   * an unknown budget: REFUSE, with a note saying why.
    */
   const aktif: any[] = [];
   for (const r of setler) {
@@ -420,9 +438,10 @@ async function reklamSetiButcesi(
       continue;
     }
     /**
-     * ALAN VAR AMA OKUNAMIYOR ile ALAN YOK farklı şeylerdir; ikisi de RET, ama sebepleri
-     * ayrı yazılır. `""`, `" "`, `[]`, `true` gibi değerler eski kodda `Number()` ile
-     * sıfıra/bire çevrilip toplama giriyordu — bu, tavanı yeşil yakan sessiz eksiltmeydi.
+     * THE FIELD EXISTS BUT CANNOT BE READ and THE FIELD IS ABSENT are different things;
+     * both are refusals, but their reasons are written separately. In the old code values
+     * such as `""`, `" "`, `[]` and `true` were turned into zero or one by `Number()` and
+     * entered the total — the silent shortfall that showed the ceiling green.
      */
     if (r?.daily_budget !== undefined && r?.daily_budget !== null) {
       return {
@@ -432,9 +451,10 @@ async function reklamSetiButcesi(
       };
     }
     /**
-     * ÖMÜRLÜK BÜTÇE GÜNLÜK TAVANA ÇEVRİLEMEZ. Toplam tutarı süreye bölmek bir tahmindir
-     * ve Meta teslimatı gün içinde öne yükleyebilir; tahmini gerçek bir tavanmış gibi
-     * ölçmek, kapının doğruladığını sandığı ama doğrulamadığı bir sayı üretir.
+     * A LIFETIME BUDGET CANNOT BE CONVERTED INTO A DAILY CEILING. Dividing the total by
+     * the duration is an estimate, and Meta can front-load delivery within a day; measuring
+     * an estimate as though it were a real ceiling produces a number the gate believes it
+     * verified but did not.
      */
     if (r?.lifetime_budget !== undefined && r?.lifetime_budget !== null) {
       return { not: `"${ad}" reklam seti ömürlük bütçe kullanıyor; günlük tavana çevrilemez` };
@@ -442,14 +462,15 @@ async function reklamSetiButcesi(
     return { not: `"${ad}" reklam setinin günlük bütçesi okunamadı` };
   }
 
-  // Minor unit'ler ÖNCE tam sayı olarak toplanır: her set için ayrı ayrı bölmek
-  // kayan nokta artığı biriktirirdi.
+  // The minor units are summed as integers FIRST: dividing separately for each set would
+  // accumulate floating-point residue.
   return { gunlukButce: minorUnitTers(toplamMinor, carpan) };
 }
 
 /**
- * Ret mesajında setin ANILACAĞI ad. Yalnız gerçekten dize/sayı olan alanlar kullanılır:
- * `String(nesne)` "[object Object]" üretip operatöre hiçbir şey söylemezdi.
+ * The name the set WILL BE CALLED BY in a refusal message. Only fields that really are a
+ * string or a number are used: `String(object)` would produce "[object Object]" and tell the
+ * operator nothing.
  */
 function setAdi(r: any): string {
   const ham = typeof r?.name === "string" && r.name.trim() !== "" ? r.name : r?.id;
@@ -458,9 +479,9 @@ function setAdi(r: any): string {
 }
 
 /**
- * Gerçek kanal. Önbellek token + hesap kimliğine göre anahtarlanır — anahtarsız bir
- * singleton ilk çağıranın hesabını sonsuza dek kapatırdı (CAMARA tarafında yaşanan
- * hatanın aynısı).
+ * The real channel. The cache is keyed by token plus account id — an unkeyed singleton
+ * would pin the first caller's account forever, which is the same bug that happened on the
+ * CAMARA side.
  */
 export function metaKanali(ayar: MetaAyar): MetaKanali {
   if (kanalOverride && kanalOverride !== "reset") return kanalOverride;
@@ -470,17 +491,17 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
   const hesap = hesapYolu(ayar.metaAdAccountId!);
 
   /**
-   * PARA BİRİMİ HESAPTAN OKUNUR, VARSAYILMAZ.
+   * THE CURRENCY IS READ FROM THE ACCOUNT, NOT ASSUMED.
    *
-   * Minor-unit çarpanı hesabın para birimine bağlıdır (USD 100, JPY 1). Sabit ×100,
-   * JPY bir hesapta yazarken 100 KAT fazla harcatır, okurken de gerçek bütçeyi yüzde
-   * birine indirip tavan kapısını kör eder — üstelik insana onaylattığımız rakam da
-   * yanlış olurdu. Çarpan okunamazsa hiçbir bütçe yazılmaz ve hiçbir bütçe "doğrulandı"
-   * sayılmaz.
+   * The minor-unit multiplier depends on the account's currency: 100 for USD, 1 for JPY. A
+   * hard-coded ×100 spends 100 TIMES too much when writing to a JPY account, and when
+   * reading it shrinks the real budget to a hundredth and blinds the ceiling gate — and the
+   * figure we put to a human for approval would be wrong as well. If the multiplier cannot
+   * be read, no budget is written and no budget counts as "verified".
    *
-   * Değer hesap başına sabittir ve kanal zaten jeton+hesap anahtarıyla önbelleklendiği
-   * için burada tutmak güvenli. HATA ÖNBELLEKLENMEZ: geçici bir ağ arızası hesabı
-   * oturum boyunca kilitlememeli.
+   * The value is fixed per account, and since the channel is already cached under a
+   * token-plus-account key, holding it here is safe. ERRORS ARE NOT CACHED: a transient
+   * network fault must not lock the account out for the rest of the session.
    */
   let paraBirimi: MetaParaBirimi | undefined;
   const paraBirimiAl = async (): Promise<MetaParaBirimi> => {
@@ -490,11 +511,12 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
       govde = await graf(ayar, hesap, { fields: "currency,currency_offset" }, "GET");
     } catch (e) {
       /**
-       * Ağ arızası ile "alan gelmedi" AYNI SONUCU doğurur (çarpan bilinmiyor), bu yüzden
-       * aynı cümleyle bildirilir: ret mesajını okuyan operatör tek bir sebep arar.
+       * A network fault and "the field did not arrive" produce THE SAME OUTCOME — the
+       * multiplier is unknown — so they are reported in the same sentence: the operator
+       * reading the refusal is looking for one reason, not two.
        */
-      // Bu mesaj da `butceNotu` üzerinden ajana ulaşıyor: ham upstream metni
-      // hataTemizle'siz taşımak jetonu ve gövde önekini ajana vermek olurdu.
+      // This message also reaches the agent through `butceNotu`: carrying raw upstream text
+      // without hataTemizle would hand the agent the token and a prefix of the body.
       throw new Error(
         `Meta hesabının para birimi okunamadı (${hataTemizle(hataMetni(e), ayar.metaToken)})`
       );
@@ -514,14 +536,15 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
   gercekKanal = {
     async kampanyaOlustur({ ad, hedef, gunlukButce }) {
       /**
-       * status: "PAUSED" BURADA SABİTTİR ve parametre DEĞİLDİR.
+       * status: "PAUSED" IS FIXED HERE, and is NOT a parameter.
        *
-       * Google tarafındaki söz ("kampanyalar her zaman duraklatılmış oluşur") bu alanda da
-       * geçerli olmalı; çağıranın onu geçebilmesi, sözü çağrı yerine bırakmak demekti.
-       * Yayına alma ayrı bir araçtır ve insan onayı + ağ zinciri ister.
+       * The promise made on the Google side — campaigns are always born paused — has to
+       * hold on this surface too; letting the caller pass it would leave the promise up to
+       * the call site. Going live is a separate tool, and it wants human approval plus the
+       * network chain.
        */
-      // Para birimi ÖNCE okunur: okunamıyorsa kampanya hiç oluşturulmaz (yanlış ölçekli
-      // bir bütçeyle kampanya doğurmaktansa hiç doğurmamak).
+      // The currency is read FIRST: if it cannot be read, no campaign is created at all —
+      // better none than one born with a budget at the wrong scale.
       const { carpan } = await paraBirimiAl();
       const cevap = await graf(ayar, `${hesap}/campaigns`, {
         name: ad,
@@ -531,11 +554,11 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
         daily_budget: String(minorUnit(gunlukButce, carpan)),
       });
       /**
-       * KİMLİKSİZ YANIT BAŞARI DEĞİLDİR. `String(cevap.id)` undefined'ı "undefined"
-       * dizesine çeviriyordu ve araç "kampanya oluşturuldu (id undefined)" diye
-       * raporluyordu: kullanıcı kampanyanın kurulduğuna inanıyor, o kimlikle yapılan
-       * her sonraki çağrı ise anlamsız bir kimliğe gidiyordu. Kampanya gerçekten
-       * kurulmuş da olabilir kurulmamış da — ikisi de "oluşturuldu" değildir.
+       * A RESPONSE WITHOUT AN ID IS NOT A SUCCESS. `String(cevap.id)` turned undefined
+       * into the string "undefined", and the tool reported "campaign created (id
+       * undefined)": the user believed the campaign existed, while every subsequent call
+       * made with that id went to a meaningless identifier. The campaign may or may not
+       * really have been created — neither of those is "created".
        */
       const yeniId = cevap?.id;
       if (yeniId === undefined || yeniId === null || String(yeniId).trim() === "") {
@@ -557,16 +580,17 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
       };
 
       /**
-       * Para birimi okunamadıysa BÜTÇE RAKAMI ÜRETİLMEZ. Fırlatmak yerine notla dönmek
-       * bilerek: tüketici kapı (set_meta_campaign_status) "bütçe doğrulanamadı" retini
-       * zaten sebebiyle birlikte basıyor; operatör böylece neyi düzelteceğini öğrenir.
+       * If the currency could not be read, NO BUDGET FIGURE IS PRODUCED. Returning a note
+       * rather than throwing is deliberate: the consuming gate, set_meta_campaign_status,
+       * already prints its "budget could not be verified" refusal along with the reason, so
+       * the operator learns what to fix.
        */
       let carpan: number;
       try {
         carpan = (await paraBirimiAl()).carpan;
       } catch (e) {
-        // Savunma derinliği: kaynaktaki metin zaten temizlenmiş olsa da bu sınır
-        // ajana bakıyor, dolayısıyla temizlik burada da uygulanır.
+        // Defence in depth: the text at the source is already cleaned, but this boundary
+        // faces the agent, so the cleaning is applied here too.
         return { ...temel, butceNotu: hataTemizle(hataMetni(e), ayar.metaToken) };
       }
 
@@ -575,9 +599,10 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
         return { ...temel, gunlukButce: minorUnitTers(kampanyaDuzeyi, carpan), butceKaynagi: "kampanya" };
       }
       /**
-       * ALAN VAR AMA OKUNAMIYORSA reklam setlerine İNİLMEZ: alanın varlığı kampanyanın
-       * CBO olduğunu söyler, okunamaması ise bir belirsizliktir. Set toplamına düşmek,
-       * kampanya düzeyindeki gerçek bütçeyi hiç saymadan bir rakam üretirdi.
+       * IF THE FIELD EXISTS BUT CANNOT BE READ, we do NOT descend to the ad sets: the
+       * field's presence says the campaign is CBO, and its unreadability is an uncertainty.
+       * Falling back to the ad-set total would produce a figure without ever counting the
+       * real budget at campaign level.
        */
       if (c?.daily_budget !== undefined && c?.daily_budget !== null) {
         return {
@@ -589,8 +614,8 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
         };
       }
 
-      // CBO değil: bütçe reklam setlerinde. Tek bir alana bakıp "okunamadı" demek yerine
-      // ikinci katmana inilir.
+      // Not CBO: the budget is on the ad sets. Rather than looking at one field and
+      // declaring it unreadable, we descend to the second layer.
       const setler = await reklamSetiButcesi(ayar, kampanyaId, carpan);
       return {
         ...temel,
@@ -600,7 +625,8 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
       };
     },
     async butceGuncelle(kampanyaId, gunlukButce) {
-      // Yazma yolunda da çarpan önce okunur; okunamazsa istek HİÇ gitmez.
+      // On the write path too, the multiplier is read first; if it cannot be read, the
+      // request is NEVER sent.
       const { carpan } = await paraBirimiAl();
       await graf(ayar, kampanyaId, { daily_budget: String(minorUnit(gunlukButce, carpan)) });
     },

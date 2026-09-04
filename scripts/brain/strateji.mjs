@@ -83,8 +83,9 @@ function guvenliOzet(deger, sinir = 60) {
 }
 
 /**
- * Ayraç kaçışı temizliği. Uygulama ortak.mjs'te: eski desen `[^>]{0,200}` sınırı
- * taşıyordu ve 201 karakter dolgu o sınırın dışına düşüp bloğu erkenden kapatabiliyordu.
+ * Delimiter-escape cleaning. The implementation lives in ortak.mjs: the old pattern
+ * carried a `[^>]{0,200}` bound, and 201 characters of padding fell outside it and could
+ * close the block early.
  */
 function veriBlogunaHazirla(metin) {
   return ayracNotrle(metin, "arastirma-verisi");
