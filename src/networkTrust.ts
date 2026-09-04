@@ -838,7 +838,7 @@ export const ZINCIR_ORTAK_AYARLARI: readonly (keyof AgAyar)[] = [
   "stepUp",
 ] as const;
 
-/** ZINCIR_ORTAK_AYARLARI'nın env karşılıkları (config.ts'te okunan adlar). */
+/** The environment names behind ZINCIR_ORTAK_AYARLARI, as read in config.ts. */
 export const ZINCIR_ORTAK_ENVLERI: readonly string[] = [
   "AEGIS_APPROVER_PHONE",
   "AEGIS_SIMSWAP_WINDOW_HOURS",
@@ -862,16 +862,17 @@ let gercekKanal: SimSwapKanali | undefined;
 let gercekKanalAnahtari: string | undefined;
 
 /**
- * NaC SDK istemcisi — X-RapidAPI-Host başlığı ELLE eklenir.
+ * The NaC SDK client — the X-RapidAPI-Host header is added BY HAND.
  *
- * SDK'nın kendisi bu başlığı GÖNDERMİYOR ve platform onsuz her çağrıya
- * `404 {"message":"API doesn't exists"}` cevabı veriyor: uç nokta yolu ve taban URL
- * doğru olsa bile istek hiçbir API'ye eşlenmiyor. Ölçülerek bulundu — aynı gövde ve
- * aynı anahtarla, yalnız bu başlık eklendiğinde yanıt `200 {"swapped":true}` oluyor.
+ * The SDK does not SEND that header itself, and without it the platform answers every call
+ * with `404 {"message":"API doesn't exists"}`: even with the right endpoint path and base
+ * URL, the request maps to no API at all. This was found by measurement — with the same body
+ * and the same key, adding only this header turns the response into
+ * `200 {"swapped":true}`.
  *
- * Değer platformun kendi belgesindeki sabittir (Nokia API Hub · "Getting client
- * credentials" bölümündeki curl örnekleri). SDK ileride başlığı kendisi göndermeye
- * başlarsa bu satır zararsız biçimde aynı değeri tekrar yazar.
+ * The value is the constant from the platform's own documentation (Nokia API Hub, the curl
+ * examples under "Getting client credentials"). If the SDK ever starts sending the header
+ * itself, this line harmlessly writes the same value again.
  */
 const RAPIDAPI_HOST = "network-as-code.nokia.rapidapi.com";
 
@@ -881,17 +882,18 @@ export function nacIstemciSecenekleri(token: string): {
   headers: Record<string, string>;
 } {
   /**
-   * HOST İKİ YOLDAN DA VERİLİR ve bu bilinçli bir fazlalıktır.
+   * THE HOST IS SUPPLIED BOTH WAYS, and the redundancy is deliberate.
    *
-   * `rapidapiHost` SDK'nın kendi desteklediği seçenektir; Nokia'dan (Aleksi Puranen,
-   * 31.08.2026) gelen resmî cevap bunu kullanmamızı söyledi ve SDK'nın host'u
-   * kendiliğinden göndermemesinin bir eksiklik olduğunu, iletildiğini doğruladı.
+   * `rapidapiHost` is the SDK's own supported option; the official answer from Nokia
+   * (Aleksi Puranen, 31 August 2026) told us to use it, and confirmed that the SDK not
+   * sending the host by itself is a shortcoming which has been reported.
    *
-   * Elle konan başlık yine de kalıyor: bu kod tabanının canlıda ÖLÇEREK doğruladığı
-   * yol oydu ve hiçbir maliyeti yok. SDK bu konuda bir kez zaten eksik çıktı; aynı
-   * yerde ikinci bir sürprizin bedeli, kapının üretimde her çağrıda "ağ yanıtsız"
-   * diyerek kapalı arızaya gitmesi olurdu — harcama hiç onaylanmaz ve sebebi aylarca
-   * anlaşılmaz. İkisi de aynı değeri taşıdığı için çelişme ihtimali yok.
+   * The hand-placed header stays all the same: it is the path this codebase verified live BY
+   * MEASUREMENT, and it costs nothing. The SDK has already come up short here once; the
+   * price of a second surprise in the same place would be the gate saying "the network did
+   * not answer" on every call in production and failing closed — no spend would ever be
+   * approved and the reason would stay unclear for months. Since both carry the same value,
+   * they cannot contradict each other.
    */
   return {
     apiKey: token,
@@ -900,27 +902,30 @@ export function nacIstemciSecenekleri(token: string): {
   };
 }
 
-/** Üretim istemcisiyle BİREBİR aynı tip: aşağıdaki test dikişi tipi gevşetmez. */
+/** Exactly the same type as the production client: the test seam below does not loosen
+ * it. */
 type NacIstemci = import("network-as-code").NetworkAsCodeApiClient;
 
 /**
- * SDK İSTEMCİSİ İÇİN TEST DİKİŞİ — `__set*KanalForTests` yetmediği için var.
+ * A TEST SEAM FOR THE SDK CLIENT — it exists because `__set*KanalForTests` is not enough.
  *
- * O dikişler UYARLANMIŞ kanalı (SimSwapKanali vb.) değiştirir, yani CAMARA gövdesini
- * boolean'a çeviren asıl kodu ATLAR. Zincirin tek canlı fail-open'ı tam orada yaşadı:
- * SIM-Swap uyarlayıcısı `res.swapped === true` diyordu, bozuk bir gövde ({} / "true" /
- * null / 1) sessizce "SIM DEĞİŞMEMİŞ"e çevriliyordu ve hiçbir birim testi kızarmıyordu —
- * çünkü hepsi sahte KANAL enjekte ediyor, sahte GÖVDE değil.
+ * Those seams replace the ADAPTED channel (SimSwapKanali and friends), which means they SKIP
+ * the code that turns a CAMARA body into a boolean. The chain's only live fail-open lived
+ * exactly there: the SIM Swap adapter said `res.swapped === true`, so a malformed body — {},
+ * "true", null, 1 — was quietly turned into "the SIM did not change" and no unit test went
+ * red, because every one of them injected a fake CHANNEL rather than a fake BODY.
  *
- * Bu fabrika ile testler gerçek uyarlayıcı kapanışlarını sahte bir SDK istemcisi üzerinden
- * koşturur: bozuk gövde matrisi ağa çıkmadan, üretimdeki asıl kodla sınanır.
+ * With this factory the tests run the real adapter closures through a fake SDK client: the
+ * malformed-body matrix is exercised against the actual production code without going near
+ * the network.
  */
 let nacIstemciFabrikasi: ((token: string) => Promise<NacIstemci>) | undefined;
 export function __setNacIstemciFabrikasiForTests(
   fabrika: ((token: string) => Promise<NacIstemci>) | undefined
 ): void {
   nacIstemciFabrikasi = fabrika;
-  // Önbellekli kanallar ESKİ istemcinin kapanışını taşır; hepsi düşürülmezse dikiş sızar.
+  // Cached channels carry the OLD client's closure; unless all of them are dropped, the
+  // seam leaks.
   gercekKanal = undefined;
   gercekKanalAnahtari = undefined;
   gercekErisimKanal = undefined;
@@ -963,11 +968,12 @@ async function kanalGetir(ayar: AgAyar): Promise<SimSwapKanali> {
         { timeoutInSeconds: 10, maxRetries: 1 }
       );
       /**
-       * `swapped` SDK tipinde zorunlu boolean, ama tip garantisi ÇALIŞMA ZAMANI garantisi
-       * DEĞİLDİR: {"swapped":"true"} (string), {} (alan yok), {"swapped":null}, {"swapped":1}
-       * gibi bir gövde eski `=== true` kısayolundan sessizce false çıkıyordu — yani
-       * "SIM DEĞİŞMEMİŞ" sayılıyor ve harcama GEÇİYORDU. undefined = "yanıt okunamadı",
-       * çağıran onu kapalı arızaya çevirir (halka 3/4/5/6 ile aynı sözleşme).
+       * `swapped` is a required boolean in the SDK's type, but a type guarantee is NOT a
+       * RUNTIME guarantee: a body such as {"swapped":"true"} (a string), {} (field absent),
+       * {"swapped":null} or {"swapped":1} came out of the old `=== true` shortcut as a quiet
+       * false — counted as "the SIM did not change", and the spend WENT THROUGH. undefined
+       * means "the answer could not be read", and the caller turns it into a fail-closed
+       * refusal (the same contract as links 3, 4, 5 and 6).
        */
       return typeof res.swapped === "boolean" ? res.swapped : undefined;
     },
@@ -976,7 +982,7 @@ async function kanalGetir(ayar: AgAyar): Promise<SimSwapKanali> {
   return gercekKanal;
 }
 
-/* ── Halka 3: gerçek kanal (Device Reachability) ──────────────────────────────── */
+/* ── Link 3: the real channel (Device Reachability) ───────────────────────────── */
 
 let erisimOverride: ErisilebilirlikKanali | "reset" | undefined;
 export function __setErisimKanalForTests(k: ErisilebilirlikKanali | undefined): void {
@@ -989,11 +995,12 @@ let gercekErisimKanal: ErisilebilirlikKanali | undefined;
 let gercekErisimAnahtari: string | undefined;
 
 /**
- * SIM-Swap kanalıyla BİREBİR aynı iskelet: tembel import (token'sız kurulumlar SDK'yı hiç
- * yüklemez), token+telefon ile anahtarlanmış önbellek (anahtarsız tekil, İLK çağıranın
- * numarasını kapanışa gömer ve numara döndürüldüğünde sessizce eski hattı sorgular),
- * 10 sn timeout / 1 retry (SDK varsayılanı 60 sn × 3 deneme; bir onayı ~3 dakika
- * askıda bırakır — kapalı arızaya HIZLI gitmek gerekir).
+ * Exactly the same skeleton as the SIM Swap channel: a lazy import, so installations
+ * without a token never load the SDK; a cache keyed on token plus phone number, because an
+ * unkeyed singleton bakes the FIRST caller's number into the closure and quietly keeps
+ * querying the old line after the number is rotated; and a 10-second timeout with 1 retry,
+ * where the SDK's default of 60 seconds times 3 attempts would leave an approval hanging for
+ * about three minutes — failing closed has to be FAST.
  */
 async function erisimKanaliGetir(ayar: AgAyar): Promise<ErisilebilirlikKanali> {
   if (erisimOverride && erisimOverride !== "reset") return erisimOverride;
@@ -1008,9 +1015,10 @@ async function erisimKanaliGetir(ayar: AgAyar): Promise<ErisilebilirlikKanali> {
         { timeoutInSeconds: 10, maxRetries: 1 }
       );
       /**
-       * `reachable` SDK tipinde zorunlu boolean, ama tip garantisi bir ÇALIŞMA ZAMANI
-       * garantisi değildir: gövde beklenenden başka gelirse "erişilemez" varsaymak da
-       * "erişilebilir" varsaymak da yanlış olur. undefined = "yanıt okunamadı".
+       * `reachable` is a required boolean in the SDK's type, but a type guarantee is not a
+       * RUNTIME guarantee: if the body arrives in an unexpected shape, assuming
+       * "unreachable" is as wrong as assuming "reachable". undefined means "the answer could
+       * not be read".
        */
       return typeof res.reachable === "boolean" ? res.reachable : undefined;
     },
@@ -1019,7 +1027,7 @@ async function erisimKanaliGetir(ayar: AgAyar): Promise<ErisilebilirlikKanali> {
   return gercekErisimKanal;
 }
 
-/* ── Halka 4: gerçek kanal (Location — roaming ülkesi) ────────────────────────── */
+/* ── Link 4: the real channel (Location — the roaming country) ────────────────── */
 
 let konumOverride: KonumKanali | "reset" | undefined;
 export function __setKonumKanalForTests(k: KonumKanali | undefined): void {
@@ -1031,7 +1039,7 @@ export function __setKonumKanalForTests(k: KonumKanali | undefined): void {
 let gercekKonumKanal: KonumKanali | undefined;
 let gercekKonumAnahtari: string | undefined;
 
-/** Halka 3'ün kanalıyla aynı sözleşme; yalnız sorulan uç nokta farklı. */
+/** The same contract as link 3's channel; only the endpoint asked is different. */
 async function konumKanaliGetir(ayar: AgAyar): Promise<KonumKanali> {
   if (konumOverride && konumOverride !== "reset") return konumOverride;
   const anahtar = `${ayar.nacToken}\u0000${ayar.approverPhone}`;
@@ -1046,8 +1054,8 @@ async function konumKanaliGetir(ayar: AgAyar): Promise<KonumKanali> {
       );
       return {
         yurtDisinda: typeof res.roaming === "boolean" ? res.roaming : undefined,
-        // Ham liste BURADAN ÖTEYE GEÇMEZ: karar mantığı onu yalnız karşılaştırmada
-        // kullanır, hiçbir metne ve ize yazmaz (bkz. dosya başı, Halka 4).
+        // The raw list GOES NO FURTHER THAN HERE: the decision logic uses it only for the
+        // comparison and writes it into no text and no trace (see the file header, Link 4).
         ulkeler: Array.isArray(res.countryName) ? res.countryName : undefined,
       };
     },
@@ -1056,7 +1064,7 @@ async function konumKanaliGetir(ayar: AgAyar): Promise<KonumKanali> {
   return gercekKonumKanal;
 }
 
-/* ── Halka 5: gerçek kanal (Device Swap) ──────────────────────────────────────── */
+/* ── Link 5: the real channel (Device Swap) ───────────────────────────────────── */
 
 let cihazDegisimOverride: CihazDegisimKanali | "reset" | undefined;
 export function __setCihazDegisimKanalForTests(k: CihazDegisimKanali | undefined): void {
@@ -1069,11 +1077,13 @@ let gercekCihazDegisimKanal: CihazDegisimKanali | undefined;
 let gercekCihazDegisimAnahtari: string | undefined;
 
 /**
- * SIM-Swap kanalıyla BİREBİR aynı iskelet ve aynı gerekçeler: tembel import,
- * token+telefon ile anahtarlanmış önbellek, 10 sn timeout / 1 retry (SDK varsayılanı
- * 60 sn × 3 deneme bir onayı ~3 dakika askıda bırakır).
+ * Exactly the same skeleton and the same reasoning as the SIM Swap channel: a lazy import, a
+ * cache keyed on token plus phone number, and a 10-second timeout with 1 retry, where the
+ * SDK's default of 60 seconds times 3 attempts would leave an approval hanging for about
+ * three minutes.
  *
- * Uç nokta gerçekten ikiz: `deviceSwap.check({ phoneNumber, maxAge })` → `{ swapped }`.
+ * The endpoint really is a twin: `deviceSwap.check({ phoneNumber, maxAge })` gives
+ * `{ swapped }`.
  */
 async function cihazDegisimKanaliGetir(ayar: AgAyar): Promise<CihazDegisimKanali> {
   if (cihazDegisimOverride && cihazDegisimOverride !== "reset") return cihazDegisimOverride;
@@ -1088,15 +1098,16 @@ async function cihazDegisimKanaliGetir(ayar: AgAyar): Promise<CihazDegisimKanali
         { timeoutInSeconds: 10, maxRetries: 1 }
       );
       /**
-       * `swapped` SDK tipinde zorunlu boolean, ama tip garantisi ÇALIŞMA ZAMANI garantisi
-       * değildir; okunamayan alan "değişmedi" DEĞİL "bilinmiyor"dur → kapalı arıza.
+       * `swapped` is a required boolean in the SDK's type, but a type guarantee is not a
+       * RUNTIME guarantee; an unreadable field means "unknown", NOT "did not change", and so
+       * fails closed.
        *
-       * TARİHÇE: burada bir zamanlar "SIM-Swap'taki `=== true` kısayolu bilerek
-       * kullanılmaz" yazıyordu. Fark doğru saptanmıştı ama yanlış çözülmüştü — eski halka
-       * düzeltilmek yerine sapma BELGELENMİŞTİ, yani zincirin en kritik ve tek canlı
-       * koşan halkası okunamayan gövdeyi sessizce "temiz" sayıyordu. Kısayol artık orada
-       * da yok: altı halkanın hepsi bu tek sözleşmeyi paylaşır, sapma anlatılacak bir
-       * istisna değil kapatılmış bir açıktır.
+       * HISTORY: this once said "the `=== true` shortcut used in SIM Swap is deliberately
+       * avoided here". The difference had been spotted correctly but resolved wrongly — the
+       * older link was not fixed, the divergence was DOCUMENTED, which left the chain's most
+       * critical and only live-running link quietly treating an unreadable body as clean. The
+       * shortcut is now gone from there too: all six links share this one contract, and the
+       * divergence is a closed hole rather than an exception to be explained.
        */
       return typeof res.swapped === "boolean" ? res.swapped : undefined;
     },
@@ -1105,7 +1116,7 @@ async function cihazDegisimKanaliGetir(ayar: AgAyar): Promise<CihazDegisimKanali
   return gercekCihazDegisimKanal;
 }
 
-/* ── Halka 6: gerçek kanal (Call Forwarding) ──────────────────────────────────── */
+/* ── Link 6: the real channel (Call Forwarding) ───────────────────────────────── */
 
 let cagriYonlendirmeOverride: CagriYonlendirmeKanali | "reset" | undefined;
 export function __setCagriYonlendirmeKanalForTests(k: CagriYonlendirmeKanali | undefined): void {
@@ -1118,13 +1129,14 @@ let gercekCagriYonlendirmeKanal: CagriYonlendirmeKanali | undefined;
 let gercekCagriYonlendirmeAnahtari: string | undefined;
 
 /**
- * Diğer halkalarla aynı sözleşme; yalnız sorulan uç nokta farklı.
+ * The same contract as the other links; only the endpoint asked is different.
  *
- * BİLEREK `retrieveUnconditionalCallForwarding` çağrılır, kardeşi
- * `retrieveCallForwarding` DEĞİL: kardeş uç nokta bir dizi döner, SDK belgesi onun için
- * "ana kapsamı aşar, 501 dönebilir" diyor ve dizinin tanınmayan bir üyesi yeni bir
- * kapalı-arıza yolu açardı. Sorduğumuz soru zaten tek boolean'lık: koşulsuz yönlendirme
- * açık mı? Yönlendirmenin HANGİ numaraya yapıldığı ne sorulur ne alınır (PII yok).
+ * `retrieveUnconditionalCallForwarding` is called DELIBERATELY, and not its sibling
+ * `retrieveCallForwarding`: the sibling returns an array, the SDK documentation says of it
+ * that it "goes beyond the main scope and may return 501", and an unrecognised member of that
+ * array would open a new fail-closed path. The question we are asking is a single boolean
+ * anyway — is unconditional forwarding active? WHICH number the forwarding points to is
+ * neither asked for nor received, so there is no PII.
  */
 async function cagriYonlendirmeKanaliGetir(ayar: AgAyar): Promise<CagriYonlendirmeKanali> {
   if (cagriYonlendirmeOverride && cagriYonlendirmeOverride !== "reset") return cagriYonlendirmeOverride;
@@ -1140,7 +1152,8 @@ async function cagriYonlendirmeKanaliGetir(ayar: AgAyar): Promise<CagriYonlendir
         { phoneNumber },
         { timeoutInSeconds: 10, maxRetries: 1 }
       );
-      // `active` tipte OPSİYONEL: yokluğu "yönlendirme kapalı" değil "bilinmiyor"dur.
+      // `active` is OPTIONAL in the type: its absence means "unknown", not "forwarding is
+      // off".
       return typeof res.active === "boolean" ? res.active : undefined;
     },
   };
@@ -1149,9 +1162,9 @@ async function cagriYonlendirmeKanaliGetir(ayar: AgAyar): Promise<CagriYonlendir
 }
 
 /**
- * Beklenen ülkeyi normalize eder: yalnız ISO 3166-1 alpha-2 (iki harf) kabul edilir.
- * `undefined` = değer kullanılamaz; çağıran bunu kapalı arızaya çevirir. Ham değer
- * hiçbir yere yazılmaz, yalnız normalize edilmiş kod dışarı çıkabilir.
+ * Normalises the expected country: only ISO 3166-1 alpha-2, two letters, is accepted.
+ * `undefined` means the value is unusable, and the caller turns that into a fail-closed
+ * refusal. The raw value is written nowhere; only the normalised code can leave here.
  */
 function ulkeNormalize(ham: string | undefined): string | undefined {
   const t = ham?.trim();
@@ -1163,12 +1176,13 @@ function ulkeNormalize(ham: string | undefined): string | undefined {
  * The guard covers up to 6 characters: at 5–6 the head and tail slices would overlap
  * and reveal every digit.
  *
- * DIŞA AÇIK OLMASININ TEK SEBEBİ TESTTİR: bu kelepçenin bekçisi yoktu, çünkü depodaki
- * her `approverPhone` fikstürü 13 karakterlik tek bir biçim kullanıyor ve kelepçe
- * düşerse yalnız KISA numaralarda kırılıyor — uzunluk 6'da girdinin tamamı açığa çıkar,
- * 5'te `"*".repeat(-1)` RangeError fırlatır. Bu çıktı hem istem kanıt satırına, hem
- * karar günlüğüne, hem de ajana dönen ret metnine giriyor ve ajan yolunda ikinci bir
- * maskeleme katmanı yok: buradaki sessiz bir gerileme ham numarayı doğrudan sızdırır.
+ * IT IS EXPORTED FOR ONE REASON ONLY — TESTING. This clamp had no guard, because every
+ * `approverPhone` fixture in the repository uses a single 13-character shape, and if the
+ * clamp is removed it only breaks on SHORT numbers: at length 6 the whole input is exposed,
+ * and at 5 `"*".repeat(-1)` throws a RangeError. This output goes into the prompt's evidence
+ * lines, into the decision log, and into the refusal text returned to the agent, and there is
+ * no second masking layer on the agent path: a silent regression here leaks the raw number
+ * directly.
  */
 export function maskele(phone: string): string {
   return phone.length <= 6 ? "***" : phone.slice(0, 4) + "*".repeat(phone.length - 6) + phone.slice(-2);
@@ -1192,25 +1206,27 @@ function pencereSec(ayar: AgAyar, risk: AgRisk): number {
 }
 
 /**
- * SİMÜLASYON kanalı: jüri/demo ortamı NaC token'sız çalışsın diye. Gerçek SDK'ya HİÇ
+ * The SIMULATION channel, so a jury or demo environment runs without a NaC token. The real
+ * SDK is NEVER
  * dokunulmaz (import bile edilmez).
  *
- * Ürettiği HER metin — kanıt satırı, ret mesajı, stderr uyarısı — açıkça "SİMÜLASYON"
- * ibaresi taşır ve gerçek ağ sorgusu yapılmadığını söyler; çıktı hiçbir zaman gerçek
- * ağ doğrulaması gibi sunulamaz.
+ * EVERY text it produces — an evidence line, a refusal message, a stderr warning — carries
+ * the word "SİMÜLASYON" explicitly and states that no real network query was made; the output
+ * can never be presented as real network verification.
  *
- * Fail-closed sözleşmesi aynen geçerlidir: onaylayıcı numarası simülasyonda da zorunlu
- * (maskeleme yolları gerçek akışla birebir), tanınmayan simülasyon değeri karar anında
- * Türkçe hatayla RET. Pencere hesabı (medium 24s / high yapılandırılan) gerçek akışla
- * aynı koddan geçer, böylece demo metinleri gerçek katman davranışını gösterir.
+ * The fail-closed contract holds unchanged: the approver's number is required in simulation
+ * too, so the masking paths match the real flow exactly, and an unrecognised simulation value
+ * is REFUSED at decision time. The window calculation — 24h on medium, the configured value
+ * on high — goes through the same code as the real flow, so the demo texts show the real
+ * layer's behaviour.
  */
 function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
   if (ayar.nacToken) {
     /**
-     * Çelişkili yapılandırma: gerçek token VE simülasyon birlikte. Fail-closed ilkesi
-     * gereği belirsizlikte gevşek kanal SEÇİLMEZ — reddedilir. (Uyarı-verip-devam
-     * modeli, demodan kalan bir env kalıntısının gerçek ağ doğrulamasını sessizce
-     * tiyatroya çevirmesine izin veriyordu.)
+     * Contradictory configuration: a real token AND a simulation together. Under the
+     * fail-closed principle the looser channel is NOT CHOSEN under ambiguity — it is refused.
+     * The warn-and-continue model let an environment leftover from a demo quietly turn real
+     * network verification into theatre.
      */
     return {
       engel:
@@ -1218,7 +1234,8 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
         "çelişkili yapılandırma. Gerçek ağ doğrulaması isteniyorsa AEGIS_NAC_SIMULATE kaldırılmalı, " +
         "demo isteniyorsa token kaldırılmalı. Güvenlik gereği belirsiz yapılandırmada harcama artışı uygulanmaz.",
       kanit: [],
-      // Hiçbir kanal sorgulanmadı: yapılandırma çeliştiği için karar hiç verilemedi.
+      // No channel was queried: the configuration contradicted itself, so no decision could
+      // be reached at all.
       iz: { simSwap: "calismadi", retNedeni: "yapilandirma-celiskili" },
     };
   }
@@ -1266,17 +1283,18 @@ function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
 }
 
 /**
- * Zincirin 2. halkası: Number Verification — YALNIZ SİMÜLASYON.
+ * Link 2 of the chain: Number Verification — SIMULATION ONLY.
  *
- * Ne zaman koşar: SADECE "high" katmanda ve SADECE AEGIS_NV_SIMULATE tanımlıysa.
- * Koşmadığında `undefined` döner (kanıt satırı bile üretmez) — medium katmanda halka
- * hiç yoktur, dolayısıyla değeri de doğrulanmaz; bu bir gevşeme değildir, çünkü o
- * katmanda halkanın verebileceği tek karar zaten yoktur.
+ * When it runs: ONLY on the "high" tier, and ONLY when AEGIS_NV_SIMULATE is set. When it does
+ * not run it returns `undefined` and produces not even an evidence line — on the medium tier
+ * the link does not exist at all, so its value is not validated either. That is not a
+ * loosening, because on that tier there is no decision the link could make in the first
+ * place.
  *
- * Kapalı arıza sözleşmesi SIM-Swap halkasıyla aynıdır: onaylayıcı numarası zorunlu,
- * tanınmayan değer karar anında RET (ham değer, sır olabileceği için metne
- * YANKILANMAZ). Ürettiği her metin "SİMÜLASYON" ibaresi taşır ve gerçek sorgu
- * yapılmadığını açıkça söyler.
+ * The fail-closed contract is the same as the SIM Swap link's: the approver's number is
+ * required, and an unrecognised value is REFUSED at decision time, with the raw value NOT
+ * echoed into the text in case it is a secret. Every text it produces carries the word
+ * "SİMÜLASYON" and states plainly that no real query was made.
  */
 function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
   const nv = ayar.nvSimulate?.trim();
@@ -1331,16 +1349,16 @@ function nvKatmani(ayar: AgAyar, risk: AgRisk): NvSonuc | undefined {
 }
 
 /**
- * Zincirin 3. halkası: Device Reachability.
+ * Link 3 of the chain: Device Reachability.
  *
- * Ne zaman koşar: SADECE "high" katmanda ve SADECE bir kanal yapılandırılmışsa
- * (AEGIS_REACH_SIMULATE ya da NaC token'ı). Hiç yapılandırılmamışsa `undefined`
- * döner — iz alanı bile yazılmaz, çünkü "kapali" bilinçli bir kapatma beyanıdır,
- * hiç istenmemiş bir halkanın sessizliği değil.
+ * When it runs: ONLY on the "high" tier, and ONLY when a channel is configured — either
+ * AEGIS_REACH_SIMULATE or a NaC token. With nothing configured it returns `undefined` and not
+ * even the trace field is written, because "kapali" is a deliberate declaration that the link
+ * was switched off, not the silence of a link nobody asked for.
  *
- * Fail-closed sözleşmesi diğer halkalarla aynıdır: onaylayıcı numarası zorunlu,
- * tanınmayan simülasyon değeri RET (ham değer YANKILANMAZ), yanıtsız/okunamayan
- * CAMARA cevabı RET, "erişilemez" RET.
+ * The fail-closed contract is the same as the other links': the approver's number is
+ * required, an unrecognised simulation value is REFUSED with the raw value NOT echoed, a
+ * silent or unreadable CAMARA response is REFUSED, and "unreachable" is REFUSED.
  */
 async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
   if (!halkaKosarMi(risk, "reach")) return undefined;
@@ -1350,10 +1368,11 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
 
   if (sim) {
     /**
-     * Çelişki ölçütü bilerek "token var mı" DEĞİL, "gerçek kanal AÇIK mı"dır: halka
-     * opt-in olduğu için AEGIS_REACH_CHECK kapalıyken sorgulanacak gerçek bir kanal
-     * yoktur, dolayısıyla simülasyon hiçbir gerçek doğrulamayı tiyatroya çevirmez.
-     * Gerçek kanal açıkken ikisi birden tanımlıysa belirsizlikte gevşek kanal SEÇİLMEZ.
+     * The contradiction test is deliberately not "is there a token" but "is the real
+     * channel ENABLED": because the link is opt-in, with AEGIS_REACH_CHECK off there is no
+     * real channel to query, so a simulation turns no real verification into theatre. When
+     * the real channel is on and both are set, the looser channel is NOT CHOSEN under
+     * ambiguity.
      */
     if (gercekAcik) {
       return {
@@ -1414,9 +1433,10 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
   }
 
   /**
-   * Token var ama halka açılmamış: BİLEREK sorgu yapılmaz. Ret de üretilmez, kanıt
-   * satırı da yazılmaz — insan istemine "kontrol etmediğim şey" satırı koymak gürültü
-   * olurdu. Beyan yalnız yapısal ize düşer (bkz. HalkaIzi, "kapali").
+   * A token exists but the link is not enabled: no query is made, DELIBERATELY. No refusal
+   * is produced and no evidence line is written — putting a line about "something I did not
+   * check" into a human prompt would be noise. The declaration lands only in the structured
+   * trace (see HalkaIzi, "kapali").
    */
   if (!gercekAcik) return { kanit: [], halka: "kapali" };
 
@@ -1459,8 +1479,9 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
       };
     }
     /**
-     * Yanıt geldi ama okunamadı. "Erişilemez" demek yanlış suçlama, "erişilebilir"
-     * demek sessiz gevşeme olurdu; ikisi de değil — kontrol cevaplanamadı.
+     * A response arrived but could not be read. Saying "unreachable" would be a false
+     * accusation and saying "reachable" would be a silent loosening; it is neither — the
+     * check could not be answered.
      */
     return {
       engel:
@@ -1473,7 +1494,8 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
       retNedeni: "ag-yanitsiz",
     };
   } catch (e: any) {
-    // Upstream metin ASLA ret mesajına girmez; ayrıntı numara maskelenerek stderr'e.
+    // Upstream text NEVER enters the refusal message; the detail goes to stderr with the
+    // number masked.
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
     console.error(`[aegis] cihaz erişilebilirlik hatası (${maskeli}): ${detay}`);
     return {
@@ -1490,16 +1512,17 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
 }
 
 /**
- * Zincirin 4. halkası: Location — "hat beklenen ülkenin dışında mı?".
+ * Link 4 of the chain: Location — "is the line outside the expected country?".
  *
- * Beklenti UYDURULMAZ: AEGIS_EXPECTED_COUNTRY yoksa halka koşmaz ve "kapali" yazar.
- * Bugünün tarihi/varsayılan bir ülke türetmek, cevabı her zaman "temiz" çıkaran sessiz
- * bir güvenlik kaybı olurdu.
+ * The expectation is never INVENTED: without AEGIS_EXPECTED_COUNTRY the link does not run and
+ * records "kapali". Deriving a default country would be a silent loss of security that always
+ * makes the answer come out clean.
  *
- * Sıra bilinçlidir: beklenti YOKSA halka zaten karar veremez, bu yüzden çelişki ve
- * simülasyon-değeri doğrulamaları o durumda hiç çalıştırılmaz — koşmayan bir halkanın
- * yapılandırmasına bakıp harcamayı reddetmek, hiçbir güvenlik kazancı olmayan bir ret
- * üretirdi (aynı gerekçeyle NV de medium katmanda değerini doğrulamaz).
+ * The order is deliberate: with no expectation the link cannot decide anything, so the
+ * contradiction and simulation-value checks are not run at all in that case — refusing a
+ * spend on the configuration of a link that does not run would produce a refusal with no
+ * security gain whatsoever. NV does not validate its value on the medium tier for the same
+ * reason.
  */
 async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
   if (!halkaKosarMi(risk, "loc")) return undefined;
@@ -1509,8 +1532,9 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
   const hamUlke = ayar.expectedCountry?.trim();
   if (!hamUlke) {
     if (sim) {
-      // Operatör halkayı açıkça istemiş ama beklentiyi vermemiş: sessiz kalmak, demoyu
-      // sessizce çalışmaz hâle getirirdi. Karar akışı ETKİLENMEZ, yalnız stderr'e yazılır.
+      // The operator explicitly asked for the link but supplied no expectation: staying
+      // silent would leave the demo quietly not working. The decision flow is UNAFFECTED;
+      // this only goes to stderr.
       console.error(
         "[aegis] AEGIS_LOC_SIMULATE tanımlı ama AEGIS_EXPECTED_COUNTRY yok — " +
           "konum halkası KOŞMADI (beklenen ülke uydurulmaz)."
@@ -1620,29 +1644,31 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
       };
     }
     /**
-     * ÜLKE KARŞILAŞTIRMASI ROAMING BAYRAĞINDAN ÖNCE VE ONDAN BAĞIMSIZ YAPILIR.
+     * THE COUNTRY COMPARISON HAPPENS BEFORE THE ROAMING FLAG, AND INDEPENDENTLY OF IT.
      *
-     * Önceki hâlde bayrak dalı kapıyı ikiye bölüyordu ve yalnız biri korunuyordu:
-     * `yurtDisinda === false` dalı `durum.ulkeler`e HİÇ bakmadan temiz dönüyor, üstelik
-     * kanıt satırı "beklenen ülkeyle çelişen bir coğrafya yok" diye kodun hiç
-     * doğrulamadığı bir şeyi beyan ediyordu. Ölçülerek gösterildi:
-     * {yurtDisinda:false, ulkeler:["NL"]} GEÇİYORDU. Ağ "ana şebekede" derken bir yandan
-     * yabancı ülke bildiriyorsa bu, kapının tam da bakması gereken çelişkidir; hangi
-     * alanın onu ele verdiği önemli değildir.
+     * Previously the flag split the gate in two and only one half was protected: the
+     * `yurtDisinda === false` branch returned clean without looking at `durum.ulkeler` AT
+     * ALL, and its evidence line went on to declare "no geography contradicting the expected
+     * country" — something the code had never verified. Measured:
+     * {yurtDisinda:false, ulkeler:["NL"]} PASSED. If the network says "on the home network"
+     * while also reporting a foreign country, that is precisely the contradiction the gate
+     * exists to look at; which field gives it away does not matter.
      *
-     * BOŞ/OKUNAMAYAN GİRDİ DE DÜŞÜRÜLMEZ. Eski `.filter(u => u.length > 0)`,
-     * "okunamayan alan = temiz" kalıbını buraya geri sokuyordu: [""] tek başına RET
-     * alırken ["TR",""] geçiyordu — aynı "bilinmiyor" anlamı, gövdedeki temsiline göre
-     * bazen ret bazen temiz üretiyordu. Artık okunamayan girdi beklenene eşit olmadığı
-     * için doğal olarak RET'e düşer.
+     * AN EMPTY OR UNREADABLE ENTRY IS NOT DROPPED EITHER. The old
+     * `.filter(u => u.length > 0)` smuggled the "unreadable field equals clean" pattern back
+     * in here: [""] on its own was REFUSED while ["TR",""] passed — the same meaning of
+     * "unknown" producing a refusal or a pass depending on how it happened to be represented
+     * in the body. Now an unreadable entry simply is not equal to the expected country and
+     * falls to REFUSE naturally.
      */
     const ulkeler = (durum.ulkeler ?? []).map((u) => String(u ?? "").trim().toUpperCase());
 
     if (durum.yurtDisinda === false && !ulkeler.length) {
       /**
-       * Hat kendi ana şebekesinde ve ağ hiç ülke bildirmedi: karşılaştırılacak bir
-       * çelişki yok. Halkanın kapsamı bilerek burada biter — ülke-altı (şehir/yarıçap)
-       * doğrulama bu kapının bugünkü vaadi değildir (bkz. dosya başı, Halka 4).
+       * The line is on its home network and the network reported no country at all: there
+       * is no contradiction to compare against. The link's scope deliberately ends here —
+       * sub-country geography, a city or a radius, is not what this gate promises today
+       * (see the file header, Link 4).
        */
       return {
         kanit: [
@@ -1654,7 +1680,8 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
       };
     }
     if (durum.yurtDisinda === true && !ulkeler.length) {
-      // Yurt dışında ama hangi ülkede belli değil: beklentiyle karşılaştırılamaz → kapalı arıza.
+      // Abroad, but which country is unclear: it cannot be compared against the
+      // expectation, so this fails closed.
       return {
         engel:
           "Reddedildi: ağ doğrulaması tamamlanamadı — onaylayıcının hattı yurt dışında görünüyor ama " +
@@ -1667,28 +1694,30 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
       };
     }
     /**
-     * ÖLÇÜT "beklenen ülke kümede VAR MI" DEĞİL, "hat YALNIZCA beklenen ülkede mi
-     * görüldü": bildirilen ülkelerin HEPSİ beklenene eşit değilse RET. Kümede
-     * beklenen ülkeyi aramak fail-open'dı — ağ {NL, TR} bildirdiğinde karar "temiz"
-     * çıkar, oysa hat aynı anda beklenmedik bir coğrafyada da görülmüştür; üstelik
-     * kanıt satırı denetçiye tek yanlı ("beklenen ülkede") beyan verir ve ikinci
-     * ülkenin varlığı kayıttan hiç okunamaz. Bu, halkanın birkaç satır yukarıdaki
-     * davranışıyla da çelişirdi: ülke HİÇ okunamadığında "karşılaştırılamaz" deyip
-     * reddederken, ÇELİŞKİLİ okunduğunda geçirmek olurdu.
+     * THE CRITERION IS NOT "is the expected country PRESENT in the set" but "was the line
+     * seen ONLY in the expected country": if not ALL the reported countries equal the
+     * expected one, it is REFUSED. Searching the set for the expected country was fail-open —
+     * when the network reports {NL, TR} the verdict comes out clean, even though the line has
+     * also been seen in an unexpected geography; and the evidence line then gives the auditor
+     * a one-sided declaration ("in the expected country") from which the second country
+     * cannot be read at all. It would also contradict the link's own behaviour a few lines
+     * above: refusing with "cannot be compared" when the country is UNREADABLE, while passing
+     * when it is read and CONTRADICTORY.
      *
-     * DÜRÜST TAKAS — bilerek yazıyoruz: sınır bölgesi, MVNO ve uydu kapsaması
-     * yüzünden ağ MEŞRU olarak iki ülke bildirebilir ve o durumda MEŞRU kullanıcı
-     * REDDEDİLİR. Bunu kabul ediyoruz, çünkü (1) halka YALNIZ "high" katmanda ve
-     * YALNIZ beklenen ülke yapılandırılmışsa koşar, (2) "aynı anda iki ülkede
-     * görünen hat" tam olarak bu kapının bakması gereken şeydir. Kapalı arıza
-     * ilkesi gereği çelişki de belirsizlik gibi RET üretir; ret nedeni yeni bir kod
-     * değil, aynı "konum-beklenmedik" kodudur.
+     * AN HONEST TRADE, written down deliberately: because of border regions, MVNOs and
+     * satellite coverage the network can LEGITIMATELY report two countries, and in that case
+     * a LEGITIMATE user is REFUSED. We accept that, because (1) the link runs ONLY on the
+     * "high" tier and ONLY when an expected country is configured, and (2) "a line appearing
+     * in two countries at once" is exactly what this gate exists to look at. Under the
+     * fail-closed principle a contradiction produces a refusal just as ambiguity does; the
+     * refusal reason is not a new code but the same "konum-beklenmedik".
      */
     if (!ulkeler.every((u) => u === beklenen)) {
       /**
-       * GÖZLENEN ülke ASLA yazılmaz — ne ret metnine, ne ize. Dışarı çıkan tek şey
-       * türetilmiş karar ve YAPILANDIRMADAN gelen beklenen ülke kodudur; ağın kaç
-       * ülke bildirdiği de dahil hiçbir upstream ayrıntı sızmaz.
+       * The OBSERVED country is NEVER written — not into the refusal text, not into the
+       * trace. All that leaves is the derived decision and the expected-country code that
+       * came FROM CONFIGURATION; no upstream detail leaks, not even how many countries the
+       * network reported.
        */
       return {
         engel:
@@ -1731,16 +1760,18 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
 }
 
 /**
- * Zincirin 5. halkası: Device Swap — "hat son N saatte YENİ BİR CİHAZA mı taşındı?".
+ * Link 5 of the chain: Device Swap — "did the line move to a NEW HANDSET in the last N
+ * hours?".
  *
- * SIM Swap'ın yapısal ikizi (bkz. dosya başı, Halka 5) ve fail-closed sözleşmesi
- * diğer halkalarla aynıdır: onaylayıcı numarası zorunlu, tanınmayan simülasyon değeri
- * RET (ham değer YANKILANMAZ), çelişkili yapılandırma RET, okunamayan/yanıtsız CAMARA
- * cevabı RET, "değişmiş" RET.
+ * SIM Swap's structural twin (see the file header, Link 5), and its fail-closed contract is
+ * the same as the other links': the approver's number is required, an unrecognised simulation
+ * value is REFUSED with the raw value NOT echoed, contradictory configuration is REFUSED, an
+ * unreadable or silent CAMARA response is REFUSED, and "changed" is REFUSED.
  *
- * Ne zaman koşar: SADECE "high" katmanda ve SADECE bir kanal yapılandırılmışsa. Gerçek
- * kanal ayrıca OPT-IN'dir (AEGIS_DEVICESWAP_CHECK): token'ın varlığı tek başına
- * sorguyu AÇMAZ — istenmemiş bir CAMARA gidiş-dönüşü her onaya gecikme eklerdi.
+ * When it runs: ONLY on the "high" tier, and ONLY when a channel is configured. The real
+ * channel is additionally OPT-IN (AEGIS_DEVICESWAP_CHECK): the presence of a token does not
+ * ENABLE the query on its own — an unwanted CAMARA round trip would add latency to every
+ * approval.
  */
 async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
   if (!halkaKosarMi(risk, "devSwap")) return undefined;
@@ -1749,7 +1780,8 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
   if (!sim && !ayar.nacToken) return undefined;
 
   if (sim) {
-    // Çelişki ölçütü "token var mı" değil "gerçek kanal AÇIK mı" (halka 3'teki gerekçe).
+    // The contradiction test is not "is there a token" but "is the real channel ENABLED"
+    // (the reasoning from link 3).
     if (gercekAcik) {
       return {
         engel:
@@ -1812,8 +1844,9 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
     };
   }
 
-  // Token var ama halka açılmamış: BİLEREK sorgu yok, ret yok, kanıt satırı yok —
-  // beyan yalnız yapısal ize düşer (halka 3'teki aynı gerekçe).
+  // A token exists but the link is not enabled: DELIBERATELY no query, no refusal and no
+  // evidence line — the declaration lands only in the structured trace (the same reasoning as
+  // link 3).
   if (!gercekAcik) return { kanit: [], halka: "kapali" };
 
   if (!ayar.approverPhone) {
@@ -1859,8 +1892,9 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
       };
     }
     /**
-     * Yanıt geldi ama okunamadı. "Değişmedi" demek sessiz gevşeme, "değişti" demek
-     * yanlış suçlama olurdu; ikisi de değil — kontrol cevaplanamadı.
+     * A response arrived but could not be read. Saying "did not change" would be a silent
+     * loosening and saying "changed" would be a false accusation; it is neither — the check
+     * could not be answered.
      */
     return {
       engel:
@@ -1874,7 +1908,8 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
       pencereSaat: pencere,
     };
   } catch (e: any) {
-    // Upstream metin ASLA ret mesajına girmez; ayrıntı numara maskelenerek stderr'e.
+    // Upstream text NEVER enters the refusal message; the detail goes to stderr with the
+    // number masked.
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
     console.error(`[aegis] cihaz değişimi hatası (${maskeli}): ${detay}`);
     return {
@@ -1892,14 +1927,16 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
 }
 
 /**
- * Zincirin 6. halkası: Call Forwarding — "hatta KOŞULSUZ çağrı yönlendirme açık mı?".
+ * Link 6 of the chain: Call Forwarding — "is UNCONDITIONAL call forwarding active on the
+ * line?".
  *
- * Açık yönlendirme, OTP/sesli doğrulamayı ele geçirmenin klasik yoludur ve önceki beş
- * halkanın hiçbiri onu göremez (SIM aynı, cihaz aynı, hat erişilebilir, ülke beklenen).
+ * Active forwarding is the classic way to intercept an OTP or a voice verification, and none
+ * of the previous five links can see it: the SIM is the same, the device is the same, the
+ * line is reachable, the country is the expected one.
  *
- * Kapalı arıza iki ek tuzağı da kapsar (bkz. dosya başı, Halka 6): `active` alanı
- * tipte OPSİYONELDİR — okunamaması "yönlendirme yok" değil "bilinmiyor"dur ve RET
- * üretir; uç noktanın 501 dahil her fırlatması da RET'tir.
+ * Failing closed covers two further traps (see the file header, Link 6): the `active` field is
+ * OPTIONAL in the type — failing to read it means "unknown", not "no forwarding", and
+ * produces a REFUSAL; and every throw from the endpoint, 501 included, is a REFUSAL too.
  */
 async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | undefined> {
   if (!halkaKosarMi(risk, "callFwd")) return undefined;
@@ -2009,8 +2046,9 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
       };
     }
     /**
-     * `active` CAMARA yanıtında OPSİYONEL: yokluğu "yönlendirme kapalı" DEĞİL "bilinmiyor"dur.
-     * Bilinmeyeni temiz saymak, halkanın var olma sebebini yutardı.
+     * `active` is OPTIONAL in the CAMARA response: its absence means "unknown", NOT
+     * "forwarding is off". Treating the unknown as clean would swallow the reason this link
+     * exists.
      */
     return {
       engel:
@@ -2024,9 +2062,10 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
     };
   } catch (e: any) {
     /**
-     * 501 (NotImplementedError) dahil HER fırlatma buraya düşer ve RET üretir: operatörün
-     * şebekesi bu sinyali sunmuyorsa halka KAPATILMALIDIR (AEGIS_CALLFWD_CHECK), sessizce
-     * geçilmemelidir — "cevap alamadım" ile "yönlendirme yok" aynı şey değildir.
+     * EVERY throw lands here and produces a REFUSAL, 501 (NotImplementedError) included: if
+     * the operator's network does not offer this signal the link should be SWITCHED OFF
+     * (AEGIS_CALLFWD_CHECK) rather than passed over quietly — "I got no answer" and "there is
+     * no forwarding" are not the same thing.
      */
     const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
     console.error(`[aegis] çağrı yönlendirme hatası (${maskeli}): ${detay}`);
@@ -2048,76 +2087,77 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
  * Consults the network before a spend-increasing approval. Called by the approval gate
  * for every risk-tagged action; the caller treats `engel` as a hard refusal.
  *
- * Zincir SABİT ve TEK YÖNLÜ sırayla koşar:
+ * The chain runs in a FIXED, ONE-DIRECTIONAL order:
  *   SIM Swap → Number Verification → Device Reachability → Location
  *   → Device Swap → Call Forwarding
- * Son beşi YALNIZ "high" katmanda çalışır. Bir halkanın reti KESİNDİR: o noktada hemen
- * dönülür, sonraki halkalar ne koşar ne de kararı yumuşatabilir — sonraki bir halka
- * yalnızca reddetmek için yeni bir sebep ekleyebilir.
+ * The last five run ONLY on the "high" tier. A link's refusal is FINAL: the chain returns
+ * at that point, and the later links neither run nor can soften the verdict — a later link
+ * can only add another reason to refuse.
  */
 export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   /**
-   * ZİNCİR BİRLEŞİMİ + KADEMELİ DOĞRULAMA.
+   * ASSEMBLING THE CHAIN, AND STEP-UP VERIFICATION.
    *
-   * Koşan her halka KENDİ iz alanına yazar; tek bir alana ASLA ezilmez. "Gerçek CAMARA
-   * SIM-Swap sorgusu + NV simülasyonu + kapalı konum halkası" ile "hepsi simülasyon"
-   * farklı güven seviyeleridir ve denetim izinin tek işi bu ayrımı kanıtlamaktır.
-   * Halka eklendikçe bu kural yeniden kazanılır: yeni halka hem KENDİ AgIz alanını hem
-   * de kararGunlugu.ts'teki kendi kayıt alanını ister.
+   * Every link that runs writes to its OWN trace field; they are NEVER collapsed into one.
+   * "A real CAMARA SIM Swap query plus an NV simulation plus a disabled location link" and
+   * "all of it simulated" are different levels of confidence, and proving that distinction is
+   * the audit trace's whole job. The rule has to be won again with each new link: a new link
+   * requires both its OWN AgIz field and its own record field in kararGunlugu.ts.
    *
-   * BOZUK SİNYALDE NE OLUR. Kapı eskiden ilk engelde dönüyordu. Artık engelin CİNSİNE
-   * bakılıyor:
+   * WHAT HAPPENS ON A DEGRADED SIGNAL. The gate used to return at the first obstacle. Now the
+   * KIND of obstacle is what matters:
    *
-   *   - Yükseltilemez bir neden (çağrı yönlendirme açık, numara uyuşmazlığı,
-   *     yapılandırma hataları) → eskisi gibi ANINDA ret. Kalan halkalar hiç çağrılmaz;
-   *     reddedilmiş bir işlem için ağa gitmenin anlamı yok.
-   *   - Yükseltilebilir bir neden (SIM/cihaz değişimi, seyahat, kapalı telefon, cevapsız
-   *     ağ) ve kademe AÇIK → zincir DURMAZ. Kalan halkalar, bozulan sinyali
-   *     doğrulayacak kanıt için koşturulur.
+   *   - A reason that cannot be escalated — active call forwarding, a number mismatch, a
+   *     configuration fault — refuses IMMEDIATELY, as before. The remaining links are never
+   *     called; there is no point going to the network for an action that is already refused.
+   *   - A reason that can be escalated — a changed SIM or device, travel, a phone that is off,
+   *     a silent network — with step-up ON does NOT stop the chain. The remaining links are
+   *     run to look for evidence that corroborates the degraded signal.
    *
-   * Sonuçta üç şeyden biri olur ve üçü de izde ayırt edilebilir:
-   *   ret            — doğrulayan halka da bozuk çıktı, ya da hiç gerçek doğrulayan yok
-   *   yükseltilerek geçti — kalan halkaların HEPSİ gerçek kanaldan temiz döndü
-   *   temiz geçti    — hiç bozuk sinyal olmadı
+   * One of three things follows, and all three are distinguishable in the trace:
+   *   refused             — a vouching link was degraded too, or there was no real voucher
+   *   passed by escalation — ALL the remaining links came back clean over a real channel
+   *   passed clean        — there was no degraded signal at all
    */
   const kademeAcik = ayar.stepUp === true;
 
-  /** Yükseltme beklemeye alındıysa: ilk bozuk sinyalin kaydı. */
+  /** When an escalation is held pending: the record of the first degraded signal. */
   let bekleyen: { engel: string; neden: RetNedeni; aciklama: string } | undefined;
   /**
-   * GERÇEK kanaldan temiz dönen HER halka — sırasından bağımsız.
+   * EVERY link that came back clean over a REAL channel — regardless of its position.
    *
-   * İlk hâli yalnız bozuk sinyalden SONRA koşanları sayıyordu ve bu, doğrulamayı
-   * zincirdeki sıraya bağlıyordu: erişilebilirlik halkası konum halkasından önce
-   * koştuğu için, temiz ve gerçek olmasına rağmen doğrulayan sayılmıyordu. Oysa
-   * "bu sinyal temiz geldi" ifadesinin, bozuk sinyalin ondan önce mi sonra mı
-   * geldiğiyle ilgisi yoktur.
+   * The first version counted only the links that ran AFTER the degraded signal, which tied
+   * corroboration to the order of the chain: because the reachability link runs before the
+   * location link, it did not count as a voucher despite being clean and real. But
+   * whether a signal came back clean has nothing to do with whether the degraded signal
+   * arrived before or after it.
    */
   const temizGercek: string[] = [];
 
   /**
-   * BOZUK ÇIKAN HER SİNYAL — kararı hangisi verirse versin.
+   * EVERY SIGNAL THAT CAME BACK DEGRADED — whichever one makes the decision.
    *
-   * `iz.retNedeni` tek yuvadır ve sonraki halka onu üzerine yazar; bu dizi ise hiçbir
-   * bozuk sinyali düşürmez (bkz. AgIz.retNedenleri). Aynı neden iki kez eklenmez:
-   * denetçi "kaç ayrı sinyal bozuktu" sorusunu sayarak cevaplayabilmeli.
+   * `iz.retNedeni` is a single slot and a later link overwrites it; this array drops no
+   * degraded signal at all (see AgIz.retNedenleri). The same reason is never added twice: an
+   * auditor should be able to answer "how many distinct signals were degraded" by counting.
    */
   const bozuklar: RetNedeni[] = [];
   const bozukKaydet = (neden: RetNedeni | undefined): void => {
     if (neden !== undefined && !bozuklar.includes(neden)) bozuklar.push(neden);
   };
-  /** Dönüş izine bozuk sinyal listesini iliştirir; hiç yoksa alanı HİÇ açmaz. */
+  /** Attaches the degraded-signal list to the returned trace; with none, the field is not
+   * opened AT ALL. */
   const izle = (ham: AgIz): AgIz => (bozuklar.length ? { ...ham, retNedenleri: [...bozuklar] } : ham);
 
   let kanit: string[] = [];
   let iz: AgIz = { simSwap: "kapali" };
 
   /**
-   * Tek bir halkanın sonucunu zincire katar ve akışın devam edip etmeyeceğini söyler.
+   * Folds a single link's result into the chain and says whether the flow continues.
    *
-   * `gercekMi` bilerek ayrı bir parametre: SİMÜLE bir halka, bozulmuş GERÇEK bir
-   * sinyali doğrulayamaz. Aksi hâlde demo kipinde tek bir env değeri, gerçek bir SIM
-   * değişimini "doğrulanmış" hâle getirirdi — kapının en kolay atlatılma yolu bu olurdu.
+   * `gercekMi` is a separate parameter on purpose: a SIMULATED link cannot corroborate a
+   * degraded REAL signal. Otherwise, in demo mode a single environment value would make a
+   * genuine SIM change look "verified" — which would be the easiest way past the gate.
    */
   const kat = (
     id: string,
@@ -2127,7 +2167,8 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   ): "devam" | "dur" => {
     if (sonuc.engel) {
       const neden = sonuc.retNedeni;
-      // Sinyal bozuldu: kararı bu halka verse de vermese de ize GİRER.
+      // The signal degraded: it ENTERS the trace whether or not this link makes the
+      // decision.
       bozukKaydet(neden);
       const yukseltilebilir = kademeAcik && !bekleyen && neden !== undefined && KADEME_UYGUN.has(neden);
       if (!yukseltilebilir) return "dur";
@@ -2155,14 +2196,14 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
     };
     kanit = [];
   } else if (simSwap.iz.simSwap === "gercek") {
-    // Bozuk sinyal SONRADAN gelirse bu halka onu doğrulayanlar arasında sayılır.
+    // If a degraded signal arrives LATER, this link counts among its vouchers.
     temizGercek.push("simSwap");
   }
 
   const nv = nvKatmani(ayar, risk);
   if (nv) {
     iz = { ...iz, nv: nv.nv, maskeliNumara: iz.maskeliNumara ?? nv.maskeliNumara, retNedeni: nv.retNedeni ?? iz.retNedeni };
-    // NV yalnız simülasyondur: doğrulayan sayılmaz (gercekMi = false).
+    // NV is simulation-only, so it does not count as a voucher (gercekMi = false).
     if (kat("nv", nv, false, "numara doğrulaması") === "dur") return { engel: nv.engel, kanit: [], iz: izle(iz) };
   }
 
@@ -2190,9 +2231,9 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
       maskeliNumara: iz.maskeliNumara ?? devSwap.maskeliNumara,
       retNedeni: devSwap.retNedeni ?? iz.retNedeni,
       /**
-       * KENDİ alanına yazar, `pencereSaat`e DEĞİL: o alan SIM-Swap halkasınındır ve iki
-       * halkanın penceresi tek alana ezilirse denetçi hangi sorunun hangi pencereyle
-       * sorulduğunu ayırt edemez (bkz. AgIz.devSwapPencereSaat).
+       * It writes to its OWN field, NOT to `pencereSaat`: that field belongs to the SIM
+       * Swap link, and if two links' windows are collapsed into one an auditor cannot tell
+       * which question was asked with which window (see AgIz.devSwapPencereSaat).
        */
       devSwapPencereSaat: devSwap.pencereSaat,
     };
@@ -2212,30 +2253,32 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   if (!bekleyen) return { kanit, iz: izle(iz) };
 
   /**
-   * YÜKSELTME KARARI. Buraya yalnız yükseltilebilir bir bozuk sinyalle gelinir ve
-   * kalan halkaların hiçbiri reddetmemiştir (reddeden olsaydı yukarıda dönülürdü).
+   * THE ESCALATION DECISION. This point is reached only with an escalatable degraded
+   * signal, and with none of the remaining links having refused — a refusal would have
+   * returned above.
    *
-   * GEÇMEK İÇİN EN AZ BİR GERÇEK DOĞRULAYAN ŞART. Doğrulayansız bir yükseltme,
-   * "sinyal bozuktu ama sorabileceğimiz başka kimse yoktu, o hâlde geçsin" demektir —
-   * yani kapının kapandığı tek durumda kapıyı açmak. Simülasyon kanalları bilerek
-   * sayılmaz: demo kipinde tek bir env değeri gerçek bir SIM değişimini örtemesin.
+   * AT LEAST ONE REAL VOUCHER IS REQUIRED TO PASS. An escalation without one means "the
+   * signal was degraded but there was nobody else to ask, so let it through" — opening the
+   * gate at exactly the moment it closes. Simulation channels deliberately do not count, so
+   * that in demo mode a single environment value cannot paper over a genuine SIM change.
    */
   /**
-   * KEFİL SÜZGECİ. Temiz dönmüş olmak yetmez; halkanın bozuk sinyali ÇÜRÜTEBİLİYOR
-   * olması da gerekir (bkz. KEFIL_ESLEMESI). Süzgeçten önce "en az bir gerçek halka
-   * temiz" koşulu sağlanıyordu ve bu, erişilebilirlik halkasının tek başına gerçek bir
-   * SIM değişimine kefil olmasına izin veriyordu.
+   * THE VOUCHER FILTER. Coming back clean is not enough; the link also has to be CAPABLE OF
+   * DISPROVING the degraded signal (see KEFIL_ESLEMESI). Before this filter the condition was
+   * "at least one real link came back clean", which allowed the reachability link to vouch on
+   * its own for a genuine SIM change.
    */
-  // Kapanışın içinde daraltma korunmaz: bozuk sinyali sabite alıyoruz.
+  // Narrowing is not preserved inside the closure, so the degraded signal is captured in a
+  // constant.
   const kefilKumesi = KEFIL_ESLEMESI[bekleyen.neden] ?? [];
   const kefiller = temizGercek.filter((id) => kefilKumesi.includes(id));
 
   if (!kefiller.length) {
     /**
-     * İki ayrı durumu AYIRT EDEREK söylüyoruz: hiç gerçek halka koşmamış olmakla,
-     * koşmuş ama hiçbirinin bu sinyal hakkında söyleyecek sözü olmaması aynı şey
-     * değildir. İkincisini birincisiymiş gibi raporlamak, operatöre yapılandırma
-     * sorunu varmış gibi gösterirdi.
+     * The two situations are reported DISTINCTLY: no real link having run at all is not the
+     * same as links having run with none of them having anything to say about this signal.
+     * Reporting the second as if it were the first would show the operator a configuration
+     * problem that is not there.
      */
     const aciklayici = temizGercek.length
       ? " (kademeli doğrulama açık, ama temiz dönen ağ halkalarının hiçbiri bu sinyale kefil " +
@@ -2260,17 +2303,18 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
 }
 
 /**
- * Zincirin 1. halkası: SIM Swap (gerçek CAMARA sorgusu ya da SİMÜLASYON kanalı).
- * Karar mantığı halka ayrımından önceki hâliyle aynıdır.
+ * Link 1 of the chain: SIM Swap, through either a real CAMARA query or the SIMULATION
+ * channel. The decision logic is unchanged from before the links were separated.
  */
 async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
-  // Simülasyon tanımlıysa gerçek kanaldan ÖNCE devreye girer (token'a bakılmaksızın):
-  // jüri demosu SDK'sız/token'sız çalışır, karar mantığı ve fail-closed yolları aynıdır.
+  // When a simulation is set it takes effect BEFORE the real channel, regardless of any
+  // token: a jury demo runs without the SDK or a token, and the decision logic and
+  // fail-closed paths are identical.
   const sim = ayar.nacSimulate?.trim();
   if (sim) return simDogrula(ayar, risk, sim);
 
   if (!ayar.nacToken) {
-    // Katman BİLEREK kapalı: yapılandırma hatası değil, sorgu da yok.
+    // The layer is DELIBERATELY disabled: not a configuration fault, and no query.
     return { kanit: ["Ağ doğrulaması: kapalı (AEGIS_NAC_TOKEN tanımlı değil)"], iz: { simSwap: "kapali" } };
   }
   if (!ayar.approverPhone) {
@@ -2308,9 +2352,10 @@ async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
       };
     }
     /**
-     * Yanıt geldi ama OKUNAMADI (bkz. kanalGetir). "Değişmedi" demek sessiz gevşeme,
-     * "değişti" demek yanlış suçlama olurdu; ikisi de değil — kontrol cevaplanamadı.
-     * İz "gercek": yapılandırma sağlamdı ve sorgu bu pencereyle gerçekten DENENDİ.
+     * A response arrived but COULD NOT BE READ (see kanalGetir). Saying "did not change"
+     * would be a silent loosening and saying "changed" would be a false accusation; it is
+     * neither — the check could not be answered. The trace says "gercek": the configuration
+     * was sound and the query really WAS attempted with this window.
      */
     return {
       engel:
@@ -2340,9 +2385,10 @@ async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
         "Sorun sürerse operatör sunucu günlüklerine bakmalı (ayrıntı oraya yazıldı).",
       kanit: [],
       /**
-       * Kanal "gercek": yapılandırma sağlamdı ve gerçek sorgu bu pencereyle DENENDİ —
-       * yanıt gelmedi. "calismadi" demek, yapılandırma hatasıyla hiç sorulmamış bir
-       * kararla aynı kefeye koymak olurdu; denetimde bu ikisi ayrı durumlardır.
+       * The channel is "gercek": the configuration was sound and a real query WAS attempted
+       * with this window — no answer came back. Calling it "calismadi" would put it in the
+       * same class as a decision that was never asked because of a configuration fault, and
+       * in an audit those are distinct situations.
        */
       iz: { simSwap: "gercek", pencereSaat: pencere, maskeliNumara: maskeli, retNedeni: "ag-yanitsiz" },
     };
