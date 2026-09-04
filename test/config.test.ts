@@ -10,7 +10,7 @@
  * Fonksiyon kapsamı bu dosyadan önce %25 idi: ayrıştırıcıların hiçbirinin davranışsal
  * kanıtı yoktu.
  */
-import { test, afterEach } from "node:test";
+import { test, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseBool,
@@ -35,6 +35,25 @@ afterEach(() => {
     else process.env[ad] = eski;
   }
   yedek.clear();
+});
+
+/**
+ * KİMLİK BİLGİLERİNİ TESTİN KENDİSİ KURAR — geliştiricinin .env'ine güvenilmez.
+ *
+ * loadConfig() dört Google kimlik değişkeni ister ve yoksa fırlatır. Bu dosyadaki
+ * testler onları hiç kurmuyordu; yerelde .env dosyası doldurduğu için geçiyor,
+ * temiz bir makinede (CI) "Google Ads kimlik bilgileri eksik" ile düşüyorlardı.
+ * Ölçüldü: dört test CI'da bu yüzden kırmızıydı, aynı anda yerelde yeşildi.
+ *
+ * Bir testin geçmesi geliştiricinin makinesinde ne olduğuna bağlıysa, o test
+ * neyi ölçtüğünü söyleyemez. Değerler sahte: buradaki hiçbir test ağa çıkmaz,
+ * yalnız AYRIŞTIRMA mantığını sınar.
+ */
+beforeEach(() => {
+  ayarla("GOOGLE_ADS_DEVELOPER_TOKEN", "TEST-ONLY-developer-token");
+  ayarla("GOOGLE_ADS_CLIENT_ID", "TEST-ONLY-client-id");
+  ayarla("GOOGLE_ADS_CLIENT_SECRET", "TEST-ONLY-client-secret");
+  ayarla("GOOGLE_ADS_REFRESH_TOKEN", "TEST-ONLY-refresh-token");
 });
 
 /* ── parseBool: tanınmayan değer AÇIK değil KAPALI demektir ───────────────────── */

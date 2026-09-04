@@ -40,7 +40,9 @@ jobs:
           cache: npm
       - run: npm ci
       # Üretim bağımlılıklarında bilinen zafiyet varsa yapı kırılır
-      - run: npm audit --omit=dev --audit-level=moderate
+      # Named exceptions with reasons and a review date, printed on every run.
+      # See scripts/bagimlilikDenetimi.mjs — anything undecided still fails the build.
+      - run: npm run audit
 
   secret-scan:
     runs-on: ubuntu-latest

@@ -543,6 +543,19 @@ test("KRİTİK: ana anahtar veritabanını ÇÖZEMİYORSA süreç açılmaz", as
       AEGIS_DB: db,
       AEGIS_PORT: String(PORT + 77),
       AEGIS_PUBLIC_URL: `http://localhost:${PORT + 77}`,
+      /**
+       * Kimlik bilgileri TESTİN KENDİSİNDEN gelir, geliştiricinin .env'inden değil.
+       *
+       * Sunucu açılışta önce yapılandırmayı doğrular, anahtar sınamasına ondan SONRA
+       * gelir. Bunlar verilmediğinde süreç "Google Ads kimlik bilgileri eksik" ile
+       * çıkıyor — yine sıfırdan farklı bir kodla, yani iddia geçiyor ama ÖLÇTÜĞÜ ŞEY
+       * anahtar uyuşmazlığı değil, eksik yapılandırma oluyordu. Yerelde .env dosyası
+       * bunları sağladığı için fark görünmüyordu; CI'da test "operatör sebebi görmeli"
+       * ile kızardı ve asıl sebep buydu.
+       */
+      GOOGLE_ADS_DEVELOPER_TOKEN: "sahte-token",
+      GOOGLE_ADS_CLIENT_ID: "sahte-client-id",
+      GOOGLE_ADS_CLIENT_SECRET: "sahte-secret",
     },
   });
   let cikti = "";
