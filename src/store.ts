@@ -26,48 +26,51 @@ export interface StoredUser {
 let cachedMasterKey: Buffer | undefined;
 
 /**
- * KDF TUZU VE ASGARİ UZUNLUK ÇİVİLENMİŞTİR.
+ * THE KDF SALT AND THE MINIMUM LENGTH ARE PINNED.
  *
- * Sabitler burada duruyor ki testler onları koddan değil, kendi hesapladıkları
- * bilinen-cevapla karşılaştırsın: tuz ya da uzunluk değişirse üretimdeki HER
- * refresh_token_enc çözülemez hâle gelir, ama bu tür bir değişiklik derlemeyi de
- * testleri de kendiliğinden kırmaz. Kıran şey, bu değerlere bağlı sabit fikstürdür.
+ * The constants sit here so that tests compare them against a known answer they compute
+ * themselves rather than reading them from the code: if the salt or the length changes,
+ * EVERY refresh_token_enc in production becomes undecryptable — and a change like that
+ * breaks neither the build nor the tests on its own. What breaks is the fixed fixture that
+ * depends on these values.
  */
 /**
- * ⚠ BU DİZE ASLA DEĞİŞTİRİLEMEZ — ürün yeniden adlandırılsa bile.
+ * ⚠ THIS STRING MUST NEVER CHANGE — not even when the product is renamed.
  *
- * Parola tipi bir ana anahtar bu tuzla scrypt'ten geçirilir. Tuz değişirse türeyen
- * anahtar da değişir ve DEPODAKİ HER ŞİFRELİ SATIR ÇÖZÜLEMEZ HÂLE GELİR: süreç açılır,
- * hiçbir tip hatası çıkmaz, her kiracı sebebi yazmayan bir hatayla karşılaşır ve sıcak
- * yedek de aynı şekilde bozuktur.
+ * A passphrase-type master key is put through scrypt with this salt. Change the salt and
+ * the derived key changes with it, and EVERY ENCRYPTED ROW IN THE STORE BECOMES
+ * UNDECRYPTABLE: the process starts, no type error appears, every tenant meets an error
+ * with no reason in it, and the warm backup is broken in exactly the same way.
  *
- * "adspilot" öneki ürünün eski adıdır ve BİLEREK duruyor. Aegis'e geçerken toplu
- * yeniden adlandırma bu satırı da değiştirdi; test/anahtarBelgesi.ts'teki gömülü şifreli
- * metin bunu anında yakaladı. Anahtar döndürmek istiyorsan yol tuzu değiştirmek değil,
- * kullanıcıları yeniden bağlamaktır.
+ * The "adspilot" prefix is the product's former name and it stays DELIBERATELY. The bulk
+ * rename to Aegis changed this line too; the embedded ciphertext in test/anahtarBelgesi.ts
+ * caught it immediately. If you want to rotate the key, the path is reconnecting users, not
+ * changing the salt.
  */
 const ANAHTAR_TUZU = "adspilot-token-encryption-v1";
 const ANAHTAR_ASGARI_UZUNLUK = 32;
 const ANAHTAR_BAYT = 32;
 
 /**
- * Ana anahtarın METİN hâli — KIRPILMIŞ.
+ * The master key as TEXT — TRIMMED.
  *
- * NEDEN KIRPMA ŞART: anahtar çoğu kurulumda bir secret dosyasından ya da `docker
- * secret`ten gelir ve sondaki tek bir yeni satır, 64-hex düzenini bozup aynı anahtarı
- * parola (scrypt) dalına düşürür. Sonuç sessiz felakettir: süreç açılır, hiçbir hata
- * vermez, ama depodaki hiçbir satır çözülemez ve sıcak yedek de bozulur.
+ * WHY TRIMMING IS REQUIRED: in most deployments the key arrives from a secret file or a
+ * `docker secret`, and a single trailing newline breaks the 64-hex shape and drops the same
+ * key into the passphrase (scrypt) branch. The result is a silent catastrophe: the process
+ * starts, raises nothing, and yet no row in the store can be decrypted — and the warm backup
+ * is broken too.
  *
- * HTTP TARAFI NEDEN BURAYI ÇAĞIRIYOR: aynı metin HMAC imzalarında da kullanılıyor
- * (http.ts oturum/state çerezleri) ve orası eskiden `process.env.AEGIS_MASTER_KEY ?? ""`
- * diyordu. İmzalama ve doğrulama aynı ifadeyi kullandığı için bu kendi içinde TUTARLIYDI —
- * kırpma farkı oradaki imzaları hiç bozmazdı, o gerekçe yanlıştı. Gerçek kazanç daha küçük
- * ve başka yerde: `?? ""` yedeği, anahtar hiç yokken çerezleri BOŞ DİZEYLE imzalardı, yani
- * herkesin bilebileceği bir anahtarla. Buradan geçince böyle bir durum sessizce imzalamak
- * yerine fırlatır. Bu yol bugün açılışta zaten kapalı (http.ts:validateHostedEnv modül
- * yüklenirken koşuyor ve eksik anahtarda süreci öldürüyor), dolayısıyla ortak giriş noktası
- * bir bekçi değil, savunma derinliğidir — ve kaynak-düzeyi bir bekçiyle korunur
- * (test/kaynakHijyeni.test.ts: imza yollarında ham env okunmaz).
+ * WHY THE HTTP SIDE CALLS THIS: the same text is used for HMAC signatures (the session and
+ * state cookies in http.ts), and that code used to say
+ * `process.env.AEGIS_MASTER_KEY ?? ""`. Since signing and verification used the same
+ * expression, it was internally CONSISTENT — a trimming difference would never have broken
+ * those signatures, so that was the wrong reason. The real gain is smaller and elsewhere: the
+ * `?? ""` fallback signed cookies with the EMPTY STRING when no key was set, that is, with a
+ * key anyone could guess. Going through here, that situation throws instead of signing
+ * quietly. The path is already closed at startup today (http.ts:validateHostedEnv runs while
+ * the module loads and kills the process on a missing key), so the shared entry point is not
+ * a gate but defence in depth — and it is held in place by a source-level guard
+ * (test/kaynakHijyeni.test.ts: the signing paths never read the raw environment).
  */
 export function masterKeyText(): string {
   const kirpik = process.env.AEGIS_MASTER_KEY?.trim() ?? "";
@@ -89,15 +92,17 @@ export function masterKeyText(): string {
  * cross-user rainbow-table exposure, and keeping a salt in the database would complicate
  * key rotation for no gain.
  *
- * SHA-256'ya (ya da başka ucuz bir özete) düşmek burada bir hız iyileştirmesi DEĞİL,
- * güvenlik kaybıdır: parola tipi bir anahtarda tahmin başına maliyet ~23.000 kat düşer
- * ve DB dosyası sızdığında parola çevrimdışı denenip tüm kiracıların refresh token'ları
- * çözülür. Bu yüzden algoritma+tuz+uzunluk üçlüsü testte bilinen-cevapla çivilenmiştir.
+ * Falling back to SHA-256 (or any other cheap digest) here is NOT a speed improvement but a
+ * loss of security: for a passphrase-type key the cost per guess drops roughly 23,000-fold,
+ * and if the database file leaks the passphrase can be attacked offline until every tenant's
+ * refresh token falls out. That is why the triple of algorithm, salt and length is pinned in
+ * the tests against a known answer.
  *
- * SALT HEX AMA 64 DEĞİLSE RET: "64 hex" ile "parola" arasındaki seçim sessizce
- * yapılamaz. Kırpılmış/eklenmiş bir makine anahtarı (63 ya da 65 hex) parola dalına
- * düşerdi ve operatör doğru anahtarı verdiğini sanarak hiçbir satırı açamazdı —
- * "bilinmiyor" ile "temiz" aynı şey değildir, o yüzden açıkça reddedilir.
+ * HEX BUT NOT 64 CHARACTERS IS REFUSED: the choice between "64 hex" and "passphrase" cannot
+ * be made silently. A machine key that lost or gained a character (63 or 65 hex) would drop
+ * into the passphrase branch, and the operator — believing they had supplied the right key —
+ * could open no row at all. "Unknown" and "clean" are not the same thing, so it is refused
+ * explicitly.
  */
 export function deriveMasterKey(ham: string): Buffer {
   const kirpik = ham.trim();
@@ -121,8 +126,9 @@ function masterKey(): Buffer {
   if (cachedMasterKey) return cachedMasterKey;
   const kirpik = masterKeyText();
   cachedMasterKey = deriveMasterKey(kirpik);
-  // Hangi dalın koştuğu ÜRETİMDE görünmeli: "anahtarı verdim ama hiçbir şey açılmıyor"
-  // arızasının tek ucuz teşhisi budur (env'de görünmeyen bir boşluk, yanlış uzunluk).
+  // Which branch ran has to be visible IN PRODUCTION: it is the only cheap diagnosis for
+  // "I supplied the key and nothing decrypts" (an invisible space in the environment, a
+  // wrong length).
   console.error(
     `[aegis] ana anahtar türetmesi: ${
       /^[0-9a-f]{64}$/i.test(kirpik) ? "64-hex (doğrudan)" : `parola (scrypt, tuz: ${ANAHTAR_TUZU})`
@@ -133,12 +139,13 @@ function masterKey(): Buffer {
 
 export function encryptSecret(plain: string): string {
   /**
-   * BOŞ SIR KAYNAĞINDA REDDEDİLİR.
+   * AN EMPTY SECRET IS REFUSED AT SOURCE.
    *
-   * Boş düz metin "iv.tag." üretiyordu: kendi decryptSecret'imizin biçim denetiminden
-   * geçemeyen bir paket. Yani depoya yazılabilen ama okunamayan bir satır — ve okuyan
-   * taraf "Şifreli veri bozuk" görüp disk bozulması arardı. Boş bir refresh token zaten
-   * hiçbir işe yaramaz; doğru yer, üretildiği an.
+   * Empty plaintext produced "iv.tag.": a package that cannot pass our own decryptSecret's
+   * shape check. That is a row which can be written to the store but never read back — and
+   * the reader, seeing "the encrypted data is corrupt", would go looking for disk
+   * corruption. An empty refresh token is useless anyway; the right place to catch it is
+   * where it is produced.
    */
   if (plain === "") throw new Error("Boş sır şifrelenemez (kaynakta reddedildi).");
   const iv = randomBytes(12);
@@ -149,12 +156,13 @@ export function encryptSecret(plain: string): string {
 
 export function decryptSecret(packed: string): string {
   /**
-   * BİÇİM DENETİMİ YAPISALDIR, DOĞRULUK TEMELLİ DEĞİL.
+   * THE SHAPE CHECK IS STRUCTURAL, NOT BASED ON CORRECTNESS.
    *
-   * Eskiden yalnız "üç parça da boş değil mi" bakılıyordu; base64 çözümü toleranslı
-   * olduğu için 3 baytlık bir IV ya da 2 baytlık bir etiket denetimden geçip
-   * createDecipheriv'in anlaşılmaz "Unsupported state" hatasına dönüşüyordu. GCM'de
-   * IV 12, etiket 16 bayttır — ölçüsü tutmayan paket bozuktur, tahmin edilmez.
+   * It used to ask only "are all three parts non-empty"; because base64 decoding is
+   * forgiving, a 3-byte IV or a 2-byte tag passed the check and turned into
+   * createDecipheriv's unintelligible "Unsupported state" error. Under GCM the IV is 12
+   * bytes and the tag is 16 — a package whose measurements do not match is corrupt, and it
+   * is not guessed at.
    */
   const parcalar = packed.split(".");
   if (parcalar.length !== 3) throw new Error("Şifreli veri bozuk (format).");
@@ -162,8 +170,8 @@ export function decryptSecret(packed: string): string {
   const tag = Buffer.from(parcalar[1], "base64");
   const veri = Buffer.from(parcalar[2], "base64");
   if (iv.length !== 12 || tag.length !== 16) throw new Error("Şifreli veri bozuk (format).");
-  // Boş gövde ayrı bir cümleyle bildirilir: operatör disk bozulması değil, sırrı boş
-  // yazan bir içe aktarma/geçiş adımı aramalı.
+  // An empty body is reported in its own sentence: the operator should be looking for an
+  // import or migration step that wrote the secret empty, not for disk corruption.
   if (veri.length === 0) throw new Error("Şifreli veri boş — bu satıra hiç sır yazılmamış.");
   const decipher = createDecipheriv("aes-256-gcm", masterKey(), iv);
   decipher.setAuthTag(tag);
@@ -184,17 +192,18 @@ export class UserStore {
   private db: DatabaseSync;
 
   /**
-   * AEGIS_DB verilmediğinde kullanılacak dosya — ESKİ ADI TERK ETMEDEN.
+   * The file to use when AEGIS_DB is not set — WITHOUT ABANDONING THE OLD NAME.
    *
-   * Ürün AdsPilot'tan Aegis'e adlandırıldığında varsayılan dosya adı da `adspilot.db`'den
-   * `aegis.db`'ye kaydı. Tek başına bu, yükseltme yapan her kurulumda SESSİZ VERİ KAYBIDIR:
-   * süreç açılır, boş bir veritabanı yaratır, tek bir hata satırı bile çıkmaz — ve bağlı
-   * bütün hesaplar yokmuş gibi görünür. Kullanıcı "her şey silinmiş" diye bakar, oysa eski
-   * dosya diskte durmaktadır.
+   * When the product was renamed from AdsPilot to Aegis, the default filename moved from
+   * `adspilot.db` to `aegis.db`. On its own that is SILENT DATA LOSS for every installation
+   * that upgrades: the process starts, creates an empty database, emits not one line of
+   * error — and every connected account appears to be gone. The user sees "everything has
+   * been deleted", while the old file is sitting right there on disk.
    *
-   * Bu yüzden yeni ad YALNIZCA eski dosya ORTADA YOKKEN kullanılır. Eski dosya duruyorsa
-   * o açılır ve durum stderr'e YAZILIR: sessiz uyum sağlamak da sessiz kayıp kadar kötüdür,
-   * operatör hangi dosyayı kullandığını bilmeli ve isterse elle taşımalı.
+   * So the new name is used ONLY when the old file is NOT THERE. When it is, that file is
+   * opened and the choice is WRITTEN to stderr: adapting quietly is as bad as losing
+   * quietly, and the operator should know which file is in use and be able to move it by
+   * hand.
    */
   static varsayilanYol(): string {
     const acik = process.env.AEGIS_DB?.trim();
@@ -212,15 +221,15 @@ export class UserStore {
 
   // `||` rather than `??`: `??` lets an empty string through, and DatabaseSync("") silently
   // opens a TEMPORARY database — every restart would then wipe all user tokens without
-  // raising a single error. `.trim()` aynı kapının ikinci yarısıdır: yalnız boşluktan
-  // oluşan bir AEGIS_DB `??`/`||` fark etmeksizin "doğru" görünür ama diske adı
-  // boşluk olan bir dosya açar; o da her yeniden başlatmada kaybolan bir depodur.
+  // raising a single error. `.trim()` is the second half of the same gate: an AEGIS_DB made
+  // only of whitespace looks "valid" whether you use `??` or `||`, but opens a file on disk
+  // whose name is a space — which is another store that disappears on every restart.
   constructor(path = UserStore.varsayilanYol()) {
     /**
-     * AÇIKÇA VERİLEN BOŞ YOL DA RET. Varsayılan argüman yukarıda korunuyor ama
-     * `new UserStore(kullaniciYolu)` çağıran bir yol boş dize geçirirse aynı sessiz
-     * geçici-veritabanı tuzağına düşerdi: kiracı token'ları her yeniden başlatmada
-     * tek bir hata satırı bile üretmeden silinir. Bilinmeyen yol = RET.
+     * AN EXPLICITLY SUPPLIED EMPTY PATH IS REFUSED TOO. The default argument above is
+     * protected, but a caller doing `new UserStore(userPath)` with an empty string would
+     * fall into the same silent temporary-database trap: tenant tokens are deleted on every
+     * restart without producing a single line of error. An unknown path means REFUSE.
      */
     if (!path.trim()) {
       throw new Error(
@@ -290,23 +299,23 @@ export class UserStore {
         ? (this.db.prepare("SELECT id FROM users WHERE google_sub = ?").get(input.subject) as { id: number } | undefined)
         : undefined;
       /**
-       * E-POSTAYA DÜŞÜŞ, YALNIZ HENÜZ HİÇ BAĞLANMAMIŞ SATIRA İZİNLİ.
+       * FALLING BACK TO EMAIL IS ALLOWED ONLY FOR A ROW THAT HAS NEVER BEEN LINKED.
        *
-       * Önceki hâl `bySub ?? (email ile ara)` idi ve `subject` VERİLMİŞ ama eşleşmemiş
-       * olsa bile e-postaya düşüyordu. Bu, bu dosyanın kendi şema yorumunun ("Email
-       * CANNOT serve as the tenant key: it can change, Workspace can reassign it")
-       * tam tersiydi ve devralmaya açıktı: aynı e-postayla YENİ bir Google `sub`'ı
-       * gelen giriş, mevcut kiracının satırını buluyor, UPDATE ile google_sub'ı kendi
-       * değeriyle değiştiriyor ve yeni bir API anahtarı alıyordu. Devralınan satır
-       * kurbanın Google Ads refresh token'ını ve bütçe tavanını taşıdığı için sonuç,
-       * başkasının reklam hesabında harcama yetkisidir. Bu senaryo teorik de değil:
-       * Workspace'te bir kullanıcı silinip aynı adresle yeniden açıldığında sub değişir,
-       * e-posta aynı kalır.
+       * The earlier form was `bySub ?? (look up by email)`, which fell back to email even
+       * when `subject` WAS supplied but did not match. That was the exact opposite of this
+       * file's own schema comment — "Email CANNOT serve as the tenant key: it can change,
+       * Workspace can reassign it" — and it was open to takeover: a login arriving with a
+       * NEW Google `sub` on the same email found the
+       * existing tenant's row, replaced google_sub with its own value through an UPDATE,
+       * and received a new API key. Because the taken-over row carries the victim's Google
+       * Ads refresh token and budget ceiling, the result is authority to spend inside
+       * somebody else's ad account. Nor is the scenario theoretical: in Workspace, deleting
+       * a user and recreating them at the same address changes the sub and keeps the email.
        *
-       * Ama e-posta yolu tamamen kapatılamaz: stdio/test akışıyla `subject` OLMADAN
-       * açılmış satırların sonradan Google girişine bağlanması meşru bir yükseltmedir.
-       * Ayrım, satırın DAHA ÖNCE bağlanmış olup olmadığıdır — sahipsiz satır sahiplenilir,
-       * sahipli satır asla devredilmez.
+       * The email path cannot be closed entirely, though: linking a row created WITHOUT a
+       * `subject` through the stdio/test flow to a Google login later is a legitimate
+       * upgrade. The distinction is whether the row has EVER been linked — an unowned row
+       * can be claimed, an owned row is never handed over.
        */
       const byEmail = this.db
         .prepare("SELECT id, google_sub FROM users WHERE email = ?")
@@ -412,17 +421,18 @@ export class UserStore {
   }
 
   /**
-   * DEPODAKİ ANAHTARIN GERÇEKTEN ÇALIŞTIĞINI KANITLAR — açılışta bir kez.
+   * PROVES THAT THE KEY ACTUALLY OPENS THE STORE — once, at startup.
    *
-   * Dönüş: 'bos' (denenecek kayıt yok), 'calisiyor', ya da çözülemeyen kaydın hatası.
+   * Returns 'bos' (no record to try), 'calisiyor', or the error from the record that could
+   * not be decrypted.
    *
-   * NEDEN: açılış denetimi yalnız ŞİFRELEYEBİLMEYİ ölçüyordu ve şifrelemek her zaman
-   * çalışır — anahtar YANLIŞ olsa bile. Anahtar döndürüldüğünde ya da veritabanı başka
-   * bir kurulumdan geri yüklendiğinde süreç sağlıkla ayağa kalkıyor, /health yeşil
-   * yanıyor, ve her kiracı ilk isteğinde ipucusuz bir 500 alıyordu. Arıza, onu
-   * düzeltebilecek tek anın (açılış) çok sonrasında ve yanlış katmanda görünüyordu.
+   * WHY: the startup check measured only whether we could ENCRYPT, and encryption always
+   * works — even with the WRONG key. When the key had been rotated, or the database restored
+   * from another installation, the process came up healthy, /health went green, and every
+   * tenant met a 500 with no clue in it on their first request. The fault surfaced long after
+   * the only moment it could be fixed (startup), and in the wrong layer.
    *
-   * Tek kayıt yeter: anahtar ya hepsini çözer ya hiçbirini.
+   * One record is enough: the key either opens all of them or none.
    */
   anahtarCalisiyorMu(): "bos" | "calisiyor" | { hata: string } {
     const row = this.db

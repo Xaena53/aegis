@@ -18,19 +18,20 @@
  * the action outright, because the person who would answer the prompt may be the
  * attacker who swapped it.
  *
- * Her ağ kararı (ret VE geçiş) denetim izi için kararGunlugu.ts'e yazılır. Günlük
- * gözlemdir, kapı değildir: yazılamazsa akış aynen sürer.
+ * Every network decision — refusals AND passes — is written to kararGunlugu.ts for the
+ * audit trail. The log is an observation, not a gate: if it cannot be written, the flow
+ * continues unchanged.
  *
- * İKİ KANAL, İKİ İZLEYİCİ. Onay özetinin gördüğü iki ayrı okur vardır: karar veren
- * İNSAN ve isteği yapan AJAN. `satirlar` ikisine birden gider (elicitation'sız
- * istemcide ret metnine de yazılır); `insanSatirlari` YALNIZ insana gider. Kapının
- * kendi kanıtı — maskeli numara, geriye bakış penceresi, beklenen ülke — ve sunucu
- * tarafı sırlar ikinci kanaldadır: çalınmış bir oturumdaki ajan, reddedildiği her
- * denemede kapının ölçülerini öğrenmemelidir.
+ * TWO CHANNELS, TWO AUDIENCES. An approval summary has two distinct readers: the HUMAN who
+ * decides, and the AGENT that made the request. `satirlar` goes to both (on a client
+ * without elicitation it is written into the refusal text as well); `insanSatirlari` goes
+ * to the human ONLY. The gate's own evidence — the masked number, the look-back window, the
+ * expected country — and server-side secrets live in the second channel: an agent inside a
+ * stolen session must not learn the gate's dimensions with every refused attempt.
  *
- * KADEMELİ DOĞRULAMA ZAYIF KANALDA GEÇMEZ. Yükseltme, insana daha güçlü bir soru
- * sorabilmeye dayanır; soracak istemi olmayan bir istemcide yükseltme de yoktur ve
- * ajanın `confirm=true`su o istemin yerine geçmez.
+ * STEP-UP DOES NOT PASS ON THE WEAK CHANNEL. An escalation rests on being able to ask the
+ * human a stronger question; on a client with no prompt to show there is no escalation, and
+ * the agent's own `confirm=true` does not stand in for that prompt.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { agDogrula, type AgAyar, type AgRisk, type KademeKarari } from "./networkTrust.js";
@@ -51,23 +52,24 @@ export interface OnayOzeti {
   /**
    * The concrete lines the user needs to see in order to decide.
    *
-   * DİKKAT: bu satırlar elicitation'sız istemcide RET METNİYLE BİRLİKTE AJANA DÖNER.
-   * Ajanın zaten bildiği (kendi gönderdiği) bilgiler buraya; ajanın bilmesi
-   * gerekmeyen her şey `insanSatirlari`na.
+   * CAREFUL: on a client without elicitation these lines GO BACK TO THE AGENT along with
+   * the refusal text. Put here what the agent already knows because it sent it; everything
+   * the agent has no need to know belongs in `insanSatirlari`.
    */
   satirlar: string[];
   /**
-   * YALNIZ İNSANA gösterilen satırlar — ajana ASLA dönmez.
+   * Lines shown to the HUMAN ONLY — these NEVER go back to the agent.
    *
-   * `satirlar` iki ayrı yere birden gidiyordu: elicitation istemine VE elicitation'sız
-   * istemcideki ret metnine. İkinci yol, kapının kendi kanıtını (maskeli onaylayıcı
-   * numarası, geriye bakış penceresi, beklenen ülke) ve sunucu tarafı sırları (Meta
-   * reklam hesabı kimliği) ajanın bağlamına — oradan da transkriptlere — yazıyordu.
-   * Çalınmış bir oturumdaki ajan, reddedildiği her denemede kapının ŞEKLİNİ öğreniyordu.
+   * `satirlar` was going to two places at once: the elicitation prompt AND the refusal text
+   * on a client without elicitation. The second path wrote the gate's own evidence (the
+   * masked approver number, the look-back window, the expected country) and server-side
+   * secrets (the Meta ad account ID) into the agent's context — and from there into
+   * transcripts. An agent inside a stolen session learned the SHAPE of the gate with every
+   * refused attempt.
    *
-   * Ayrım şudur: insanın KARAR VERMEK için görmesi gereken ama ajanın BİLMESİ
-   * GEREKMEYEN her şey buraya. Ajanın kendi gönderdiği değerler (müşteri kimliği,
-   * istenen bütçe) `satirlar`da kalabilir — onları gizlemek kimseden bir şey saklamaz.
+   * The distinction is this: everything the human needs in order to DECIDE but the agent has
+   * NO NEED TO KNOW belongs here. Values the agent sent itself (the customer ID, the
+   * requested budget) can stay in `satirlar` — hiding those keeps nothing from anyone.
    */
   insanSatirlari?: string[];
   /** Label of the confirmation checkbox. */
@@ -77,19 +79,20 @@ export interface OnayOzeti {
   /** Network-verification config slice, passed by the calling tool from ctx.config. */
   agAyar?: AgAyar;
   /**
-   * Kararın ait olduğu reklam hesabı (Google Ads müşteri ID). Yalnız denetim günlüğüne
-   * yazılır, karar mantığını ETKİLEMEZ. Hosted çok-kiracılı modda tüm kiracıların
-   * kararları tek dosyaya düştüğü için bu alan olmadan kayıtlar ayırt edilemiyordu.
+   * The ad account this decision belongs to (the Google Ads customer ID). It is written to
+   * the audit log only and does NOT affect the decision logic. In hosted multi-tenant mode
+   * every tenant's decisions land in one file, so without this field the records could not
+   * be told apart.
    */
   hesapId?: string;
   /**
-   * RİSKTEKİ TUTAR: bu kararın konusu olan GÜNLÜK para büyüklüğü (hesabın kendi para
-   * biriminde, micros değil). hesapId gibi yalnız denetim günlüğüne yazılır, karar
-   * mantığını ETKİLEMEZ — kapının eşiği bütçe tavanıdır, bu alan değil.
+   * THE AMOUNT AT RISK: the DAILY sum this decision is about, in the account's own currency
+   * rather than micros. Like hesapId it is written only to the audit log and does NOT affect
+   * the decision logic — the gate's threshold is the budget ceiling, not this field.
    *
-   * OKUNAMAYAN TUTAR GEÇİLMEZ. Çağrı yeri bütçeyi gerçekten okuyabildiyse geçer;
-   * okuyamadıysa alanı hiç vermez ve kayda da düşmez. 0 ya da tahmin geçmek
-   * "bilmiyorum"u "temiz/sıfır" diye kaydetmek olurdu.
+   * AN UNREADABLE AMOUNT IS NOT PASSED THROUGH. The call site passes it when it genuinely
+   * read the budget; when it could not, it omits the field and nothing is recorded. Passing
+   * 0, or a guess, would record "I do not know" as "clean / zero".
    */
   tutar?: number;
 }
@@ -124,9 +127,9 @@ export async function onayAl(
   agentConfirm: boolean | undefined
 ): Promise<OnaySonucu> {
   /**
-   * Kademeli doğrulama devreye girdi mi? Zayıf (confirm) kanalın bunu GÖRMESİ şart:
-   * yükseltme "yine de sana soruyoruz" demektir ve soracak bir istem yoksa yükseltme
-   * de yoktur (aşağıdaki zayıf kanal bloğuna bak).
+   * Did step-up verification engage? The weak (confirm) channel MUST see this: an
+   * escalation means "we are asking you anyway", and with no prompt to ask there is no
+   * escalation either (see the weak-channel block below).
    */
   let kademe: KademeKarari | undefined;
 
@@ -152,7 +155,7 @@ export async function onayAl(
           {
             engel: mesaj,
             kanit: [],
-            // Kapı hiç çağrılamadı: hiçbir halka sorgu yapmadı, pencere de yok.
+            // The gate was never reached: no link ran a query, and there is no window.
             iz: { simSwap: "calismadi", retNedeni: "ag-ayari-kapiya-ulasmadi" },
           },
           ozet.hesapId,
@@ -163,33 +166,32 @@ export async function onayAl(
     }
     const ag = await agDogrula(ozet.agAyar, ozet.risk);
     /**
-     * Denetim izi: RET ve GEÇİŞ tek noktadan, karardan hemen sonra kaydedilir —
-     * yalnız retleri yazmak "hiç sorulmadı" ile "sorulup geçti"yi ayırt edilemez
-     * kılardı. kararYaz asla fırlatmaz; günlük gözlemdir, kapı değildir.
+     * The audit trail: REFUSALS and PASSES are recorded from one place, immediately after
+     * the decision — writing only refusals would make "never asked" indistinguishable from
+     * "asked and passed". kararYaz never throws; the log is an observation, not a gate.
      */
     kararYaz(agKararKaydiOlustur(ozet.eylem, ozet.risk, ag, ozet.hesapId, ozet.tutar));
     if (ag.engel) return { onaylandi: false, kanal: "ag", mesaj: ag.engel };
     /**
-     * Kapının kanıt satırları YALNIZ İNSANA gider (bkz. OnayOzeti.insanSatirlari).
-     * Eskiden `satirlar`a ekleniyorlardı ve elicitation'sız istemcide ret metniyle
-     * birlikte ajana dönüyorlardı: maskeli onaylayıcı numarası, geriye bakış penceresi
-     * ve beklenen ülke, kapıyı aşmak isteyene kapının ölçülerini veriyordu.
+     * The gate's evidence lines go to the HUMAN ONLY (see OnayOzeti.insanSatirlari). They
+     * used to be appended to `satirlar` and came back to the agent with the refusal on a
+     * client without elicitation: the masked approver number, the look-back window and the
+     * expected country handed anyone trying to get past the gate its dimensions.
      */
     if (ag.kanit.length) {
       ozet = { ...ozet, insanSatirlari: [...(ozet.insanSatirlari ?? []), ...ag.kanit] };
     }
 
     /**
-     * KADEMELİ DOĞRULAMA İSTEMİN BAŞINA YAZILIR — kanıt satırlarının arasına DEĞİL.
+     * STEP-UP IS WRITTEN AT THE TOP OF THE PROMPT — not among the evidence lines.
      *
-     * Yükseltme, "ağ bir şey söyledi ama yine de sana soruyoruz" demektir; insanın
-     * onaylayacağı şey artık sıradan bir harcama değil, BOZUK BİR SİNYALE RAĞMEN
-     * yapılan bir harcamadır. Bu bilgi madde işaretlerinin arasında altıncı satır
-     * olarak dururken kimse onu okumaz — okunmayan bir uyarı, hiç gösterilmemiş bir
-     * uyarıyla aynıdır.
+     * An escalation means "the network said something, and we are asking you anyway"; what
+     * the human is approving is no longer an ordinary spend but a spend made DESPITE A
+     * DEGRADED SIGNAL. Sitting as the sixth bullet in a list, that fact goes unread — and a
+     * warning nobody reads is the same as a warning never shown.
      *
-     * Soru metni de değişir: "Onaylıyor musun?" yerine bozuk sinyalin adını taşıyan
-     * bir soru sorulur, böylece onay o sinyale VERİLMİŞ olur.
+     * The question changes too: instead of "Do you approve?" the human is asked a question
+     * that names the degraded signal, so that consent is GIVEN TO that signal.
      */
     if (ag.kademe) {
       kademe = ag.kademe;
@@ -206,25 +208,26 @@ export async function onayAl(
 
   if (!elicitationVar(server)) {
     /**
-     * YÜKSELTME ZAYIF KANALDA GEÇİŞ ÜRETMEZ.
+     * AN ESCALATION PRODUCES NO PASS ON THE WEAK CHANNEL.
      *
-     * Kademeli doğrulama bir GEVŞEME değil, bir TAKAStır: kapı bozuk bir sinyali düz
-     * retle karşılamayı bırakır, karşılığında insandan DAHA GÜÇLÜ bir onay ister —
-     * bozuk sinyali adıyla söyleyen bir istem, değişmiş bir soru, düşürülmüş bir tavan.
-     * Yükseltmenin ön koşulu, o istemi gerçekten gösterebilmektir.
+     * Step-up is not a LOOSENING but a TRADE: the gate stops meeting a degraded signal with
+     * a flat refusal, and in return demands a STRONGER consent from the human — a prompt
+     * that names the degraded signal, a changed question, a lowered ceiling. Being able to
+     * actually show that prompt is the precondition for the escalation.
      *
-     * Elicitation'sız istemcide gösterilecek istem YOKTUR. Geriye yalnız ajanın
-     * `confirm=true` iddiası kalır ve o, takasın verdiği taraf değil aldığı taraftır:
-     * tek atışlık, sunucunun doğrulayamadığı, üstelik ağ kapısı hiç koşmadan ÖNCE
-     * üretilmiş bayat bir rızadır — bozuk sinyalin adını, değişen soruyu ve kanıt
-     * satırlarını taşıyan hiçbir kanalı yoktur. Böyle bir istemcide yükseltmeyi
-     * geçirmek, kapıyı tam da zorlandığı anda gevşetmek olurdu: çalınmış bir oturum,
-     * taşınmış bir SIM ile kampanyayı insana hiç sorulmadan yayına alabilirdi.
+     * On a client without elicitation there IS no prompt to show. All that remains is the
+     * agent's claim of `confirm=true`, and that is the side of the trade we receive, not the
+     * side we give: a single-shot consent the server cannot verify, produced BEFORE the
+     * network gate ever ran, and stale — with no channel carrying the degraded signal's
+     * name, the changed question or the evidence lines. Letting an escalation through on
+     * such a client would loosen the gate at exactly the moment it is under pressure: a
+     * stolen session could take a campaign live on a transferred SIM without a human ever
+     * being asked.
      *
-     * Bu yüzden burada RET. Ret metni, yükseltmeyi tetikleyen bozuk sinyali ADIYLA
-     * söyler (uyarı başlığı yukarıda ozet.eylem'e yazıldı) ki ajan kullanıcıya
-     * aktarabilsin; kapının KENDİ kanıt satırları bilerek yazılmaz — onlar insanın
-     * kanalına aittir (bkz. OnayOzeti.insanSatirlari).
+     * So this refuses. The refusal NAMES the degraded signal that triggered the escalation
+     * (the warning header was written into ozet.eylem above) so the agent can pass it on to
+     * the user; the gate's OWN evidence lines are deliberately withheld — they belong to the
+     * human's channel (see OnayOzeti.insanSatirlari).
      */
     if (kademe) {
       return {
@@ -255,8 +258,9 @@ export async function onayAl(
 
   // Strong path: ask the human directly
   /**
-   * İnsan istemi HER İKİ kanalı da görür: ajana da dönen `satirlar` ve yalnız insana
-   * ait `insanSatirlari`. Karar veren kişiden bilgi saklanmıyor; saklanan taraf ajandır.
+   * The human prompt sees BOTH channels: `satirlar`, which also goes back to the agent, and
+   * `insanSatirlari`, which is the human's alone. Nothing is withheld from the person
+   * deciding; the party being withheld from is the agent.
    */
   const insanIcinSatirlar = [...ozet.satirlar, ...(ozet.insanSatirlari ?? [])];
   const metin = `${ozet.eylem}\n\n${insanIcinSatirlar.map((s) => `• ${s}`).join("\n")}`;
@@ -306,23 +310,24 @@ export async function onayAl(
 }
 
 /**
- * ONAY PENCERESİ BOYUNCA KELEPÇE DEĞİŞTİ Mİ? — mutasyondan hemen önceki son bakış.
+ * DID THE CLAMP MOVE WHILE THE PROMPT WAS OPEN? — the last look before the mutation.
  *
- * NEDEN GEREKLİ: yazma kelepçesi ve günlük tavan, onay isteminden ÖNCE okunuyordu ve
- * o istem elicitation ile insana gösterildiğinde 10 dakikaya kadar açık kalabiliyor.
- * O pencerede hesap sahibi ayarlar sayfasından yazmayı kapatsa ya da tavanı indirse
- * bile, bekleyen istek eski değerlerle yazmaya devam ediyordu — yani kelepçenin
- * "anında geçerli" sözü, tam da acilen kullanılacağı anda tutmuyordu. Panik hâlinde
- * yazmayı kapatan bir operatörün beklediği şey bu değildir.
+ * WHY IT IS NEEDED: the write switch and the daily ceiling were read BEFORE the approval
+ * prompt, and once that prompt is shown to a human over elicitation it can stay open for up
+ * to ten minutes. In that window the account owner could switch writes off or lower the
+ * ceiling from the settings page and the pending request would still write on the old
+ * values — so the clamp's promise of "takes effect immediately" did not hold at precisely
+ * the moment it would be used in anger. That is not what an operator turning writes off in
+ * a panic expects.
  *
- * Kapı YALNIZ HARCAMAYI ARTIRAN yollarda çağrılır: yayına alma ve bütçe artışı.
- * Duraklatma ve bütçe indirme harcamayı düşürür; onları geç gelen bir kelepçeye
- * takmak, kapatmaya çalışan operatörün önünü kesmek olurdu.
+ * The check runs ONLY on the spend-increasing paths: going live and raising a budget.
+ * Pausing and lowering a budget reduce spend; making them wait on a late clamp change would
+ * stand in the way of the operator trying to shut things down.
  *
- * SINIR — dürüstçe: bu, kelepçenin çağrı içinde YENİDEN OKUNMASIDIR, canlı bir abonelik
- * değil. Barındırılan kipte bağlam sağlayıcı her çağrıda oturumun paylaşılan kutusundan
- * okur, dolayısıyla ayar değişikliği bir sonraki okumada görünür; tek süreçli yerel
- * kipte ayarlar zaten süreç ömrü boyunca sabittir ve kapı orada hiçbir şeyi değiştirmez.
+ * THE LIMIT, honestly: this is a RE-READ of the clamp inside the call, not a live
+ * subscription. In hosted mode the context provider reads from the session's shared box on
+ * every call, so a settings change shows up on the next read; in single-process local mode
+ * the settings are fixed for the life of the process and this check changes nothing.
  */
 export function onaySonrasiKelepce(
   taze: { writeEnabled: boolean; maxDailyBudget: number },

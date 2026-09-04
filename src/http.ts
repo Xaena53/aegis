@@ -52,10 +52,10 @@ function validateHostedEnv(): void {
     if (!process.env[k]?.trim()) eksik.push(k);
   }
   /**
-   * UZUNLUK KIRPILMIŞ DEĞER ÜZERİNDE ÖLÇÜLÜR. `mk.length` ham değere bakıyordu: 30
-   * karakterlik bir anahtar + iki boşluk bu kapıdan geçiyor, sonra store.ts'in kendi
-   * (kırpan) denetiminde ilk kullanıcıda patlıyordu — yani kapalı arıza AÇILIŞTA değil,
-   * sağlık yeşile döndükten sonra gerçekleşiyordu.
+   * LENGTH IS MEASURED ON THE TRIMMED VALUE. `mk.length` looked at the raw string: a
+   * 30-character key plus two spaces got through this gate and then blew up on the first
+   * user inside store.ts's own (trimming) check — so the fail-closed happened not AT
+   * STARTUP but after health had already gone green.
    */
   const mk = process.env.AEGIS_MASTER_KEY?.trim() ?? "";
   if (mk.length < 32) eksik.push("AEGIS_MASTER_KEY (min 32 karakter)");
@@ -83,18 +83,19 @@ validateHostedEnv();
 
 const store = new UserStore();
 /**
- * ŞİFRELEME ANAHTARI AÇILIŞTA SINANIR — ve sınama iki ayrı soru sorar.
+ * THE ENCRYPTION KEY IS TESTED AT STARTUP — and the test asks two separate questions.
  *
- * 1) GİDİŞ-DÖNÜŞ: şifrele, çöz, karşılaştır. Eski hâli yalnız `encryptSecret` çağırıyordu
- *    ve şifrelemek YANLIŞ anahtarla da başarılı olur; yani kapı, geçmesi imkânsız bir
- *    sınavdı.
+ * 1) ROUND TRIP: encrypt, decrypt, compare. The earlier version called only
+ *    `encryptSecret`, and encryption succeeds with the WRONG key too — so the gate was an
+ *    exam nothing could fail.
  *
- * 2) DEPODAKİ VERİYE KARŞI: asıl arıza budur. Anahtar döndürüldüğünde ya da veritabanı
- *    başka bir kurulumdan geri yüklendiğinde süreç sağlıkla ayağa kalkar, /health yeşil
- *    yanar ve her kiracı ilk isteğinde sebebi yazmayan bir 500 alır. Arıza, onu
- *    düzeltebilecek tek anın çok sonrasında ve yanlış katmanda görünürdü.
+ * 2) AGAINST THE DATA IN THE STORE: this is the failure that matters. When the key has been
+ *    rotated, or the database restored from another installation, the process comes up
+ *    healthy, /health goes green, and every tenant meets a 500 with nothing in it to explain
+ *    why. The fault surfaced long after the only moment it could be fixed, and in the wrong
+ *    layer.
  *
- * Boş veritabanı geçerli bir durumdur (ilk kurulum) ve sınamayı düşürmez.
+ * An empty database is a legitimate state (a first install) and does not fail the test.
  */
 try {
   const ornek = "baslangic-dogrulamasi";
@@ -187,7 +188,8 @@ function oauthClient() {
  */
 const ctxCache = new Map<string, AdsContext>();
 
-/** Bağlam önbelleği tavanı — aşıldığında en az kullanılan düşer (bkz. lruYerAc). */
+/** The context cache ceiling — when it is reached the least recently used entry is
+ * evicted (see lruYerAc). */
 const CTX_ONBELLEK_TAVANI = 500;
 
 function contextFor(user: StoredUser): AdsContext {
@@ -198,13 +200,14 @@ function contextFor(user: StoredUser): AdsContext {
   // one-directional: an operator who switches a trust-chain link ON keeps being served
   // cached contexts with it OFF, and believes a guard is running that never runs.
   // Adding a link to AgAyar means adding it to this key.
-  // Ağ-doğrulama dilimi config.ts'ten gelir: orada saf ve import edilebilir olduğu için
-  // "alan düşerse anahtar değişmiyor" durumu davranışsal olarak test edilebiliyor.
+  // The network-verification slice comes from config.ts: being pure and importable there,
+  // the case of "a field is dropped and the key does not change" can be tested behaviourally.
   const nac = nacConfigFromEnv();
   const key = [...kiraciAnahtarDilimi(user), ...nacAnahtarDilimi(nac)].join("|");
   let ctx = ctxCache.get(key);
   if (ctx) {
-    // LRU tazeleme: erişilen kayıt sıranın sonuna taşınır (Map ekleme sırasını korur).
+    // LRU refresh: an accessed entry moves to the end of the order (a Map preserves
+    // insertion order).
     ctxCache.delete(key);
     ctxCache.set(key, ctx);
   }
@@ -221,16 +224,16 @@ function contextFor(user: StoredUser): AdsContext {
       ...nac,
     });
     /**
-     * TAVAN LRU'DUR, TOPTAN SİLME DEĞİL.
+     * THE CEILING IS LRU, NOT A WHOLESALE WIPE.
      *
-     * Eski hâli `ctxCache.clear()` idi ve bu, tek bir kiracının davranışını BÜTÜN
-     * kiracılara yayıyordu: ayarlarını arka arkaya değiştiren (ya da bunu bilerek yapan)
-     * bir kiracı 500 farklı anahtar üretip herkesin AdsContext'ini — ve onlara asılı
-     * 60 saniyelik hesap önbelleğini — düşürebiliyordu. Sonuç güvenlik ihlali değil ama
-     * kiracı izolasyonunun ihlali: komşunun maliyeti sana ödetiliyordu.
+     * It used to be `ctxCache.clear()`, which spread ONE tenant's behaviour across EVERY
+     * tenant: a tenant changing its settings repeatedly — whether by habit or on purpose —
+     * could produce 500 distinct keys and drop everybody's AdsContext, along with the
+     * 60-second account cache hanging off it. Not a security breach, but a breach of tenant
+     * isolation: you were paying your neighbour's cost.
      *
-     * En eski kayıt Map'in ilk anahtarıdır; erişilen kayıt yukarıda sona taşındığı için
-     * "en eski" gerçekten en az kullanılandır.
+     * The oldest entry is the Map's first key; because an accessed entry is moved to the end
+     * above, "oldest" really does mean least recently used.
      */
     lruYerAc(ctxCache, CTX_ONBELLEK_TAVANI);
     ctxCache.set(key, ctx);
@@ -332,12 +335,13 @@ AGPL-3.0 lisanslıdır: bu servisi kullanan herkes kaynağa erişme hakkına sah
  */
 function signState(nonce: string, ts: number): string {
   const body = `${nonce}.${ts}`;
-  // HMAC ANAHTARI store.ts'in masterKeyText()'i üzerinden alınır, ham env'den DEĞİL.
-  // Kırpma farkı burada bir arıza değildi (imzalama ve doğrulama aynı ifadeyi kullanıyordu);
-  // kaldırılan şey eski `?? ""` yedeğiydi: anahtar yokken çerezler BOŞ DİZEYLE, yani
-  // herkesin bilebileceği bir anahtarla imzalanırdı. Şimdi böyle bir durumda fırlar.
-  // Bu yola bugün ulaşılamıyor (validateHostedEnv eksik anahtarda süreci açılışta öldürür);
-  // yani bu bir kapı değil, kapının arkasındaki ikinci kilittir.
+  // THE HMAC KEY comes through store.ts's masterKeyText(), NOT from the raw environment.
+  // The trimming difference was not a fault here (signing and verification used the same
+  // expression); what was removed is the old `?? ""` fallback, under which cookies were
+  // signed with the EMPTY STRING when no key was set — a key anyone could guess. It now
+  // throws in that situation. This path is unreachable today (validateHostedEnv kills the
+  // process at startup when the key is missing), so it is not a gate but the second lock
+  // behind one.
   const mac = createHmac("sha256", masterKeyText()).update(body).digest("base64url");
   return `${body}.${mac}`;
 }
@@ -366,7 +370,8 @@ const OTURUM_TTL_MS = 2 * 60 * 60_000; // 2 hours
 
 function signSession(userId: number, ts: number): string {
   const body = `${userId}.${ts}`;
-  // Anahtar kaynağı signState ile aynı gerekçeyle masterKeyText(): boş-anahtar yedeği yok.
+  // The key source is masterKeyText() for the same reason as signState: no empty-key
+  // fallback.
   const mac = createHmac("sha256", masterKeyText()).update(`oturum:${body}`).digest("base64url");
   return `${body}.${mac}`;
 }
@@ -632,23 +637,23 @@ function bearerFrom(req: http.IncomingMessage): string | undefined {
 }
 
 /**
- * TEK POST'TAKİ AZAMİ JSON-RPC MESAJI.
+ * THE MAXIMUM NUMBER OF JSON-RPC MESSAGES IN ONE POST.
  *
- * JSON-RPC gövdesi bir DİZİ olabilir ve MCP taşıması dizinin her elemanını ayrı bir
- * mesaj olarak işler. Bayt tavanı bunu görmez: 4 MB'lık bir gövdeye on binlerce ufak
- * araç çağrısı sığar. Tavan bu yüzden bayt cinsinden değil, MESAJ cinsinden de olmak
- * zorundadır — ve aşıldığında istek kısmen koşturulmaz, hiç koşturulmaz (kapalı arıza:
- * yarısı uygulanmış bir toplu harcama isteği hiç uygulanmamış olandan çok daha zor
- * geri alınır).
+ * A JSON-RPC body may be an ARRAY, and the MCP transport handles each element as its own
+ * message. A byte ceiling cannot see that: tens of thousands of small tool calls fit inside
+ * a 4 MB body. The ceiling therefore has to be expressed in MESSAGES as well as bytes — and
+ * when it is exceeded the request is not run in part, it is not run at all (fail closed: a
+ * half-applied batch of spending changes is far harder to undo than one that never ran).
  *
- * Değer, meşru istemcilerin bir turda gönderdiği mesaj sayısının çok üstündedir;
- * amaç kullanımı kısıtlamak değil, çarpanı kapatmaktır.
+ * The value sits far above the number of messages a legitimate client sends in one turn; the
+ * aim is not to restrict use but to close the multiplier.
  */
 const MAX_MCP_TOPLU_MESAJ = 20;
 
-/** Gövdedeki JSON-RPC MESAJ adedi; dizi değilse tek mesaj sayılır. */
+/** How many JSON-RPC MESSAGES the body contains; anything that is not an array counts as
+ * one. */
 function mcpMesajAdedi(body: unknown): number {
-  // Boş dizi de bir istektir: 0 jeton düşmek "bedava istek" kapısı açardı.
+  // An empty array is still a request: charging 0 tokens would open a "free request" door.
   return Array.isArray(body) ? Math.max(1, body.length) : 1;
 }
 
@@ -694,16 +699,17 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   /**
-   * HIZ SINIRI GÖVDEYİ OKUDUKTAN SONRA, MESAJ BAŞINA UYGULANIR.
+   * THE RATE LIMIT IS APPLIED AFTER READING THE BODY, PER MESSAGE.
    *
-   * Kontrol eskiden gövdeden ÖNCE ve istek başına bir kez koşuyordu; JSON-RPC gövdesi
-   * bir dizi olabildiği için tek POST = 1 jeton = N araç çağrısı demekti. Her çağrı
-   * kendi ağ kapısını (CAMARA sorgusu), kendi denetim günlüğü satırını ve kendi upstream
-   * kotasını tükettiği için limitin ölçtüğü şey ile korumaya çalıştığı şey birbirinden
-   * kopmuştu. Artık jeton MESAJ başına düşülür; tavanı aşan toplu istek hiç koşturulmaz.
+   * The check used to run BEFORE the body and once per request; since a JSON-RPC body may be
+   * an array, one POST meant 1 token for N tool calls. Each call spends its own network gate
+   * (a CAMARA query), its own audit-log line and its own upstream quota, so what the limit
+   * measured had come apart from what it was protecting. Tokens are now charged per MESSAGE,
+   * and a batch above the ceiling is not run at all.
    *
-   * Sıra bilinçli: ölçebilmek için gövdeyi okumak gerekir, ama gövde taşımaya
-   * VERİLMEDEN önce ölçülür — yani reddedilen bir toplu istekte hiçbir mesaj işlenmez.
+   * The order is deliberate: measuring requires reading the body, but the measurement happens
+   * before the body is HANDED to the transport — so on a refused batch no message is
+   * processed.
    */
   const mesajAdedi = mcpMesajAdedi(body);
   if (mesajAdedi > MAX_MCP_TOPLU_MESAJ) {
@@ -857,12 +863,13 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
 }
 
 /**
- * DÜZ METİN KARARI, DİNLEMEDEN ÖNCE.
+ * THE PLAINTEXT DECISION, BEFORE LISTENING.
  *
- * Karar burada değil src/config.ts'te (duzMetinKarari) çünkü hem sınanabilir olmalı hem de
- * tek bir yerden okunmalı. Engel varsa süreç HİÇ dinlemez: şifresiz bir genel adres, ancak
- * AEGIS_ALLOW_PLAINTEXT ile AÇIKÇA onaylandığında kabul edilir. Uyarı, PUBLIC_URL https
- * olsa bile susmaz — çünkü dinleyicinin kendisi düz HTTP'dir ve 0.0.0.0'a yayınlandığında
+ * The decision lives in src/config.ts (duzMetinKarari) rather than here, because it has to be
+ * testable and has to be read from one place. If it blocks, the process does NOT listen at
+ * all: an unencrypted public address is accepted only when AEGIS_ALLOW_PLAINTEXT approves it
+ * EXPLICITLY. The warning does not fall silent even when PUBLIC_URL is https — because the
+ * listener itself is plain HTTP, and when it is published on 0.0.0.0
  * ters vekil atlanabilir hâle gelir.
  */
 const BIND = process.env.AEGIS_BIND?.trim() || "0.0.0.0";
