@@ -1,31 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Growth Brain — rapor modülü.
+ * Growth Brain — the report module.
  *
- * Spec imzası: raporOlustur({hedef, arastirma, plan, kreatif, uygulamaSonucu, kuruMod})
- * -> Türkçe markdown string. Modül saf fonksiyonlardan oluşur; ağ/SDK bağımlılığı yoktur.
+ * The specified signature is raporOlustur({hedef, arastirma, plan, kreatif, uygulamaSonucu,
+ * kuruMod}) -> a markdown string. The module is made of pure functions, with no network or
+ * SDK dependency.
  *
- * Güvenlik ilkeleri (panel notları):
- *  - Site/LLM kaynaklı TÜM dizeler markdown-kaçışlanır: \ [ ] ( ) < > ` ! | #
- *    Böylece görsel-markdown (`![](...)`) ve link enjeksiyonu YAPISAL olarak imkânsızdır;
- *    rapor hiçbir link üretmez (operatör URL'leri bile düz metin kalır).
- *  - Kontrol karakterleri ve ANSI kaçışları (terminal/onay arayüzü taklidi riski) silinir.
- *  - Müşteri ID biçimindeki 10 haneli sayılar maskelenir (123-456-XXXX). 11+ haneli
- *    kampanya ID'leri maske dışında kalır (sınır \b ile garanti).
- *  - Siteden/modelden türetilen araştırma bölümü "site kaynaklı, doğrulanmadı" uyarısı
- *    taşır; rakipYaklasimlari açıkça "model hipotezi — doğrulanmamış" etiketlenir.
- *  - Başarısız/atlanmış uygulama adımları asla başarı gibi sunulmaz; kuru mod
- *    "KURU MOD — HİÇBİR YAZMA YAPILMADI" damgası basar.
- *  - Girdi nesnelerinden herhangi birinde kirpik:true varsa (metinUret/jsonUret
- *    uzunluk-sınırı işareti) rapor "YARIM OLABİLİR" damgası taşır.
+ * Security principles, as noted for the panel:
+ *  - EVERY string originating in a site or an LLM is markdown-escaped: \ [ ] ( ) < > ` ! | #
+ *    That makes image markdown (`![](...)`) and link injection STRUCTURALLY impossible; the
+ *    report produces no links at all, and even operator URLs stay as plain text.
+ *  - Control characters and ANSI escapes are stripped, since they risk impersonating the
+ *    terminal or the approval UI.
+ *  - Ten-digit numbers shaped like a customer ID are masked (123-456-XXXX). Campaign IDs of
+ *    11 digits or more stay outside the mask, guaranteed by the \b boundary.
+ *  - The research section, derived from the site and the model, carries a "from the site,
+ *    unverified" warning; rakipYaklasimlari is labelled explicitly as an unverified model
+ *    hypothesis.
+ *  - Failed or skipped application steps are never presented as successes; dry-run mode
+ *    stamps "KURU MOD — HİÇBİR YAZMA YAPILMADI".
+ *  - If kirpik:true appears on any of the input objects — the length-limit marker set by
+ *    metinUret and jsonUret — the report carries a "YARIM OLABİLİR" stamp.
  *
- * İsteğe bağlı ek alanlar (orkestratör verirse gösterilir, vermezse sessizce atlanır):
- *  - efektifTavanTL: bağlayıcı bütçe tavanı (min(CLI tavanı, sunucu maxDailyBudget))
- *  - tavanKaynagi: tavanın hangi kaynaktan bağlayıcı olduğu (ör. "sunucu limits kaynağı")
- *  - yayinSonucu: --yayinla yolunun sonucu (uygulama.mjs yayinaAl dönüşü). Verilmezse
- *    "Yayına Alma Denemesi" bölümü HİÇ oluşmaz. Ağ kapısının reddi bu bölümde
- *    BAŞARISIZLIK olarak değil, "güvenlik kapısı çalıştı" olarak sunulur: para
- *    hareketinin durdurulması sistemin amacıdır, arızası değil.
+ * Optional extra fields — shown if the orchestrator supplies them, silently skipped if not:
+ *  - efektifTavanTL: the binding budget ceiling, min(the CLI ceiling, the server's
+ *    maxDailyBudget)
+ *  - tavanKaynagi: which source the binding ceiling came from, e.g. the server's limits
+ *    resource
+ *  - yayinSonucu: the outcome of the --yayinla path, as returned by yayinaAl in
+ *    uygulama.mjs. Without it the "Yayına Alma Denemesi" section is not produced AT ALL. A
+ *    refusal by the network gate is presented in that section not as a FAILURE but as the
+ *    safety gate doing its job: stopping the movement of money is the system's purpose, not
+ *    its malfunction.
  */
 
 const MARKDOWN_KACIS = /[\\\[\]()<>`!|#]/g;
@@ -33,17 +39,18 @@ const KONTROL_KARAKTERLERI = /[\u0000-\u001f\u007f-\u009f]/g;
 const MUSTERI_ID_DESENI = /\b(\d{3})-?(\d{3})-?\d{4}\b/g;
 
 /**
- * Çağrı yerindeki uzunluk tavanının İZİ: kırpılan metnin sonuna eklenen "…".
+ * The TRACE of the length cap applied at the call site: the "…" appended to truncated text.
  *
- * uygulama.mjs'ten sabit/tavan import EDİLMEZ — bu modülün bağımsızlığı bilinçlidir
- * (bkz. YAYIN_ETIKETI notu) ve tavan sayısını buraya kopyalamak, tavan değiştiğinde
- * sessizce yanlış rapor üretirdi. Tek bağ, kırpmanın görünür bıraktığı işarettir.
+ * No constant or cap is imported from uygulama.mjs — this module's independence is deliberate
+ * (see the note on YAYIN_ETIKETI), and copying the cap's value here would silently produce a
+ * wrong report whenever the cap changed. The only link is the marker the truncation leaves
+ * visible.
  */
 const KIRPMA_IZI = /…\s*$/;
 
 /**
- * Güvenilmez metni tek satıra indirir, kontrol/ANSI karakterlerini siler ve
- * markdown yapı karakterlerini kaçışlar. Dize olmayan değerler String()'e çevrilir.
+ * Collapses untrusted text to a single line, strips control and ANSI characters, and
+ * escapes markdown's structural characters. Non-string values are passed through String().
  */
 export function metniTemizle(deger) {
   if (deger === null || deger === undefined) return "";
@@ -54,20 +61,23 @@ export function metniTemizle(deger) {
   return s.trim();
 }
 
-/** Google Ads müşteri ID biçimindeki 10 haneli sayıları maskeler: 1234567890 -> 123-456-XXXX. */
+/** Masks ten-digit numbers shaped like a Google Ads customer ID: 1234567890 ->
+ * 123-456-XXXX. */
 export function musteriIdMaskele(metin) {
   if (metin === null || metin === undefined) return "";
   return String(metin).replace(MUSTERI_ID_DESENI, "$1-$2-XXXX");
 }
 
-/** Temizle + maskele; boş kalırsa yer tutucu döner. Diziler "; " ile birleştirilir. */
+/** Clean and mask; returns a placeholder if nothing is left. Arrays are joined with
+ * "; ". */
 function guvenli(deger, bos = "(boş)") {
   const ham = Array.isArray(deger) ? deger.join("; ") : deger;
   const s = musteriIdMaskele(metniTemizle(ham));
   return s === "" ? bos : s;
 }
 
-/** Güvenilmez diziyi madde listesine çevirir; boşsa tek yer tutucu madde döner. */
+/** Turns an untrusted array into a bullet list; when empty, a single placeholder
+ * bullet. */
 function maddeListesi(dizi, bos = "(yok)") {
   const d = Array.isArray(dizi) ? dizi.filter((x) => x !== null && x !== undefined) : [];
   if (!d.length) return [`- ${bos}`];
@@ -75,28 +85,30 @@ function maddeListesi(dizi, bos = "(yok)") {
 }
 
 /**
- * Araç yanıtı sınıflandırıcısı: sunucunun isError'suz düz metinle döndürdüğü
- * retleri de yakalar ("Reddedildi: ...", "Yazma araçları ... devre dışı",
- * "Kampanya bulunamadı: ..."). "atlandı" YALNIZ satır başında başarısızlık sayılır —
- * başarı mesajındaki "(1 tekrar/boş atlandı)" eki yanlış pozitif üretmez.
+ * A classifier for tool responses: it also catches the refusals the server returns as plain
+ * text without isError — "Reddedildi: ...", "Yazma araçları ... devre dışı", "Kampanya
+ * bulunamadı: ...". The word "atlandı" counts as a failure ONLY at the start of a line, so
+ * the "(1 tekrar/boş atlandı)" suffix on a success message produces no false positive.
  */
 function adimBasarisizMi(adim) {
   if (adim && (adim.basarili === false || adim.basari === false)) return true;
   /**
-   * DAMGA OTORİTEDİR, ÖZET DEĞİL.
+   * THE STAMP IS THE AUTHORITY, NOT THE SUMMARY.
    *
-   * uygula() her adıma bir `durum` yazar ('tamam' | 'belirsiz' | 'basarisiz' |
-   * 'atlandi') ve bunu HAM yanıta bakarak yapar. Rapor ise durumu `sonucOzeti`
-   * metninden yeniden türetiyordu — ama o özet gorunurOzet() ile 400 karaktere
-   * KIRPILIR, oysa kırpma işareti ham yanıtın 30.001. karakterindedir. Sonucu
-   * doğrulanamayan gerçek bir yazma çağrısı bu yüzden denetim tablosuna "TAMAM"
-   * diye geçiyor, rapor kendi içinde çelişiyordu (üstteki uyarı "yarım olabilir"
-   * derken tablo "tamam" diyordu).
+   * uygula() writes a `durum` onto every step — 'tamam', 'belirsiz', 'basarisiz' or
+   * 'atlandi' — and it does so by looking at the RAW response. The report, meanwhile, was
+   * re-deriving the status from the `sonucOzeti` text — but that summary is TRUNCATED to 400
+   * characters by gorunurOzet(), while the truncation marker sits at character 30,001 of the
+   * raw response. A real write call whose outcome could not be confirmed therefore entered
+   * the audit table as "TAMAM", and the report contradicted itself: the warning above said
+   * the run might be incomplete while the table said everything was fine.
    *
-   * Bilinmeyen bir damga da başarı sayılmaz: tanımadığımız durum 'tamam' değildir.
+   * An unrecognised stamp does not count as success either: a status we do not know is not
+   * 'tamam'.
    */
   if (adim && typeof adim.durum === "string") return adim.durum !== "tamam";
-  // Damgasız (eski ya da dış kaynaklı) adım: metinden türetme YEDEK yoldur.
+  // A step with no stamp, whether old or externally produced: deriving from the text is
+  // the FALLBACK path.
   const s = String(adim?.sonucOzeti ?? "").trim();
   if (/^(reddedildi|araç hatası|hata\b|atlandı|başarısız)/iu.test(s)) return true;
   if (/(devre dışı|bulunamadı|onay gerekiyor|insan onayı gerek|sonuç kırpıldı)/iu.test(s)) return true;
@@ -104,11 +116,11 @@ function adimBasarisizMi(adim) {
 }
 
 /**
- * Tablo etiketi: BAŞARISIZ ile BELİRSİZ ayrı gösterilir.
+ * The table's label: BAŞARISIZ and BELİRSİZ are shown separately.
  *
- * "Olmadığını biliyoruz" ile "olup olmadığını bilmiyoruz" tek etikete katlanırsa
- * operatör doğrulanamamış bir yazmayı kesin başarısızlık sanıp elle geri almaya
- * kalkar (ya da tersi). Denetim tablosunun işi tam olarak bu ayrımı taşımaktır.
+ * If "we know it did not happen" and "we do not know whether it happened" are folded into one
+ * label, an operator takes an unconfirmed write for a definite failure and goes to undo it by
+ * hand — or the reverse. Carrying exactly that distinction is the audit table's job.
  */
 function adimEtiketi(adim) {
   if (!adimBasarisizMi(adim)) return "TAMAM";
@@ -116,9 +128,9 @@ function adimEtiketi(adim) {
 }
 
 /**
- * Yayın denemesi durum kodları → rapor etiketi. rapor.mjs'in bağımsızlığı korunsun
- * diye uygulama.mjs'ten import edilmez; bilinmeyen kod geldiğinde ham değer
- * güvenli biçimde gösterilir (eşleşme zorunlu değildir).
+ * Status codes from the go-live attempt, mapped to report labels. They are not imported
+ * from uygulama.mjs, so that rapor.mjs stays independent; an unrecognised code has its raw
+ * value shown safely, since a match is not required.
  */
 const YAYIN_ETIKETI = {
   basarili: "YAYINA ALINDI (ENABLED)",
@@ -130,7 +142,8 @@ const YAYIN_ETIKETI = {
   atlandi: "ATLANDI — kurulum tamamlanmadığı için denenmedi",
 };
 
-/** Ret metnini alıntı bloğuna çevirir: her satır ayrı ayrı temizlenip kaçışlanır. */
+/** Turns refusal text into a quote block, cleaning and escaping each line
+ * separately. */
 function alintiSatirlari(metin) {
   const satirlar = String(metin ?? "")
     .split("\n")
@@ -140,8 +153,9 @@ function alintiSatirlari(metin) {
 }
 
 /**
- * Growth Brain çalıştırmasının Türkçe markdown raporunu üretir.
- * Tüm girdiler eksik/bozuk olabilir; fonksiyon fırlatmaz, yer tutucularla düşer.
+ * Produces the markdown report for a Growth Brain run.
+ * Every input may be missing or malformed; the function does not throw, it degrades to
+ * placeholders.
  */
 export function raporOlustur({
   hedef,
@@ -179,10 +193,10 @@ export function raporOlustur({
     );
   }
 
-  // ── Hedef (operatör girdisi; yine de aynı hijyenden geçirilir) ──
+  // ── The goal: operator input, but put through the same hygiene all the same ──
   ekle("## Hedef", "", guvenli(hedef, "(hedef girilmedi)"), "");
 
-  // ── Araştırma: site + model türevi, güvenilmez blok ──
+  // ── Research: derived from the site and the model, an untrusted block ──
   ekle(
     "## Araştırma Özeti",
     "",
@@ -215,11 +229,13 @@ export function raporOlustur({
   if (Array.isArray(dagitim) && dagitim.length) {
     ekle("## Kanal Bütçe Dağıtımı", "");
     /**
-     * UYGULANAN ile ÖNERİLEN ayrımı burada yapılır ve yumuşatılmaz.
+     * The distinction between what was APPLIED and what was RECOMMENDED is drawn here,
+     * and it is not softened.
      *
-     * Dağıtım bütçeyi kanallara böler, ama kampanya kurma yolu bugün tek kanaldan gider.
-     * İkisini aynı tabloda ayırmadan göstermek, uygulanmamış bir payı uygulanmış gibi
-     * okutur — raporun en kolay yalan söyleyeceği yer tam burasıdır.
+     * The allocation splits the budget across channels, but today the campaign-creation
+     * path goes through a single channel. Showing both in one table without separating
+     * them makes an unapplied share read as an applied one — this is the single easiest
+     * place for the report to lie.
      */
     ekle("| Kanal | Günlük bütçe | Durum | Gerekçe |", "|---|---|---|---|");
     dagitim.forEach((pay, i) => {
@@ -302,7 +318,7 @@ export function raporOlustur({
     ekle("(kreatif yok)", "");
   }
 
-  // ── Uygulama adımları ──
+  // ── The application steps ──
   ekle("## Uygulama Adımları", "");
   if (kuruMod) {
     ekle("KURU MOD — HİÇBİR YAZMA YAPILMADI. Uygulama adımı çalıştırılmadı.", "");
@@ -343,7 +359,7 @@ export function raporOlustur({
     ekle("Uygulama çalıştırılmadı — yalnızca plan ve rapor üretildi.", "");
   }
 
-  // ── Yayına alma denemesi (YALNIZ --yayinla yolunda oluşur) ──
+  // ── The go-live attempt: produced ONLY on the --yayinla path ──
   if (yayinSonucu && typeof yayinSonucu === "object") {
     const durum = String(yayinSonucu.durum ?? "");
     const etiket = YAYIN_ETIKETI[durum] ?? guvenli(durum, "(bilinmiyor)");
@@ -362,14 +378,16 @@ export function raporOlustur({
 
     if (yayinSonucu.sonucMetni) {
       /**
-       * DÜRÜSTLÜK: burada "kısaltılmadı" DEMEZ, çünkü doğru değil. Metin bu rapora
-       * ulaşmadan ÖNCE çağrı yerinde (uygulama.mjs) uzunluk tavanında kırpılmış olabilir,
-       * ve burada raporun tekdüze hijyeninden geçer: kontrol karakteri sökülür, markdown
-       * kaçışlanır, 10 haneli müşteri ID'leri maskelenir (guvenli → musteriIdMaskele).
-       * Hijyeni ters yüz etmek link/görsel enjeksiyonuna tek istisna açardı; ama başlığın
-       * "aynen — kısaltılmadı" demesi de raporu kendi çıktısı hakkında yalancı yapıyordu.
+       * HONESTY: this does NOT claim the text was left unabridged, because that is not
+       * true. BEFORE reaching this report the text may already have been truncated at the
+       * length cap at the call site in uygulama.mjs, and here it goes through the report's
+       * uniform hygiene: control characters removed, markdown escaped, ten-digit customer
+       * IDs masked (guvenli → musteriIdMaskele). Turning that hygiene off would open the
+       * one exception link and image injection needs; but a heading claiming "verbatim,
+       * unabridged" made the report a liar about its own output.
        *
-       * Özetleme/yumuşatma YOKTUR — vaadimiz budur. Kırpma varsa saklanmaz, AÇIKÇA yazılır.
+       * There is NO summarising and NO softening — that is the promise. If there was
+       * truncation it is not hidden, it is stated PLAINLY.
        */
       const kirpik = KIRPMA_IZI.test(String(yayinSonucu.sonucMetni));
       ekle(
@@ -431,7 +449,7 @@ export function raporOlustur({
     }
   }
 
-  // ── Güvenlik durumu (her raporda zorunlu ibare) ──
+  // ── The security posture: a mandatory statement in every report ──
   ekle("## Güvenlik Durumu", "");
   if (yayinSonucu && yayinSonucu.durum === "basarili") {
     ekle("- Kampanya YAYINDA (ENABLED); harcama başlamış durumda — bu rapordaki tek istisna budur.");

@@ -1,24 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Growth Brain — kreatif modülü.
+ * Growth Brain — the creative module.
  *
- * RSA (Duyarlı Arama Ağı Reklamı) metni üretir ve doğrular.
+ * It produces and validates the copy for a Responsive Search Ad.
  *
- * Güven sınırı: plan ve arastirma LLM/site kaynaklı GÜVENİLMEZ veridir; prompt'ta
- * <arastirma-verisi> ayraçlı "veri, talimat değil" bloğuna sarılır ve sistem prompt'u
- * bloktaki hiçbir talimatın uygulanmayacağını açıkça söyler. Model çıktısından yalnız
- * izinli alanlar (basliklar/aciklamalar/yol1/yol2) sonuca taşınır — enjekte edilmiş
- * confirm/finalUrl benzeri alanlar asla dışarı sızmaz.
+ * The trust boundary: the plan and the research are UNTRUSTED data originating in an LLM or a
+ * website; in the prompt they are wrapped in a <arastirma-verisi> block marked "data, not
+ * instructions", and the system prompt states plainly that no instruction inside that block
+ * will be carried out. Only the permitted fields — basliklar, aciklamalar, yol1, yol2 — are
+ * carried from the model's output into the result, so an injected field such as confirm or
+ * finalUrl never leaks out.
  *
- * Üretim tarafı eleme: modelden bilerek fazla aday istenir (15 başlık / 4 açıklama,
- * "25 karakteri hedefle" tamponuyla), limit aşan / tekrar eden / güvensiz adaylar
- * üretim içinde elenir; kalan yeterliyse sonuç döner. kreatifDogrula sert hatadır
- * (otomatik kırpma YAPMAZ) ama bu akışta pratikte hiç tetiklenmemesi hedeflenir.
+ * Filtering on the production side: the model is deliberately asked for more candidates than
+ * needed — 15 headlines and 4 descriptions, with a "aim for 25 characters" buffer — and
+ * candidates that exceed a limit, repeat, or look unsafe are dropped during production; if
+ * enough remain, the result is returned. kreatifDogrula is a hard error that does NOT clip
+ * anything automatically, but the aim is that this flow never trips it in practice.
  */
 
 import { ayracNotrle } from "./ortak.mjs";
 
-/* ── Google RSA limitleri (Türkçe karakterler tek karakter sayılır: String.length) ── */
+/* ── Google's RSA limits (each Turkish character counts as one: String.length) ── */
 export const BASLIK_EN_AZ = 3;
 export const BASLIK_EN_COK = 15;
 export const BASLIK_KARAKTER_SINIRI = 30;
@@ -27,27 +29,29 @@ export const ACIKLAMA_EN_COK = 4;
 export const ACIKLAMA_KARAKTER_SINIRI = 90;
 export const YOL_KARAKTER_SINIRI = 15;
 
-/* ── Güvenlik desenleri ── */
-// Kontrol karakterleri + C1 aralığı: ANSI kaçışları, satır enjeksiyonu, onay-arayüzü taklidi.
+/* ── Security patterns ── */
+// Control characters and the C1 range: ANSI escapes, line injection, spoofing the approval UI.
 const KONTROL_KARAKTERI = /[\u0000-\u001f\u007f-\u009f]/;
-// Reklam metni içinde çıplak URL: hem Google reddeder hem veri-sızdırma kanalıdır.
+// A bare URL inside ad copy: Google rejects it, and it is a data-exfiltration channel.
 const URL_DESENI = /https?:\/\//i;
-// Sır sızıntısı taraması: Anthropic/Google anahtar biçimleri ve refresh token sözcüğü.
+// A scan for leaked secrets: the Anthropic and Google key shapes, and the refresh-token
+// keyword.
 const SIR_DESENI = /sk-ant-|AIza[0-9A-Za-z_-]{20,}|refresh[_-]?token/i;
-// Sonuç nesnesinde izin verilen alanlar — başka her alan (confirm, finalUrl...) hatadır.
+// The fields permitted in the result object — any other field, such as confirm or
+// finalUrl, is an error.
 const IZINLI_ALANLAR = new Set(["basliklar", "aciklamalar", "yol1", "yol2"]);
 
 /**
- * Sunucudaki dedupe ile aynı anahtarlar (util.ts): trim + hem invariant hem tr-TR
- * lowercase. Böylece brain'in "tekrarsız" dediği listeyi sunucu dedupe'u asla
- * minimum sayının altına düşüremez.
+ * The same keys as the server's dedupe in util.ts: trim, then lowercase both invariantly
+ * and in tr-TR. That way the server's dedupe can never take a list the brain called
+ * duplicate-free below the minimum count.
  */
 function tekrarAnahtarlari(s) {
   const t = s.trim();
   return [t.toLowerCase(), t.toLocaleLowerCase("tr-TR")];
 }
 
-/** Tek bir reklam dizesinin sorununu Türkçe açıklar; sorun yoksa null döner. */
+/** Explains what is wrong with a single ad string; returns null when nothing is. */
 function metinSorunu(deger, sinir) {
   if (typeof deger !== "string") return "dize değil";
   if (!deger.trim()) return "boş";
@@ -58,7 +62,7 @@ function metinSorunu(deger, sinir) {
   return null;
 }
 
-/** Görünen yol (path) alanının sorununu açıklar; sorun yoksa null döner. */
+/** Explains what is wrong with a display path field; returns null when nothing is. */
 function yolSorunu(deger) {
   if (typeof deger !== "string") return "dize değil";
   if (!deger.trim()) return "boş";
@@ -70,9 +74,9 @@ function yolSorunu(deger) {
 }
 
 /**
- * Kreatif nesnesini İÇERİK düzeyinde doğrular; ihlalde Türkçe Error fırlatır.
- * Otomatik kırpma/düzeltme YAPMAZ — bu bir kapıdır, tamirci değil.
- * Geçerse nesnenin kendisini döndürür.
+ * Validates the creative object at the level of its CONTENT and throws on a violation.
+ * It does NOT clip or repair anything automatically — this is a gate, not a mechanic.
+ * If it passes, the object itself is returned.
  */
 export function kreatifDogrula(k) {
   if (k === null || typeof k !== "object" || Array.isArray(k)) {
@@ -144,14 +148,14 @@ const SISTEM_PROMPT = [
 ].join("\n");
 
 /**
- * Ayraç kaçışını temizle. Uygulama ortak.mjs'te: eski desendeki `[^>]{0,200}` sınırı
- * bir kapıydı ve 201 karakter dolguyla aşılabiliyordu.
+ * Clean the delimiter escapes. The implementation lives in ortak.mjs: the old pattern's
+ * `[^>]{0,200}` bound was a gate, and 201 characters of padding got past it.
  */
 function ayracTemizle(metin) {
   return ayracNotrle(metin, "arastirma-verisi");
 }
 
-/** Güvenilmez (LLM/site kaynaklı) veriyi ayraçlı bloğa hazırlar. */
+/** Prepares untrusted data — from an LLM or a website — for its delimited block. */
 function guvenilmezBlok(plan, arastirma) {
   const govde = JSON.stringify({ plan: plan ?? null, arastirma: arastirma ?? null }, null, 2);
   return ["<arastirma-verisi>", ayracTemizle(govde), "</arastirma-verisi>"].join("\n");
@@ -178,9 +182,9 @@ function kullaniciMesaji({ plan, arastirma, finalUrl }) {
   ].join("\n");
 }
 
-/* ── Üretim tarafı eleme ─────────────────────────────────────────────────────── */
+/* ── Filtering on the production side ────────────────────────────────────────── */
 
-/** Aday listesini süzer: dize + trim + limit + güvenlik + tekrarsızlık. */
+/** Filters a candidate list: string, trim, limit, safety, and uniqueness. */
 function adaylariEle(liste, sinir) {
   if (!Array.isArray(liste)) return [];
   const gorulen = new Set();
@@ -197,14 +201,15 @@ function adaylariEle(liste, sinir) {
   return kalan;
 }
 
-/** Yol adayını süzer; uygun değilse undefined. */
+/** Filters a path candidate; undefined when it does not qualify. */
 function yolEle(ham) {
   if (typeof ham !== "string") return undefined;
   const aday = ham.trim();
   return yolSorunu(aday) ? undefined : aday;
 }
 
-/** Model çıktısından yalnız izinli alanları süzerek ayıklanmış adayları çıkarır. */
+/** Extracts the surviving candidates from the model's output, keeping only the permitted
+ * fields. */
 function ciktiyiEle(ham) {
   const kaynak = ham !== null && typeof ham === "object" && !Array.isArray(ham) ? ham : {};
   return {
@@ -219,13 +224,13 @@ function yeterliMi(ayik) {
   return ayik.basliklar.length >= BASLIK_EN_AZ && ayik.aciklamalar.length >= ACIKLAMA_EN_AZ;
 }
 
-/* ── Ana üretim ──────────────────────────────────────────────────────────────── */
+/* ── The main production path ────────────────────────────────────────────────── */
 
 /**
- * RSA kreatifi üretir.
+ * Produces the RSA creative.
  *
  * @param {{plan: object, arastirma: object, finalUrl: string}} girdi
- *   finalUrl YALNIZ operatör girdisidir — plan/arastirma içinden asla türetilmez.
+ *   finalUrl is operator input ONLY — it is never derived from the plan or the research.
  * @param {{jsonUret2: (sistem: string, kullanici: string) => Promise<object>}} baglam
  * @returns {Promise<{basliklar: string[], aciklamalar: string[], yol1?: string, yol2?: string}>}
  */
@@ -241,7 +246,7 @@ export async function kreatifUret({ plan, arastirma, finalUrl }, { jsonUret2 }) 
   let ayik = ciktiyiEle(await jsonUret2(SISTEM_PROMPT, kullanici));
 
   if (!yeterliMi(ayik)) {
-    // Tek yeniden deneme: eksikliği somut geri bildirimle söyle, aynı kuralları yinele.
+    // One retry: name the shortfall as concrete feedback and restate the same rules.
     const geriBildirim = [
       "",
       "ÖNCEKİ ÜRETİM YETERSİZDİ: eleme sonrası yalnız",
@@ -259,7 +264,8 @@ export async function kreatifUret({ plan, arastirma, finalUrl }, { jsonUret2 }) 
     );
   }
 
-  // Sonuç yalnız izinli alanlardan, tavanlar içinde kurulur (fazla adaylar atılır).
+  // The result is built from the permitted fields only, within the caps; surplus candidates
+  // are discarded.
   const sonuc = {
     basliklar: ayik.basliklar.slice(0, BASLIK_EN_COK),
     aciklamalar: ayik.aciklamalar.slice(0, ACIKLAMA_EN_COK),
@@ -269,6 +275,6 @@ export async function kreatifUret({ plan, arastirma, finalUrl }, { jsonUret2 }) 
     if (ayik.yol2 !== undefined) sonuc.yol2 = ayik.yol2; // yol2 yalnız yol1 ile anlamlı
   }
 
-  // Son kemer: değişmez garanti — eleme doğru çalıştıysa asla fırlatmaz.
+  // The last belt: an invariant guarantee that never throws if the filtering did its job.
   return kreatifDogrula(sonuc);
 }

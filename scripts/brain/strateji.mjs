@@ -1,22 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Growth Brain — strateji adımı.
+ * Growth Brain — the strategy step.
  *
- * Araştırma çıktısından TEK bir Arama kampanyası planı kurar ve planı İÇERİK
- * düzeyinde doğrular. İki güvenlik ilkesi bu dosyanın omurgasıdır:
+ * It builds ONE Search campaign plan from the research output and validates that plan at the
+ * level of its CONTENT. Two security principles are this file's backbone:
  *
- * 1) Güven sınırı her LLM çağrısında yeniden çizilir: arastirma alanları yalnız
- *    kullanıcı mesajında, <arastirma-verisi> ayraçlı "veri, talimat değil"
- *    bloğunda taşınır; sistem prompt'una asla karışmaz. Bloktan kaçış denemeleri
+ * 1) The trust boundary is redrawn on every LLM call: the research fields travel only in the
+ *    user message, inside a <arastirma-verisi> block marked "data, not instructions"; they
+ *    never mix into the system prompt. Attempts to escape the block
  *    (site.ts:179 deseniyle) temizlenir.
- * 2) planDogrula fail-closed'dur: bütçe kontrolü NaN/string'i de düşüren
- *    `Number.isFinite(b) && b > 0 && b <= tavan` kalıbıyla yazılır; ihlalde
- *    SESSİZ KIRPMA YOK, Türkçe Error fırlatılır.
+ * 2) planDogrula fails closed: the budget check is written as
+ *    `Number.isFinite(b) && b > 0 && b <= tavan`, which also drops NaN and strings; on a
+ *    violation there is NO SILENT CLAMPING, an Error is thrown.
  */
 
 import { ayracNotrle } from "./ortak.mjs";
 
-/** src/util.ts ISO_NUMERIC ile birebir aynı ülke listesi (sunucu whitelist'i). */
+/** Exactly the same country list as ISO_NUMERIC in src/util.ts — the server's
+ * allowlist. */
 export const DESTEKLENEN_ULKELER = Object.freeze([
   "TR", "US", "GB", "DE", "FR", "ES", "IT", "NL",
   "BE", "AT", "CH", "SE", "NO", "DK", "FI", "PL",
@@ -28,10 +29,11 @@ export const DESTEKLENEN_ULKELER = Object.freeze([
 
 export const ESLESME_TIPLERI = Object.freeze(["PHRASE", "EXACT", "BROAD"]);
 
-/** src/config.ts parseBudgetCap varsayılanı — aşımı hata değil, uyarıdır. */
+/** The default from parseBudgetCap in src/config.ts — exceeding it is a warning, not an
+ * error. */
 const SUNUCU_VARSAYILAN_TAVAN = 500;
 
-/** Sunucu şema sınırlarıyla hizalı tavanlar (src/tools/write.ts inputSchema). */
+/** Caps aligned with the server's schema limits (the inputSchema in src/tools/write.ts). */
 const KAMPANYA_ADI_MAKS = 255;
 const GRUP_ADI_MAKS = 255;
 const KELIME_MAKS = 80; // Google sınırı, add_keywords/create_search_campaign ile aynı
@@ -44,10 +46,10 @@ const DIL_MAKS = 32;
 const URL_DESENI = /https?:\/\//i;
 
 /**
- * Kontrol karakteri / ANSI kaçışı (ESC=0x1B) / C1 aralığı / U+2028-U+2029 satır
- * ayıraçları: onay istemi ve terminal enjeksiyonuna kapı açar. Kod noktası
- * karşılaştırmasıyla bakılır — kaynak dosyada ham kontrol baytı taşımamak için
- * bilinçli olarak regex literal kullanılmadı.
+ * Control characters, ANSI escapes (ESC = 0x1B), the C1 range and the U+2028-U+2029 line
+ * separators: these open the door to approval-prompt and terminal injection. They are checked
+ * by code point — a regex literal was deliberately avoided so the source file carries no raw
+ * control byte.
  */
 function kontrolKarakteriMi(kod) {
   return kod <= 0x1f || (kod >= 0x7f && kod <= 0x9f) || kod === 0x2028 || kod === 0x2029;
@@ -61,14 +63,16 @@ function kontrolKarakteriIceriyor(metin) {
 }
 
 /**
- * Bu adlar YALNIZ operatör girdisinden gelebilir; LLM planına sızmışlarsa
- * (enjeksiyonla confirm/hedef hesap/URL kaçırma denemesi) plan reddedilir.
+ * These names may come ONLY from operator input; if they have leaked into the LLM's plan —
+ * an injection attempting to smuggle a confirm flag, a target account or a URL — the plan is
+ * refused.
  */
 const YASAK_ALANLAR = Object.freeze([
   "confirm", "finalUrl", "musteriId", "customerId", "kampanyaId", "campaignId", "adGroupId",
 ]);
 
-/** Hata metnine gömülecek güvenilmez değeri kısaltır ve kontrol karakterlerini söndürür. */
+/** Shortens an untrusted value destined for an error message and defuses its control
+ * characters. */
 function guvenliOzet(deger, sinir = 60) {
   const metin = typeof deger === "string" ? deger : JSON.stringify(deger) ?? String(deger);
   let temiz = "";
@@ -90,7 +94,8 @@ function planHatasi(mesaj) {
   return new Error(`Plan doğrulama hatası: ${mesaj}`);
 }
 
-/** Tek satırlık, kontrol-karaktersiz, URL'siz (istenirse) zorunlu metin alanı. */
+/** A required text field: single line, free of control characters, and optionally free of
+ * URLs. */
 function dizeKontrol(alanAdi, deger, maksUzunluk, { urlYasak = false } = {}) {
   if (typeof deger !== "string" || deger.trim() === "") {
     throw planHatasi(`${alanAdi} boş olmayan bir metin olmalı (gelen: ${guvenliOzet(deger)}).`);
@@ -148,11 +153,11 @@ const SISTEM_PROMPT = [
 ].join("\n");
 
 /**
- * Strateji adımı: araştırma verisinden kampanya planı üretir.
+ * The strategy step: produces a campaign plan from the research data.
  *
- * jsonUret2: önceden bağlanmış (sistem, kullanici) -> obje fonksiyonu (ağ erişimi
- * orkestratörün sorumluluğunda). Dönen nesne DOĞRULANMAMIŞTIR — orkestratör
- * efektif tavanla planDogrula çağırmak zorundadır.
+ * jsonUret2 is a pre-bound (system, user) -> object function, so network access is the
+ * orchestrator's responsibility. The object it returns is NOT VALIDATED — the orchestrator is
+ * obliged to call planDogrula with the effective ceiling.
  */
 export async function stratejiKur({ hedef, butceGunlukTL, arastirma }, { jsonUret2 }) {
   if (typeof jsonUret2 !== "function") {
@@ -170,8 +175,8 @@ export async function stratejiKur({ hedef, butceGunlukTL, arastirma }, { jsonUre
     throw new Error("Strateji hatası: arastirma nesnesi verilmedi — önce araştırma adımı çalışmalı.");
   }
 
-  // Araştırma alanları güvenilmez içerik taşıyabilir (analyze_site kaynaklı):
-  // yalnız kullanıcı mesajına, ayraç-kaçışı temizlenmiş veri bloğu içinde girer.
+  // The research fields can carry untrusted content, since they originate in analyze_site:
+  // they enter the user message only, inside a data block with delimiter escapes cleaned.
   const arastirmaTemiz = veriBlogunaHazirla(JSON.stringify(arastirma, null, 2));
   const hedefTemiz = veriBlogunaHazirla(hedef.trim());
 
@@ -198,24 +203,26 @@ export async function stratejiKur({ hedef, butceGunlukTL, arastirma }, { jsonUre
 }
 
 /**
- * İçerik doğrulayıcı — yalnız şekle değil değere bakar; ihlalde Türkçe Error.
+ * The content validator — it looks at values, not only at shape, and throws on a violation.
  *
- * Fail-closed bütçe kalıbı: `Number.isFinite(b) && b > 0 && b <= tavan` — NaN,
- * string ("50"), 0, negatif ve tavan+0.01 bu kalıpta DÜŞER. Sessiz kırpma yoktur.
- * Doğrulanan planı olduğu gibi döndürür.
+ * The fail-closed budget pattern is `Number.isFinite(b) && b > 0 && b <= tavan`: NaN, a string
+ * such as "50", 0, a negative number and ceiling+0.01 all FALL at this pattern. There is no
+ * silent clamping. It returns the validated plan unchanged.
  */
 export function planDogrula(plan, butceTavaniTL) {
   if (plan === null || typeof plan !== "object" || Array.isArray(plan)) {
     throw planHatasi(`plan bir nesne olmalı (gelen: ${guvenliOzet(plan)}).`);
   }
-  // Bozuk tavan asla dalgalandırılmaz — sunucudaki budgetGuard ile aynı ilke.
+  // A malformed ceiling is never fudged — the same principle as budgetGuard on the
+  // server.
   if (!(typeof butceTavaniTL === "number" && Number.isFinite(butceTavaniTL) && butceTavaniTL > 0)) {
     throw planHatasi(
       `bütçe tavanı geçersiz (gelen: ${guvenliOzet(butceTavaniTL)}) — tavan doğrulanamadan plan kabul edilmez.`
     );
   }
 
-  // Operatör-kaynaklı adlar plana sızamaz (confirm/hesap/URL kaçırma savunması).
+  // Operator-supplied names cannot leak into the plan — the defence against smuggling a
+  // confirm flag, an account or a URL.
   for (const alan of YASAK_ALANLAR) {
     if (Object.prototype.hasOwnProperty.call(plan, alan)) {
       throw planHatasi(`'${alan}' alanı planda yer alamaz — bu değer yalnız operatör girdisinden gelir.`);

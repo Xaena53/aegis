@@ -10,22 +10,23 @@
  */
 
 /**
- * ÖN-UÇUŞ KURALLARI — prova ve duman testinin ORTAK karar mantığı.
+ * PRE-FLIGHT RULES — the decision logic SHARED by the rehearsal and the smoke test.
  *
- * NEDEN AYRI DOSYA: bu iki kural (derleme tazeliği ve ağ kapısı yapılandırması) daha
- * önce `scripts/prova.mjs` içine gömülüydü. Gömülü olduğu için hiçbir testin ulaşamadığı
- * bir karardı: kural yanlış olsa bile süit yeşil kalıyordu ve yanlışlık ancak sahnede
- * ortaya çıkıyordu. Kararlar saf fonksiyonlara ayrıldı ki test edilebilsinler; betikler
- * yalnız bu kararları RAPORLASIN.
+ * WHY A SEPARATE FILE: these two rules — build freshness and network-gate configuration —
+ * used to be embedded inside `scripts/prova.mjs`. Being embedded made them a decision no test
+ * could reach: the suite stayed green even when a rule was wrong, and the wrongness only
+ * surfaced on stage. The decisions were pulled out into pure functions so they can be tested;
+ * the scripts now only REPORT them.
  *
- * Ortak olmasının ikinci sebebi: aynı tazelik önkoşulu `scripts/smoke.mjs`te de gerekli.
- * Duman testi `dist/index.js`i sınar; bayat bir ikili sınandığında "canlı doğrulandı"
- * diyen fiş, aslında ARTIK VAR OLMAYAN bir kodun fişidir.
+ * The second reason they are shared: `scripts/smoke.mjs` needs the same freshness
+ * precondition. The smoke test exercises `dist/index.js`, and when a stale binary is
+ * exercised, a receipt saying "verified live" is a receipt for code THAT NO LONGER EXISTS.
  */
 import { readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 
-/** Ağaçtaki en yeni dosyanın mtime'ı — `npm run build` gerekip gerekmediğinin ölçüsü. */
+/** The mtime of the newest file in the tree — the measure of whether `npm run build` is
+ * needed. */
 export function enYeniDosya(dizin, kabul) {
   let enYeni = { ms: 0, yol: "" };
   const gez = (d) => {
@@ -46,8 +47,9 @@ export function enYeniDosya(dizin, kabul) {
         const s = statSync(tam);
         if (s.mtimeMs > enYeni.ms) enYeni = { ms: s.mtimeMs, yol: tam };
       } catch {
-        /* okunamayan tek dosya kontrolü bozmasın — sonuç yine de mtime'sız kalırsa
-           aşağıdaki "mtime-okunamadi" dalı devreye girer ve kararı kapalı arızaya alır */
+        /* one unreadable file must not break the check — if the result still ends up
+           without an mtime, the "mtime-okunamadi" branch below takes over and fails the
+           decision closed */
       }
     }
   };
@@ -59,13 +61,14 @@ export const saatMetni = (ms) => new Date(ms).toISOString().slice(0, 19).replace
 export const kisaYol = (kok, yol) => (yol ? relative(kok, yol).replace(/\\/g, "/") : "");
 
 /**
- * DERLEME TAZELİĞİ — kapalı arıza.
+ * BUILD FRESHNESS — fails closed.
  *
- * NEDEN KAPALI ARIZA: bu kural eskiden UYARI üretiyordu ve uyarı çıkış kodunu bozmuyordu.
- * Yani kapı düzeltmesini derlemeyi unutan geliştirici YEŞİL rapor alıyor, prova bayat
- * ikiliyi koşturup "SAHNEYE HAZIR" diyordu — betiğin var olma sebebi olan arıza, tam da
- * betiğin onayıyla gerçekleşiyordu. Aynısı mtime okunamayan dal için de geçerli:
- * "tazeliği ölçemedim" ile "taze" AYNI ŞEY DEĞİLDİR, ikisi de RET demektir.
+ * WHY IT FAILS CLOSED: this rule used to produce a WARNING, and a warning did not affect the
+ * exit code. So a developer who forgot to compile their fix to a gate got a GREEN report, and
+ * the rehearsal ran the stale binary and declared "READY FOR THE STAGE" — the very failure
+ * the script exists to prevent was happening with the script's own blessing. The same applies
+ * to the branch where the mtime cannot be read: "I could not measure freshness" and "it is
+ * fresh" are NOT THE SAME THING, and both mean REFUSE.
  *
  * @returns {{ taze: boolean, kod: "taze"|"dist-yok"|"mtime-okunamadi"|"bayat", not: string,
  *             kaynak: {ms:number,yol:string}, derleme: {ms:number,yol:string} }}
@@ -108,14 +111,15 @@ export function derlemeTazeligi(kok) {
 }
 
 /**
- * AĞ KAPISI YAPILANDIRMASI — sunucunun kendi kapalı arıza kurallarının aynası.
+ * NETWORK-GATE CONFIGURATION — a mirror of the server's own fail-closed rules.
  *
- * Sunucu (src/networkTrust.ts) onaylayıcı numarası olmadan hiçbir harcama artışını
- * geçirmez; bunu SİMÜLASYON kanalında da yapar ("onaylayici-numarasi-yok"). Prova
- * eskiden numarayı yalnız gerçek token dalında sorguluyordu: docker-compose'daki iki
- * yorumlu satırdan yalnız simülasyonu açan operatör "SAHNEYE HAZIR" alıyor, sahnede
- * her bütçe artışı istem gösterilmeden reddediliyordu. Kural artık kanalı değil,
- * SONUCU ölçüyor: kanallardan biri açıksa numara zorunludur.
+ * The server, in src/networkTrust.ts, lets no spend increase through without an approver's
+ * number, and it does so on the SIMULATION channel too ("onaylayici-numarasi-yok"). The
+ * rehearsal used to ask for the number only on the real-token branch: an operator who
+ * uncommented only the simulation line of the two in docker-compose got "READY FOR THE
+ * STAGE", and on stage every budget increase was refused without a prompt ever being shown.
+ * The rule now measures the OUTCOME rather than the channel: if either channel is on, the
+ * number is required.
  *
  * @returns {{ durum: "gecti"|"uyari"|"kaldi", kod: string }}
  */

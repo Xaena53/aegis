@@ -1,34 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * KANALLAR ARASI BÜTÇE DAĞITIMI — Growth Brain'in hedefi kanallara bölme adımı.
+ * BUDGET ALLOCATION ACROSS CHANNELS — the Growth Brain step that splits the goal between
+ * channels.
  *
- * Neden ayrı bir adım: "günlük 50 TL" bir hedefin cevabı değil, girdisidir. Arama
- * niyeti güçlü bir hedef (birinin aradığı bir şeyi satmak) ile keşif odaklı bir hedef
- * (kimsenin aramadığı bir şeyi tanıtmak) aynı bütçeyi aynı yere koymaz. Bu adım o kararı
- * modele verdirir ve GEREKÇESİNİ kayda geçirir.
+ * Why this is a step of its own: "50 lira a day" is not the answer to a goal, it is an input
+ * to one. A goal with strong search intent — selling something people are already looking for
+ * — and a discovery-led goal — introducing something nobody is searching for — do not put the
+ * same budget in the same place. This step makes the model take that decision and records its
+ * REASONING.
  *
- * İKİ SERT KURAL — ikisi de "uydurmama" ilkesinin uygulaması:
+ * TWO HARD RULES, both applications of the principle of not making things up:
  *
- * 1) YALNIZ YAPILANDIRILMIŞ KANALA PAY VERİLİR. Meta jetonu yoksa Meta bir seçenek
- *    değildir; modele "istersen Meta'ya da ayır" demek, çalışmayacak bir plan üretmek ve
- *    onu kullanıcıya öneri diye sunmak olurdu. Kullanılabilir kanal kümesi ortamdan
+ * 1) ONLY A CONFIGURED CHANNEL GETS A SHARE. Without a Meta token, Meta is not an option;
+ *    telling the model "allocate to Meta as well if you like" would produce a plan that
+ *    cannot run and then present it to the user as a recommendation. The set of usable
+ *    channels comes from the environment
  *    OKUNUR, modele sorulmaz.
  *
- * 2) TOPLAM, OPERATÖRÜN VERDİĞİ SAYIYI AŞAMAZ. Bu göründüğünden önemli: sunucudaki
- *    bütçe tavanı KAMPANYA BAŞINADIR. 50 TL tavanlı bir hesapta 40 TL Google + 40 TL Meta
- *    dağıtımının her parçası tavanın altındadır ama toplam 80 TL eder — yani kelepçe,
- *    çok kanallı bir planda kendiliğinden toplamı korumaz. Onu burada korumak zorundayız.
+ * 2) THE TOTAL CANNOT EXCEED THE NUMBER THE OPERATOR GAVE. This matters more than it looks:
+ *    the server's budget ceiling is PER CAMPAIGN. On an account with a 50-lira ceiling, an
+ *    allocation of 40 to Google plus 40 to Meta has both parts under the ceiling, and comes
+ *    to 80 in total — so on a multi-channel plan the clamp does not protect the total by
+ *    itself. We have to protect it here.
  */
 
-/** Bu depoda desteklenen harcama kanalları. Yeni platform buraya eklenir. */
+/** The spend channels this repository supports. A new platform is added here. */
 export const KANALLAR = /** @type {const} */ (["google", "meta"]);
 
 /**
- * Ortamda GERÇEKTEN yapılandırılmış kanalları döndürür.
+ * Returns the channels that are ACTUALLY configured in the environment.
  *
- * Google her zaman vardır: kimlik bilgileri olmadan CLI zaten başlamaz. Meta yalnız
- * jetonu VE reklam hesabı birlikte tanımlıysa sayılır — biri eksikken araç zaten kapalı
- * arızaya gider, dolayısıyla ona pay ayırmak boş bir vaat olurdu.
+ * Google is always present: without credentials the CLI does not start at all. Meta counts
+ * only when its token AND its ad account are both defined — with either missing the tool
+ * already fails closed, so allocating a share to it would be an empty promise.
  */
 export function kullanilabilirKanallar(env = process.env) {
   const kanallar = ["google"];
@@ -47,12 +51,12 @@ const DAGITIM_SEMA = {
 };
 
 /**
- * Dağıtımı doğrular. İhlalde Türkçe Error fırlatır — sessiz düzeltme YOK.
+ * Validates the allocation. It throws on a violation — there is NO silent repair.
  *
- * Sessiz düzeltmenin (payları normalize edip devam etmenin) cazibesi büyük ama yanlış:
- * modelin toplamı tutturamaması, planın geri kalanına da güvenilemeyeceğinin işaretidir.
- * Sayıyı biz düzeltirsek, kullanıcı modelin ürettiği plana bakıp bizim ürettiğimiz
- * bütçeyi görür.
+ * Silently repairing — normalising the shares and carrying on — is tempting and wrong: the
+ * model failing to make the total add up is a sign that the rest of the plan cannot be
+ * trusted either. If we fix the number, the user looks at a plan the model produced and sees
+ * a budget we produced.
  */
 export function dagitimDogrula(dagitim, toplamButce, kanallar) {
   if (!Array.isArray(dagitim) || dagitim.length === 0) {
@@ -90,9 +94,9 @@ export function dagitimDogrula(dagitim, toplamButce, kanallar) {
   }
 
   /**
-   * Kuruş toleransı: model 33.33 + 33.33 + 33.34 gibi bölerse toplam kayan noktada
-   * tam tutmayabilir. Tolerans DAR tutulur — 1 kuruş, yuvarlama payıdır; daha genişi
-   * gerçek bir hatayı gizlemeye başlar.
+   * A tolerance of one cent: if the model splits into 33.33 + 33.33 + 33.34, the total may
+   * not come out exact in floating point. The tolerance is kept NARROW — one cent is the
+   * rounding allowance, and anything wider starts to hide a real mistake.
    */
   const sapma = Math.abs(toplam - toplamButce);
   if (sapma > 0.01) {
@@ -111,10 +115,11 @@ export function dagitimDogrula(dagitim, toplamButce, kanallar) {
 }
 
 /**
- * Bütçeyi kanallara böler.
+ * Splits the budget between the channels.
  *
- * Tek kanal varsa modele HİÇ sorulmaz: sorulacak bir şey yoktur ve bir LLM çağrısını
- * cevabı belli bir soruya harcamak, hem para hem de hata yüzeyi eklemektir.
+ * With only one channel the model is not asked at all: there is nothing to ask, and spending
+ * an LLM call on a question whose answer is already known adds both cost and failure
+ * surface.
  */
 export async function butceDagit({ hedef, toplamButce, kanallar, arastirma }, { jsonUret2 }) {
   if (kanallar.length === 1) {
@@ -148,23 +153,26 @@ export async function butceDagit({ hedef, toplamButce, kanallar, arastirma }, { 
   return dagitimDogrula(cevap?.dagitim, toplamButce, kanallar);
 }
 
-/** Rapor ve terminal için tek satırlık özet. */
+/** A one-line summary for the report and the terminal. */
 export function dagitimOzeti(dagitim) {
   return dagitim.map((p) => `${p.kanal}: ${p.gunlukButce}`).join(" · ");
 }
 
 /**
- * Kampanyanın GERÇEKTEN kurulacağı kanalın payını seçer — sıraya değil, ADA bakarak.
+ * Selects the share of the channel the campaign will ACTUALLY be created on — by NAME, not
+ * by position.
  *
- * NEDEN AD: kurma yolu (uygulama.mjs) yalnız create_search_campaign çağırır, yani her
- * koşulda Google'a yazar. Pay `dagitim[0]` ile alındığında sıralamayı MODEL belirliyordu:
- * dağıtımı `[{kanal:"meta"},{kanal:"google"}]` sırasıyla döndürdüğünde onay ekranı ve
- * rapor "'meta' kanalının PAYI" diyor, kurulan kampanya ise Meta payıyla kurulmuş bir
- * GOOGLE kampanyası oluyordu. Operatör onayladığından başkasını, üstelik yanlış rakamla
- * alıyordu.
+ * WHY BY NAME: the creation path in uygulama.mjs calls only create_search_campaign, so it
+ * writes to Google under every condition. When the share was taken with `dagitim[0]`, the
+ * MODEL was deciding the ordering: if it returned the allocation as
+ * `[{kanal:"meta"},{kanal:"google"}]`, the approval screen and the report both said "the
+ * SHARE of the 'meta' channel", while what got created was a GOOGLE campaign built with
+ * Meta's share. The operator was getting something other than what they approved, and at the
+ * wrong figure too.
  *
- * Pay yoksa ya da sıfırsa `undefined` döner — çağıran kapalı arızayla durur. Sessizce
- * başka bir kanalın payına düşmek, kapatılan hatayı başka kapıdan geri sokardı.
+ * When there is no share, or it is zero, `undefined` is returned and the caller stops with a
+ * closed failure. Quietly falling back to another channel's share would let the bug back in
+ * through a different door.
  */
 export function uygulanacakPay(dagitim, kanal) {
   if (!Array.isArray(dagitim)) return undefined;
