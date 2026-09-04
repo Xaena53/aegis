@@ -25,6 +25,7 @@
  * (dokümanlarında yayımlanmıştır), gerçek bir aboneye ait değildir.
  */
 import "dotenv/config";
+import readline from "node:readline";
 import { agDogrula } from "../src/networkTrust.js";
 import { nacConfigFromEnv } from "../src/config.js";
 
@@ -34,7 +35,70 @@ const DEGISMIS_HAT = "+99999991000"; // swapped:true
 
 const hizArg = process.argv.indexOf("--hiz");
 const HIZ = hizArg !== -1 ? Number(process.argv[hizArg + 1]) : 1;
-const bekle = (ms: number) => new Promise((r) => setTimeout(r, ms * (Number.isFinite(HIZ) ? HIZ : 1)));
+/**
+ * ADIM KİPİ — anlatımı betiğe değil, KONUŞANA bağlar.
+ *
+ * İlk sürüm sabit beklemelerle koşuyordu ve baştan sona 16 saniye sürüyordu: beş halka
+ * 350 ms arayla akıyor, üzerine konuşan insan yetişemiyordu. Kayıtta doğru tempo,
+ * sunucunun sesiyle ekranın hizasıdır — bunu önceden kestirmek yerine sunucuya bırakmak
+ * daha sağlam. `--adim` ile her duraktan sonra Enter beklenir.
+ */
+const ADIM = process.argv.includes("--adim");
+
+/**
+ * Tek satır bekler. `readline` kullanılıyor, ham `stdin.once("data")` değil.
+ *
+ * Ham okumada girdi bir BORU olduğunda (`printf '\n\n' | npm run video -- --adim`) ilk
+ * okuma tamponun tamamını yutar ve sonraki bekleyişler hiç tetiklenmez — betik sessizce
+ * asılır. readline satır sınırında keser, dolayısıyla hem klavyede hem boruda aynı
+ * davranır; bu da adım kipinin testten geçirilebilmesi demektir.
+ */
+const satirOkuyucu = readline.createInterface({ input: process.stdin });
+
+/**
+ * Gelen satırlar KUYRUĞA alınır; `once("line")` yetmez.
+ *
+ * readline satırları okuyabildiği hızda yayar. Girdi bir boruysa hepsi ilk anda gelir ve
+ * o sırada dinleyici takılı olmadığı için kaybolur — betik üçüncü durakta sessizce asılır
+ * (ölçüldü: yedi durağın yalnız ikisi göründü). Kuyruk, erken gelen satırı saklar;
+ * klavyede de boruda da aynı çalışır.
+ */
+const satirKuyrugu: string[] = [];
+let satirBekleyen: (() => void) | undefined;
+satirOkuyucu.on("line", (satir) => {
+  if (satirBekleyen) {
+    const coz = satirBekleyen;
+    satirBekleyen = undefined;
+    coz();
+  } else {
+    satirKuyrugu.push(satir);
+  }
+});
+
+function enterBekle(): Promise<void> {
+  if (satirKuyrugu.length > 0) {
+    satirKuyrugu.shift();
+    return Promise.resolve();
+  }
+  return new Promise((coz) => {
+    satirBekleyen = coz;
+  });
+}
+
+const bekle = async (ms: number): Promise<void> => {
+  if (ADIM) return;
+  await new Promise((r) => setTimeout(r, ms * (Number.isFinite(HIZ) ? HIZ : 1)));
+};
+
+/** Anlatımın nefes alacağı yer: adım kipinde Enter, değilse ölçülü bir duraklama. */
+const durak = async (ms: number): Promise<void> => {
+  if (ADIM) {
+    console.log(gri("\n      [Enter] — anlatımın bittiğinde devam et"));
+    await enterBekle();
+    return;
+  }
+  await new Promise((r) => setTimeout(r, ms * (Number.isFinite(HIZ) ? HIZ : 1)));
+};
 
 const R = "[0m";
 const kalin = (s: string) => `[1m${s}${R}`;
@@ -99,7 +163,7 @@ async function sahne(no: string, etiket: string, numara: string): Promise<void> 
   console.log(kalin(`  ${no}  ${etiket}`));
   console.log(gri(`      approver line: ${numara.slice(0, 4)}${"*".repeat(6)}${numara.slice(-2)}`));
   console.log(gri(`      action:        take campaign live  (high risk -> full chain)`));
-  await bekle(1200);
+  await durak(3500);
   console.log(gri("\n      querying the operator network ..."));
 
   const t0 = Date.now();
@@ -110,10 +174,10 @@ async function sahne(no: string, etiket: string, numara: string): Promise<void> 
   console.log("");
   for (const satir of halkaSatirlari(karar.iz)) {
     console.log(satir);
-    await bekle(350);
+    await bekle(1100);
   }
   console.log(gri(`\n      answered in ${sure} ms`));
-  await bekle(700);
+  await durak(3000);
 
   if (karar.engel) {
     console.log("\n  " + kirmizi(kalin("  REFUSED — the approval prompt was never shown  ")));
@@ -138,7 +202,7 @@ async function sahne(no: string, etiket: string, numara: string): Promise<void> 
     console.log(gri("    elicitation, carrying the network evidence with it. Nothing is"));
     console.log(gri("    written until a person answers."));
   }
-  await bekle(1400);
+  await durak(5000);
 }
 
 /** Uzun ret metnini sabit genişlikte sarmalar (terminal genişliğine bağımlı olmasın). */
@@ -172,7 +236,7 @@ async function ana(): Promise<void> {
   console.log(gri("  GSMA Open Gateway · CAMARA on Nokia Network-as-Code"));
   console.log("");
   console.log(gri("  Every call below is real. No simulation flags are set."));
-  await bekle(2600);
+  await durak(4000);
 
   baslik("1 — The agent asks to spend. The network is asked first.");
   await sahne("[1/2]", "Normal day: the approver's line is untouched.", TEMIZ_HAT);
@@ -192,3 +256,4 @@ async function ana(): Promise<void> {
 }
 
 await ana();
+satirOkuyucu.close();
