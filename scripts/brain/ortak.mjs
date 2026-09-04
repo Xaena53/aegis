@@ -40,17 +40,33 @@ const KOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
  * de aynı kodla koşar — uyarlayıcı, Anthropic'in yanıt ŞEKLİNİ taklit ettiği için
  * (bkz. geminiIstemcisi). Böylece sağlayıcı değiştirmek hiçbir kapıyı zayıflatmaz.
  */
-export const BRAIN_SAGLAYICI = (process.env.AEGIS_BRAIN_PROVIDER || "gemini").trim().toLowerCase();
-
 /** Sağlayıcı başına varsayılan model. `AEGIS_BRAIN_MODEL` ikisini de geçersiz kılar. */
 const VARSAYILAN_MODELLER = Object.freeze({
   gemini: "gemini-2.5-flash",
   anthropic: "claude-sonnet-5",
 });
 
+/**
+ * Seçim ORTAMDAN SAF FONKSİYONLARLA türetilir, modül gövdesinde değil.
+ *
+ * Sabitler doğrudan `process.env`'den hesaplanınca tek sınanma yolu modülü her vaka için
+ * TAZE yüklemekti (`import("...?v=" + rastgele)`). Bu, ölçüm aracına her kopyayı ayrı bir
+ * dosya gibi gösteriyordu: ortak.mjs kapsamı %54'e, depo geneli %89.95'ten %77'ye düştü —
+ * kod değişmeden, yalnız ölçüm bozularak. Saf fonksiyon hem bu yapaylığı kaldırır hem de
+ * asıl kuralı (hangi env hangi sonucu verir) doğrudan sınanabilir yapar.
+ */
+export function saglayiciSec(env = process.env) {
+  return (env.AEGIS_BRAIN_PROVIDER || "gemini").trim().toLowerCase();
+}
+
+export function modelSec(env = process.env) {
+  return env.AEGIS_BRAIN_MODEL || VARSAYILAN_MODELLER[saglayiciSec(env)] || VARSAYILAN_MODELLER.gemini;
+}
+
+export const BRAIN_SAGLAYICI = saglayiciSec();
+
 /** Kullanılacak model — ortam değişkeniyle geçersiz kılınabilir. */
-export const BRAIN_MODEL =
-  process.env.AEGIS_BRAIN_MODEL || VARSAYILAN_MODELLER[BRAIN_SAGLAYICI] || VARSAYILAN_MODELLER.gemini;
+export const BRAIN_MODEL = modelSec();
 
 /** Araç sonucu başına karakter tavanı (demo-agent.mjs SONUC_TAVANI deseni). */
 export const SONUC_TAVANI = 30_000;
@@ -65,8 +81,8 @@ export const KIRPMA_ISARETI = "[... sonuç kırpıldı ...]";
  * Sır hijyeni: hata metni anahtarın hiçbir parçasını içermez ve düzeltmeyi
  * YALNIZ ortam değişkeni olarak tarif eder (CLI argümanı önerilmez).
  */
-export function anthropicIstemci() {
-  const anahtar = process.env.ANTHROPIC_API_KEY?.trim();
+export function anthropicIstemci(env = process.env) {
+  const anahtar = env.ANTHROPIC_API_KEY?.trim();
   if (!anahtar) {
     throw new Error(
       "ANTHROPIC_API_KEY ortam değişkeni tanımlı değil. console.anthropic.com üzerinden bir API " +
@@ -102,8 +118,8 @@ function bitisSebebiCevir(sebep) {
  * kod yolundan koşar; sağlayıcıya özel bir dal yoktur, dolayısıyla bir sağlayıcıda
  * unutulmuş bir kontrol de olamaz.
  */
-export function geminiIstemcisi() {
-  const anahtar = (process.env.AEGIS_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "").trim();
+export function geminiIstemcisi(env = process.env) {
+  const anahtar = (env.AEGIS_GEMINI_API_KEY || env.GEMINI_API_KEY || "").trim();
   if (!anahtar) {
     throw new Error(
       "AEGIS_GEMINI_API_KEY ortam değişkeni tanımlı değil. aistudio.google.com üzerinden " +
@@ -183,11 +199,12 @@ export function geminiIstemcisi() {
  * Tanınmayan bir sağlayıcı adı SESSİZCE varsayılana düşmez: yazım hatası yapan operatör,
  * kullandığını sandığından başka bir modelle koşmamalı.
  */
-export function beyinIstemcisi() {
-  if (BRAIN_SAGLAYICI === "anthropic") return anthropicIstemci();
-  if (BRAIN_SAGLAYICI === "gemini") return geminiIstemcisi();
+export function beyinIstemcisi(env = process.env) {
+  const saglayici = saglayiciSec(env);
+  if (saglayici === "anthropic") return anthropicIstemci(env);
+  if (saglayici === "gemini") return geminiIstemcisi(env);
   throw new Error(
-    `AEGIS_BRAIN_PROVIDER değeri tanınmadı: '${BRAIN_SAGLAYICI}'. ` +
+    `AEGIS_BRAIN_PROVIDER değeri tanınmadı: '${saglayici}'. ` +
       `Geçerli değerler: gemini (varsayılan) | anthropic.`
   );
 }

@@ -8,8 +8,8 @@
 [![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-975-brightgreen.svg)](test/)
-[![Coverage](https://img.shields.io/badge/line%20coverage-89.95%25-brightgreen.svg)](#test-metrics)
+[![Tests](https://img.shields.io/badge/tests-978-brightgreen.svg)](test/)
+[![Coverage](https://img.shields.io/badge/line%20coverage-90.24%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -29,7 +29,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 975 automated tests at 89.95% line coverage; Docker deployment |
+| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 978 automated tests at 90.24% line coverage; Docker deployment |
 | **Not yet** | Number Verification (device-side OIDC, uncallable from a server — an architectural verdict, not a pending task) · a real subscriber network behind the CAMARA calls (the account is in Simulator mode) |
 
 ## Contents
@@ -461,7 +461,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 975 offline tests
+npm test           # 978 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
 npm run metatest   # live checks of the Meta path (add --write to create a paused campaign)
@@ -479,7 +479,7 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-975 tests · 0 failures        line 89.95%  ·  branch 90.43%  ·  function 89.76%
+978 tests · 0 failures        line 90.24%  ·  branch 90.34%  ·  function 89.98%
 ```
 
 Those three figures are the test runner's own **all files** row

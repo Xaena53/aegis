@@ -61,8 +61,19 @@ test("kaynakta VE belgelerde geçen her AEGIS_* adı gerçekten okunuyor", () =>
   const okunan = new Set<string>();
   for (const [, icerik] of metinler) {
     for (const m of icerik.matchAll(/AEGIS_[A-Z0-9_]+/g)) gecen.add(m[0]);
-    // Gerçekten okunma: process.env.X ya da process.env["X"] biçimleri.
-    for (const m of icerik.matchAll(/process\.env(?:\.([A-Z0-9_]+)|\[\s*["']([A-Z0-9_]+)["']\s*\])/g)) {
+    /**
+     * Gerçekten okunma: `process.env.X`, `process.env["X"]` — ve ENJEKTE EDİLEN ortamdan
+     * `env.X` / `env["X"]`.
+     *
+     * Son biçim sonradan eklendi ve gerekliydi: sağlayıcı seçimi saf fonksiyona taşınıp
+     * ortam argüman olarak geçirilince (`saglayiciSec(env)`), okumalar `env.AEGIS_*`
+     * hâline geldi. Gözcü yalnız `process.env` arıyordu, dolayısıyla GERÇEKTEN OKUNAN üç
+     * adı "hayalet" ilan etti. Sorduğu soru "bu ad okunuyor mu"dur; ortamın nereden
+     * geldiği o sorunun cevabını değiştirmez.
+     */
+    for (const m of icerik.matchAll(
+      /\benv(?:\.([A-Z0-9_]+)|\[\s*["']([A-Z0-9_]+)["']\s*\])/g
+    )) {
       okunan.add(m[1] ?? m[2]);
     }
   }
@@ -87,7 +98,7 @@ test("okunan her AEGIS_* ayarı .env.example'da belgeli", () => {
   const okunan = new Set<string>();
   for (const f of hepsi) {
     for (const m of readFileSync(f, "utf8").matchAll(
-      /process\.env(?:\.(AEGIS_[A-Z0-9_]+)|\[\s*["'](AEGIS_[A-Z0-9_]+)["']\s*\])/g
+      /\benv(?:\.(AEGIS_[A-Z0-9_]+)|\[\s*["'](AEGIS_[A-Z0-9_]+)["']\s*\])/g
     )) {
       okunan.add(m[1] ?? m[2]);
     }

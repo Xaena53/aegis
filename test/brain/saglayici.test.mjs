@@ -10,60 +10,79 @@
  * Uyarlayıcı Anthropic'in yanıt şeklini taklit ettiği için fallback sınırı, `stop_reason`
  * kapalı arızası ve şema doğrulaması tek kod yolundan koşar. Aşağıdaki testler bunu
  * sağlayıcıya özel dal aramadan, DAVRANIŞ üzerinden ölçer.
+ *
+ * ENV NEDEN PARAMETRE: ilk yazımda seçim `process.env`'den modül gövdesinde okunuyordu ve
+ * her vakayı sınamak için modül taze yükleniyordu (`import("...?v=" + rastgele)`). Ölçüm
+ * aracı her kopyayı ayrı bir dosya saydı: ortak.mjs kapsamı %54'e, depo geneli %89.95'ten
+ * %77'ye düştü — kod değişmeden. Seçim artık saf fonksiyon; env argüman olarak geçiliyor
+ * ve tek bir modül örneği yetiyor.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import {
+  BRAIN_MODEL,
+  BRAIN_SAGLAYICI,
+  saglayiciSec,
+  modelSec,
+  beyinIstemcisi,
+  geminiIstemcisi,
+  metinUret,
+  jsonUret,
+} from "../../scripts/brain/ortak.mjs";
 
 const gercekFetch = globalThis.fetch;
 
-/** Modülü, istenen env ile TAZE yükler (sağlayıcı sabiti yükleme anında hesaplanır). */
-async function modul(env = {}) {
-  for (const k of [
-    "AEGIS_BRAIN_PROVIDER",
-    "AEGIS_BRAIN_MODEL",
-    "AEGIS_GEMINI_API_KEY",
-    "GEMINI_API_KEY",
-    "ANTHROPIC_API_KEY",
-  ]) {
-    delete process.env[k];
-  }
-  Object.assign(process.env, env);
-  return import("../../scripts/brain/ortak.mjs?v=" + Math.random());
-}
+/** Boş ortam: gerçek kabuğun değişkenleri sızmasın diye her vaka kendi env'ini verir. */
+const env = (ek = {}) => ({ ...ek });
 
-test("varsayılan sağlayıcı GEMINI ve varsayılan model ona ait", async () => {
-  const m = await modul();
-  assert.equal(m.BRAIN_SAGLAYICI, "gemini", "teslim edilen ürün listedeki sağlayıcıyla koşmalı");
-  assert.match(m.BRAIN_MODEL, /^gemini-/, "varsayılan model Gemini olmalı: " + m.BRAIN_MODEL);
+test("varsayılan sağlayıcı GEMINI ve varsayılan model ona ait", () => {
+  assert.equal(saglayiciSec(env()), "gemini", "teslim edilen ürün listedeki sağlayıcıyla koşmalı");
+  assert.match(modelSec(env()), /^gemini-/, "varsayılan model Gemini olmalı: " + modelSec(env()));
 });
 
-test("anthropic seçilince varsayılan model de Claude'a döner", async () => {
-  const m = await modul({ AEGIS_BRAIN_PROVIDER: "anthropic" });
-  assert.equal(m.BRAIN_SAGLAYICI, "anthropic");
-  assert.match(m.BRAIN_MODEL, /^claude-/, "sağlayıcı değişince varsayılan model de değişmeli");
+test("anthropic seçilince varsayılan model de Claude'a döner", () => {
+  const e = env({ AEGIS_BRAIN_PROVIDER: "anthropic" });
+  assert.equal(saglayiciSec(e), "anthropic");
+  assert.match(modelSec(e), /^claude-/, "sağlayıcı değişince varsayılan model de değişmeli");
 });
 
-test("AEGIS_BRAIN_MODEL her iki sağlayıcıyı da geçersiz kılar", async () => {
-  const a = await modul({ AEGIS_BRAIN_MODEL: "elle-secilen" });
-  assert.equal(a.BRAIN_MODEL, "elle-secilen");
-  const b = await modul({ AEGIS_BRAIN_PROVIDER: "anthropic", AEGIS_BRAIN_MODEL: "elle-secilen" });
-  assert.equal(b.BRAIN_MODEL, "elle-secilen");
+test("AEGIS_BRAIN_MODEL her iki sağlayıcıyı da geçersiz kılar", () => {
+  assert.equal(modelSec(env({ AEGIS_BRAIN_MODEL: "elle-secilen" })), "elle-secilen");
+  assert.equal(
+    modelSec(env({ AEGIS_BRAIN_PROVIDER: "anthropic", AEGIS_BRAIN_MODEL: "elle-secilen" })),
+    "elle-secilen"
+  );
 });
 
-test("KRİTİK: tanınmayan sağlayıcı SESSİZCE varsayılana düşmez", async () => {
+test("büyük harf ve boşluk sağlayıcı adını bozmaz", () => {
+  assert.equal(saglayiciSec(env({ AEGIS_BRAIN_PROVIDER: "  ANTHROPIC  " })), "anthropic");
+});
+
+test("dışa açılan sabitler seçim fonksiyonlarına BAĞLI (kopya değil)", () => {
+  /**
+   * Sabitler yükleme anında hesaplanır; bu iddia onların hâlâ AYNI kuraldan türediğini
+   * söyler. Biri elle sabitlenirse (ör. doğrudan "gemini" yazılırsa) burası kızarır.
+   */
+  assert.equal(BRAIN_SAGLAYICI, saglayiciSec(process.env));
+  assert.equal(BRAIN_MODEL, modelSec(process.env));
+});
+
+test("KRİTİK: tanınmayan sağlayıcı SESSİZCE varsayılana düşmez", () => {
   /**
    * Yazım hatası yapan operatör ("gemeni", "claude", "openai"), kullandığını sandığından
    * başka bir modelle koşmamalı. Sessiz düşüş, raporun hangi modelle üretildiği sorusunu
    * cevapsız bırakırdı.
    */
-  const m = await modul({ AEGIS_BRAIN_PROVIDER: "gemeni" });
-  assert.throws(() => m.beyinIstemcisi(), /tanınmadı/u, "yazım hatası açıkça reddedilmeli");
+  assert.throws(
+    () => beyinIstemcisi(env({ AEGIS_BRAIN_PROVIDER: "gemeni" })),
+    /tanınmadı/u,
+    "yazım hatası açıkça reddedilmeli"
+  );
 });
 
-test("anahtar yoksa hata HANGİ anahtarın gerektiğini söyler ve sır sızdırmaz", async () => {
-  const m = await modul();
+test("anahtar yoksa hata HANGİ anahtarın gerektiğini söyler ve sır sızdırmaz", () => {
   assert.throws(
-    () => m.geminiIstemcisi(),
+    () => geminiIstemcisi(env()),
     (e) => {
       assert.match(e.message, /AEGIS_GEMINI_API_KEY/u, "eksik değişken adıyla söylenmeli");
       assert.match(e.message, /aistudio\.google\.com/u, "nereden alınacağı söylenmeli");
@@ -71,6 +90,10 @@ test("anahtar yoksa hata HANGİ anahtarın gerektiğini söyler ve sır sızdır
       return true;
     }
   );
+});
+
+test("GEMINI_API_KEY de kabul edilir (Google'ın yaygın adı)", () => {
+  assert.doesNotThrow(() => geminiIstemcisi(env({ GEMINI_API_KEY: "k" })));
 });
 
 /* ── Uyarlayıcının teldeki davranışı ──────────────────────────────────────────── */
@@ -92,11 +115,13 @@ test("KRİTİK: API anahtarı BAŞLIKTA taşınır, URL'de değil", async () => 
    * URL'ler günlüklere, proxy kayıtlarına ve hata izlerine düşer. Anahtarı sorgu
    * dizesine koymak, onu bu üçüne birden yazmak demektir.
    */
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "gizli-anahtar-123" });
   const kayit = geminiYaniti({
     candidates: [{ content: { parts: [{ text: "merhaba" }] }, finishReason: "STOP" }],
   });
-  await m.metinUret(m.geminiIstemcisi(), { sistem: "s", kullanici: "k" });
+  await metinUret(geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "gizli-anahtar-123" })), {
+    sistem: "s",
+    kullanici: "k",
+  });
   globalThis.fetch = gercekFetch;
 
   assert.doesNotMatch(kayit.url, /gizli-anahtar-123/u, "KRİTİK: anahtar URL'de görünmemeli");
@@ -104,11 +129,13 @@ test("KRİTİK: API anahtarı BAŞLIKTA taşınır, URL'de değil", async () => 
 });
 
 test("sistem istemi systemInstruction'a, kullanıcı istemi contents'e gider", async () => {
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "k" });
   const kayit = geminiYaniti({
     candidates: [{ content: { parts: [{ text: "x" }] }, finishReason: "STOP" }],
   });
-  await m.metinUret(m.geminiIstemcisi(), { sistem: "SISTEM METNI", kullanici: "KULLANICI METNI" });
+  await metinUret(geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "k" })), {
+    sistem: "SISTEM METNI",
+    kullanici: "KULLANICI METNI",
+  });
   globalThis.fetch = gercekFetch;
 
   assert.equal(kayit.govde.systemInstruction.parts[0].text, "SISTEM METNI", "güven sınırı korunmalı");
@@ -122,10 +149,10 @@ test("KRİTİK stop_reason eşlemesi: YALNIZ STOP end_turn olur", async () => {
    * bitiş sebebini "end_turn" saymak, kesilmiş ya da engellenmiş bir yanıtı TAM
    * saymak olurdu — kapalı arızanın tam tersi.
    */
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "k" });
+  const istemci = geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "k" }));
   const olc = async (finishReason) => {
     geminiYaniti({ candidates: [{ content: { parts: [{ text: "{}" }] }, finishReason }] });
-    const y = await m.geminiIstemcisi().messages.create({ model: "x", messages: [] });
+    const y = await istemci.messages.create({ model: "x", messages: [] });
     return y.stop_reason;
   };
   assert.equal(await olc("STOP"), "end_turn");
@@ -138,9 +165,11 @@ test("KRİTİK stop_reason eşlemesi: YALNIZ STOP end_turn olur", async () => {
 });
 
 test("KRİTİK: istem düzeyinde engellenen yanıt end_turn olmaz", async () => {
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "k" });
   geminiYaniti({ promptFeedback: { blockReason: "SAFETY" } });
-  const y = await m.geminiIstemcisi().messages.create({ model: "x", messages: [] });
+  const y = await geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "k" })).messages.create({
+    model: "x",
+    messages: [],
+  });
   globalThis.fetch = gercekFetch;
 
   assert.notEqual(y.stop_reason, "end_turn", "engellenen istem tam yanıt sayılmamalı");
@@ -153,12 +182,16 @@ test("KRİTİK: kapalı arıza Gemini yolunda da koşuyor (jsonUret max_tokens r
    * Asıl iddia: kapılar sağlayıcıdan bağımsız. Kırpılmış ama PARSE OLABİLEN bir JSON,
    * Gemini üzerinden de geçmemeli.
    */
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "k" });
   geminiYaniti({
     candidates: [{ content: { parts: [{ text: '{"a":1}' }] }, finishReason: "MAX_TOKENS" }],
   });
   await assert.rejects(
-    () => m.jsonUret(m.geminiIstemcisi(), { sistem: "s", kullanici: "k", sema: { a: "number" } }),
+    () =>
+      jsonUret(geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "k" })), {
+        sistem: "s",
+        kullanici: "k",
+        sema: { a: "number" },
+      }),
     /geçerli JSON alınamadı/u,
     "kırpılmış çıktı parse olabilse bile reddedilmeli"
   );
@@ -166,12 +199,16 @@ test("KRİTİK: kapalı arıza Gemini yolunda da koşuyor (jsonUret max_tokens r
 });
 
 test("KRİTİK: şema doğrulaması Gemini yolunda da koşuyor", async () => {
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "k" });
   geminiYaniti({
     candidates: [{ content: { parts: [{ text: '{"a":"metin"}' }] }, finishReason: "STOP" }],
   });
   await assert.rejects(
-    () => m.jsonUret(m.geminiIstemcisi(), { sistem: "s", kullanici: "k", sema: { a: "number" } }),
+    () =>
+      jsonUret(geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "k" })), {
+        sistem: "s",
+        kullanici: "k",
+        sema: { a: "number" },
+      }),
     /geçerli JSON alınamadı/u,
     "şema ihlali sağlayıcıdan bağımsız reddedilmeli"
   );
@@ -179,19 +216,21 @@ test("KRİTİK: şema doğrulaması Gemini yolunda da koşuyor", async () => {
 });
 
 test("Gemini yolunda geçerli JSON normal döner (kapı her şeyi reddetmiyor)", async () => {
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "k" });
   const citli = "```json\n{\"a\":7}\n```";
   geminiYaniti({ candidates: [{ content: { parts: [{ text: citli }] }, finishReason: "STOP" }] });
-  const n = await m.jsonUret(m.geminiIstemcisi(), { sistem: "s", kullanici: "k", sema: { a: "number" } });
+  const n = await jsonUret(geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "k" })), {
+    sistem: "s",
+    kullanici: "k",
+    sema: { a: "number" },
+  });
   globalThis.fetch = gercekFetch;
   assert.deepEqual(n, { a: 7 }, "çit sıyırma Gemini yolunda da çalışmalı");
 });
 
 test("HTTP hatası ajana ham gövde dökmez", async () => {
-  const m = await modul({ AEGIS_GEMINI_API_KEY: "k" });
   geminiYaniti({ error: { message: "x".repeat(5000) } }, { ok: false, durum: 400 });
   await assert.rejects(
-    () => m.geminiIstemcisi().messages.create({ model: "x", messages: [] }),
+    () => geminiIstemcisi(env({ AEGIS_GEMINI_API_KEY: "k" })).messages.create({ model: "x", messages: [] }),
     (e) => {
       assert.match(e.message, /Gemini API 400/u);
       assert.ok(e.message.length < 400, "hata metni kısaltılmalı (uzunluk: " + e.message.length + ")");
