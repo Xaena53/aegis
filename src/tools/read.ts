@@ -12,12 +12,13 @@ import { enums } from "google-ads-api";
 import { dateRange, ensureGaqlLimit, mikrodanTutar, sayiOku, sayiMetni } from "../util.js";
 
 /**
- * Yalnız GERÇEKTEN okunabilen alanları JSON'a taşır.
+ * Carries only the fields that could GENUINELY be read into the JSON.
  *
- * Okunamayan alanı `undefined` ile bırakmak yetmez: JSON.stringify onu düşürse de şema
- * doğrulaması ve okuyan taraf için "alan var ama boş" ile "alan yok" farklıdır. Alanı
- * hiç yazmamak, bu deponun "bilinmiyor asla 0 diye kaydedilmez" kuralının okuma
- * yüzeyindeki karşılığıdır.
+ * Leaving an unreadable field as `undefined` is not enough: even though JSON.stringify drops
+ * it, "the field exists but is empty" and "the field is absent" are different things to
+ * schema validation and to whoever reads the output. Not writing the field at all is this
+ * repository's rule — "unknown is never recorded as 0" — as it applies on the read
+ * surfaces.
  */
 function tanimliAlanlar<T extends Record<string, number | undefined>>(alanlar: T): Partial<T> {
   return Object.fromEntries(Object.entries(alanlar).filter(([, v]) => v !== undefined)) as Partial<T>;
@@ -78,14 +79,16 @@ const HESAP_SEMASI = {
 };
 
 /**
- * OKUNAMAYAN DEĞER ALANI DÜŞÜRÜR — bu yüzden para/metrik alanlarının hepsi optional.
+ * AN UNREADABLE VALUE DROPS ITS FIELD — which is why every money and metric field is
+ * optional.
  *
- * Eskiden `Number(x ?? 0)` yazıyordu: alan hiç gelmediğinde, null geldiğinde ya da boş
- * dizge geldiğinde rapor "0.00" diyordu. YAYINDAKİ bir kampanya için "günlük bütçe 0.00"
- * okuyan ajan "harcama yok, bütçeyi yükselt" teşhisine gidiyor; hiçbir hata da görünmüyor.
- * Bilinmiyor ile sıfır aynı şey değildir: değer okunamadıysa alan JSON'a hiç yazılmaz,
- * metinde "OKUNAMADI" basılır. Şema optional olmasaydı MCP çıktı doğrulaması tüm raporu
- * düşürürdü — yani tek bozuk satır 500 kampanyayı görünmez yapardı.
+ * This used to be `Number(x ?? 0)`: when the field never arrived, arrived as null, or
+ * arrived as an empty string, the report said "0.00". An agent reading "daily budget 0.00"
+ * for a LIVE campaign goes to the diagnosis "nothing is being spent, raise the budget" — and
+ * no error appears anywhere. Unknown and zero are not the same thing: when a value cannot be
+ * read the field is not written to the JSON at all, and the text prints "OKUNAMADI"
+ * (unreadable). If the schema were not optional, MCP's output validation would drop the
+ * entire report — one broken row would make 500 campaigns invisible.
  */
 const OLCUM_NOTU = "Değer okunamadıysa bu alan HİÇ YAZILMAZ — yokluğu 'bilinmiyor' demektir, 0 demek değildir";
 
@@ -144,19 +147,21 @@ const ARAMA_TERIMI_SEMASI = {
     .describe("ÖLÇÜLEBİLEN satırların maliyet toplamı — kesildi=true ise hesabın toplamı değildir"),
   israfMaliyet: z.number().describe("Dönüşüm getirmeyen ÖLÇÜLEBİLEN terimlerin toplam maliyeti"),
   /**
-   * Ölçülemeyen satırlar AYRI KOVADA sayılır ve toplamlara girmez. Maliyeti ya da dönüşümü
-   * okunamayan bir terimi 0/0 sayarak "israf adayı" işaretlemek iki yönde birden yanlıştı:
-   * dönüşüm getiren bir terim negatif kelime olarak öneriliyor, gerçek israf ise listeden
-   * düşüyordu. Sayı burada duyurulur ki ajan hangi taban üzerinden konuştuğunu bilsin.
+   * Rows that could not be measured are counted in a SEPARATE bucket and do not enter the
+   * totals. Marking a term whose cost or conversions could not be read as a "waste
+   * candidate" by treating it as 0/0 was wrong in both directions: a term that was
+   * converting got suggested as a negative keyword, while genuine waste fell off the list.
+   * The count is announced here so the agent knows which base it is talking about.
    */
   olculemeyenSatir: z
     .number()
     .optional()
     .describe("Maliyeti/dönüşümü OKUNAMADIĞI için toplamlara ve israf değerlendirmesine alınmayan terim sayısı"),
   /**
-   * Kırpma varken ya da ölçülemeyen satır varken oran ÜRETİLMEZ, 0 da yazılmaz. Kesik/eksik
-   * listeden hesaplanan yüzde, hesabın gerçek israf oranıymış gibi okunuyordu: %44 israfı
-   * olan bir hesapta araç %10 diyebiliyor ve ajan "ciddi israf yok" sonucuna varıyordu.
+   * When the list is truncated, or when some rows could not be measured, no ratio is
+   * PRODUCED — and 0 is not written either. A percentage computed from a cut or incomplete
+   * list was being read as the account's real waste rate: on an account with 44% waste the
+   * tool could say 10%, and the agent concluded "no serious waste here".
    */
   israfYuzde: z
     .number()
@@ -229,13 +234,14 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         };
         const hesaplar: Hesap[] = [];
         /**
-         * Aynı hesap birden çok yoldan gelebilir: hem listAccessibleCustomers listesinde
-         * hem de bir MCC'nin torunu olarak. `customer_client.level = 1` filtresi
-         * kaldırıldıktan sonra bu, alt-MCC'leri VE onların altındaki gerçek reklam
-         * hesaplarını tabloya İKİ KEZ yazıyordu. İkincil zarar: tekrarlar ALT_TAVAN
-         * kotasını yiyip, aslında sığan bir listeyi "GÖRÜNMEYEN alt hesaplar var" diye
-         * yanlış alarma çevirebiliyordu. adsClient.hesaplariTopla aynı korumayı
-         * `gorulen` Set'i ile yapıyor; burada satıra da erişmek gerektiği için Map.
+         * The same account can arrive by more than one route: through the
+         * listAccessibleCustomers list, and as a descendant of a manager account. Once the
+         * `customer_client.level = 1` filter was removed, that wrote sub-managers AND the
+         * real ad accounts beneath them into the table TWICE. The secondary damage: the
+         * duplicates ate into the ALT_TAVAN quota and could turn a list that actually fitted
+         * into a false alarm reading "there are child accounts you cannot see".
+         * adsClient.hesaplariTopla applies the same protection with a `gorulen` Set; here a
+         * Map is used because the row itself has to be reachable.
          */
         const gorulenler = new Map<string, Hesap>();
         const okunamayan: string[] = [];
@@ -249,10 +255,11 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               `SELECT customer.descriptive_name, customer.currency_code, customer.manager FROM customer LIMIT 1`
             );
             const c: any = row?.customer ?? {};
-            // Satıra referans TUTULUYOR: alt hesap kırpma bayrağı "listenin son elemanı"
-            // varsayımıyla yazılırsa, araya bir push girdiği anda uyarı yanlış hesaba yapışır.
-            // Hesap daha önce bir MCC'nin torunu olarak listelendiyse SATIR TEKRARLANMAZ;
-            // var olan satır kullanılır, böylece kırpma bayrağı da doğru satıra yapışır.
+            // A reference to the row is KEPT: if the child-truncation flag were written on
+            // the assumption of "the last element of the list", the warning would attach to
+            // the wrong account the moment another push slipped in between. If the account
+            // was already listed as a manager's descendant the ROW IS NOT REPEATED; the
+            // existing row is reused, so the truncation flag lands on the right one.
             let ustSatir = gorulenler.get(id);
             if (!ustSatir) {
               ustSatir = {
@@ -269,14 +276,16 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               // No status filter, deliberately: test accounts can report a status other
               // than ENABLED and such a filter would hide them.
               /**
-               * `customer_client.level = 1` KALDIRILDI: o yan tümce yalnız DOĞRUDAN
-               * çocukları getiriyordu ve iki katmanlı bir ajans MCC'sinde gerçek reklam
-               * hesapları (alt-MCC'lerin çocukları) listede HİÇ görünmüyordu — araç
-               * "tüm hesaplar" diyor, ajan da "erişilebilir hesabınız yok" diyordu.
+               * `customer_client.level = 1` was REMOVED: that clause returned only DIRECT
+               * children, and in a two-tier agency manager account the real ad accounts —
+               * the children of the sub-managers — did NOT appear in the list at all. The
+               * tool said "all accounts" while the agent said "you have no reachable
+               * accounts".
                *
-               * LIMIT tavan+2: tam tavan kadar satır dönerse kırpılıp kırpılmadığı
-               * ANLAŞILAMAZ, o yüzden bir kırpma probu; bir de MCC'nin KENDİ satırı için
-               * (customer_client sorgusu yöneticiyi de level 0 olarak döndürür).
+               * LIMIT is cap+2: if exactly cap rows come back it is IMPOSSIBLE to tell
+               * whether the list was truncated, so one row is a truncation probe — and one
+               * is for the manager's OWN row, since a customer_client query returns the
+               * manager at level 0 as well.
                */
               const children: any[] = await ctx.queryWithRetry(
                 id,
@@ -286,8 +295,9 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
                  FROM customer_client
                  LIMIT ${ALT_TAVAN + 2}`
               );
-              // MCC'nin kendi satırı listeye iki kez girmemeli ve kırpma ölçümüne de
-              // katılmamalı: yoksa tam tavan kadar alt hesabı olan MCC yanlış alarm verir.
+              // The manager's own row must not enter the list twice, and must not count
+              // towards the truncation measurement either: otherwise a manager with exactly
+              // cap child accounts raises a false alarm.
               const altSatirlar = children.filter((ch: any) => String(ch.customer_client?.id ?? "") !== id);
               if (altSatirlar.length > ALT_TAVAN) {
                 altHesabiKesilen.push(id);
@@ -296,8 +306,9 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               for (const ch of altSatirlar.slice(0, ALT_TAVAN)) {
                 const cc = ch.customer_client ?? {};
                 const cid = String(cc.id ?? "");
-                // Torun hesaplar iki MCC'nin altında da görünebilir (ve alt-MCC hem üst
-                // listede hem torun olarak gelir): kimliği görülmüş satır tekrarlanmaz.
+                // A descendant account can appear under two managers (and a sub-manager
+                // arrives both in the parent list and as a descendant): a row whose ID has
+                // already been seen is not repeated.
                 if (!cid || gorulenler.has(cid)) continue;
                 const altSatir: Hesap = {
                   id: cid,
@@ -324,10 +335,11 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             const mevcut = gorulenler.get(id);
             if (mevcut) {
               /**
-               * Hesap zaten bir MCC'nin torunu olarak listede. Satırı TEKRARLAMAK yerine
-               * işaretleriz: ebeveynden okunan ad/para birimi doğru olsa bile hesabın
-               * KENDİ sorgusu patlıyorsa ajan onu seçtiğinde her çağrı
-               * USER_PERMISSION_DENIED alır — yani seçilmemesi gereken hesap odur.
+               * The account is already in the list as a manager's descendant. Rather than
+               * REPEATING the row we flag it: even when the name and currency read from the
+               * parent are correct, if the account's OWN query throws then every call the
+               * agent makes after selecting it comes back USER_PERMISSION_DENIED — which
+               * makes it precisely the account that should not be selected.
                */
               mevcut.erisilemedi = true;
             } else {
@@ -343,23 +355,25 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         }
 
         const satirlar = hesaplar.flatMap((h) => {
-          // Erişilemedi rozeti HER İKİ satır biçiminde de basılır: torun olarak listelenen
-          // bir hesabın kendi sorgusu da patlayabilir ve insan-okur tabloda susmak,
-          // şemadaki uyarıyı görmeyen okura hesabı "kullanılabilir" gösteriyordu.
+          // The unreachable badge is printed in BOTH row shapes: an account listed as a
+          // descendant can fail its own query too, and staying silent in the human-readable
+          // table showed the account as "usable" to a reader who never sees the warning in
+          // the schema.
           const erisimNotu = h.erisilemedi ? "\t[ERİŞİLEMEDİ — kampanya için kullanma]" : "";
           const satir = h.ustHesap
             ? `  └ ${h.id}\t${h.ad}\t${h.paraBirimi ?? "?"}${h.durum ? `\t[${h.durum}]` : ""}${h.yonetici ? " [MCC]" : ""}${h.testHesabi ? " [TEST]" : ""}${erisimNotu}`
             : `${h.id}\t${h.ad}\t${h.paraBirimi ?? "?"}${h.yonetici ? "\t[MCC]" : ""}${erisimNotu}`;
-          // Kırpma uyarısı KESİLEN MCC'nin hemen altına yazılır: alt hesap listesinin
-          // eksik olduğu, listenin okunduğu yerde görünmeli.
+          // The truncation warning is written directly under the manager that was CUT: the
+          // fact that a child list is incomplete has to appear where the list is read.
           return h.altHesapKesildi
             ? [satir, `  ⚠ ${h.id}: alt hesap listesi ${ALT_TAVAN} satırda kesildi — bu MCC'de GÖRÜNMEYEN alt hesaplar var`]
             : [satir];
         });
         /**
-         * Eksiklik hem insana hem şemaya yazılır. Sessiz kırpma somut arıza üretiyordu:
-         * 90 müşterili bir MCC'de 40 hesap hiç anılmıyor, kullanıcının sorduğu hesap için
-         * "erişiminiz yok" deniyordu.
+         * The gap is written both for the human and into the schema. Silent truncation
+         * produced a concrete failure: on a manager account with 90 customers, 40 were never
+         * mentioned, and the account the user asked about came back as "you do not have
+         * access".
          */
         const nedenler: string[] = [];
         if (ustKesildi) nedenler.push(`${ids.length - UST_TAVAN} üst hesabın detayı atlandı`);
@@ -448,7 +462,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
     async ({ customerId, days, includePaused }) => {
       try {
         const d = days ?? 30;
-        // LIMIT tavan+1: tam tavan kadar satır dönerse kırpılıp kırpılmadığı ANLAŞILAMAZ.
+        // LIMIT is cap+1: if exactly cap rows come back it is IMPOSSIBLE to tell whether the
+        // list was truncated.
         const TAVAN = 500;
         const statusFilter =
           includePaused === false ? `AND campaign.status = 'ENABLED'` : `AND campaign.status != 'REMOVED'`;
@@ -477,11 +492,12 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         const kampanyalar = rows.slice(0, TAVAN).filter((r: any) => r?.campaign).map((r: any) => {
           const m = r.metrics ?? {};
           /**
-           * Her para/metrik alanı TEK TEK okunur ve okunamayan alan satırdan DÜŞER.
-           * `?? 0` kalıbı burada duruyordu: bütçesi görünmeyen YAYINDAKİ bir kampanya
-           * "günlük bütçe 0.00" diye raporlanıyor, ajan da "harcama yok, bütçeyi yükselt"
-           * diyordu. Diğer alanlar okunabildiği için satır atılmaz — yalnız okunamayan
-           * alan susturulur ve adı `okunamayanAlanlar` ile ilan edilir.
+           * Every money and metric field is read INDIVIDUALLY, and a field that cannot be
+           * read is DROPPED from the row. The `?? 0` idiom used to sit here: a LIVE campaign
+           * whose budget was invisible was reported as "daily budget 0.00", and the agent
+           * said "nothing is being spent, raise the budget". The row is not discarded, since
+           * the other fields could be read — only the unreadable field falls silent, and its
+           * name is announced through `okunamayanAlanlar`.
            */
           const ctrHam = sayiOku(m.ctr);
           const alanlar = {
@@ -516,9 +532,10 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               ? `\n  ⚠ OKUNAMAYAN ALAN: ${k.okunamayanAlanlar.join(", ")} — bu kampanya için o sayılar BİLİNMİYOR, 0 varsayma`
               : "")
         );
-        // Duyurulan sayı SÜZÜLMÜŞ listeden gelir: `rows.length` kullanmak, tabloda
-        // görünmeyen satırları da saymak demekti — başlık ile tablo birbirini tutmazdı.
-        // Kırpma da duyurulur: sessiz kesme, listede olmayan kampanyayı "yok" sandırır.
+        // The announced count comes from the FILTERED list: using `rows.length` would count
+        // rows that are not in the table — the heading and the table would disagree.
+        // Truncation is announced too: cutting silently makes a campaign that is missing
+        // from the list look as though it does not exist.
         const uyari = kesildi
           ? `\n\nUYARI: liste en pahalı ${TAVAN} kampanyada KESİLDİ — daha fazlası var, görünmeyenler bu tabloda yok.`
           : "";
@@ -562,7 +579,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
       try {
         const d = days ?? 30;
         const mc = minClicks ?? 1;
-        // LIMIT tavan+1: tam tavan kadar satır dönerse kırpılıp kırpılmadığı ANLAŞILAMAZ.
+        // LIMIT is cap+1: if exactly cap rows come back it is IMPOSSIBLE to tell whether the
+        // list was truncated.
         const TAVAN = 200;
         if (campaignId && !/^\d+$/.test(campaignId.trim()))
           return girdiHatasi(`Geçersiz kampanya ID: '${campaignId}' — sadece rakam olmalı.`);
@@ -586,9 +604,10 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             satirTavani: TAVAN,
             toplamMaliyet: 0,
             israfMaliyet: 0,
-            // israfYuzde YAZILMAZ: hiç satır yokken oran 0/0'dır, yani BİLİNMİYOR.
-            // "0" yazmak "israf yok" beyanıdır; oysa pencerede veri olmaması hesapta
-            // israf olmadığını göstermez. Kırpma dalındaki kuralın aynısı (bkz. aşağı).
+            // israfYuzde is NOT written: with no rows at all the ratio is 0/0, that is,
+            // UNKNOWN. Writing "0" is a declaration that there is no waste, whereas an
+            // empty window says nothing about whether the account wastes money. The same
+            // rule as in the truncation branch below.
             terimler: [],
           });
         const kesildi = rows.length > TAVAN;
@@ -599,12 +618,14 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         const terimler = rows.slice(0, TAVAN).filter((r: any) => r?.campaign && r?.ad_group && r?.search_term_view).map((r: any) => {
           const m = r.metrics ?? {};
           /**
-           * İSRAF KARARI YALNIZ ÖLÇÜLEBİLEN SATIRDA VERİLİR. `?? 0` kalıbında dönüşümü
-           * okunamayan bir terim conv=0 sayılıp 🔥 boşa-harcama-adayı işaretleniyordu ve
-           * aracın SONRAKİ ADIM talimatı ajanı onu negatif kelime yapmaya götürüyordu —
-           * yani DÖNÜŞÜM GETİREN terim dışlanıyordu. Maliyeti okunamayan gerçek israf ise
-           * cost=0 olduğu için ters yönde listeden düşüyordu. Ölçülemeyen satır ne israf
-           * sayılır ne temiz: ayrı kovaya alınır ve toplamlara hiç girmez.
+           * A WASTE VERDICT IS ONLY REACHED ON A ROW THAT COULD BE MEASURED. Under the
+           * `?? 0` idiom, a term whose conversions could not be read counted as conv=0 and
+           * was flagged 🔥 as a waste candidate — and the tool's NEXT STEP instruction led
+           * the agent to turn it into a negative keyword, excluding a term that was
+           * CONVERTING. Meanwhile genuine waste whose cost could not be read fell off the
+           * list in the opposite direction, because cost=0. A row that cannot be measured
+           * counts as neither wasteful nor clean: it goes into its own bucket and never
+           * enters the totals.
            */
           const cost = mikrodanTutar(m.cost_micros);
           const conv = sayiOku(m.conversions);
@@ -639,13 +660,15 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             `${t.zatenDislanmis ? " [zaten dışlanmış]" : ""}`
         );
         /**
-         * Liste kesildiyse ORAN ÜRETİLMEZ. Toplamlar yalnız en pahalı ${TAVAN} satırındır;
-         * bunlardan hesaplanan yüzde hesabın israf oranıymış gibi okunuyordu ve gerçek
-         * oran %44 iken araç %10 diyebiliyordu. Bilinmiyor = alan yok (0 da yazılmaz).
+         * If the list was cut, NO RATIO IS PRODUCED. The totals cover only the most
+         * expensive ${TAVAN} rows, and a percentage computed from those was being read as
+         * the account's waste rate — the tool could say 10% while the real figure was 44%.
+         * Unknown means the field is absent, and 0 is not written either.
          */
-        // Oran yalnız ÖLÇÜLEBİLDİĞİNDE yazılır: liste kesikse toplamlar hesabın tamamı
-        // değildir; toplam maliyet 0 ise oran 0/0'dır; ölçülemeyen satır varsa payda
-        // eksiktir. Üçü de "bilinmiyor" — 0 yazmak "israf yok" beyanı olurdu.
+        // The ratio is written only when it can be MEASURED: if the list is cut the totals
+        // are not the whole account; if total cost is 0 the ratio is 0/0; if some rows could
+        // not be measured the denominator is incomplete. All three mean "unknown" — and
+        // writing 0 would be a declaration that there is no waste.
         const israfYuzde =
           kesildi || totalCost <= 0 || olculemeyenSatir > 0
             ? undefined
@@ -654,8 +677,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           ? `UYARI: liste en pahalı ${TAVAN} terimde KESİLDİ. Aşağıdaki toplamlar YALNIZ bu ${TAVAN} satırındır, ` +
             `hesabın tamamı DEĞİLDİR; bu yüzden israf ORANI hesaplanmadı. Daraltmak için campaignId ver ya da minClicks yükselt.\n`
           : "";
-        // Oranın TABANI açıkça söylenir: hangi satırların sayıldığı belirsizken yüzde
-        // okuyan ajan onu hesabın oranı sanıyordu.
+        // The ratio's BASE is stated explicitly: reading a percentage without knowing which
+        // rows were counted, the agent took it for the account's rate.
         const olcumNotu = olculemeyenSatir
           ? `\nUYARI: ${olculemeyenSatir} terimin maliyeti/dönüşümü OKUNAMADI. Bu satırlar toplamlara ve ` +
             `israf değerlendirmesine ALINMADI; bu yüzden israf oranı hesaplanmadı. Ölçülemeyen terimler için ` +
@@ -710,7 +733,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
     async ({ customerId, campaignId, days }) => {
       try {
         const d = days ?? 30;
-        // LIMIT tavan+1: tam tavan kadar satır dönerse kırpılıp kırpılmadığı ANLAŞILAMAZ.
+        // LIMIT is cap+1: if exactly cap rows come back it is IMPOSSIBLE to tell whether the
+        // list was truncated.
         const TAVAN = 200;
         if (campaignId && !/^\d+$/.test(campaignId.trim()))
           return girdiHatasi(`Geçersiz kampanya ID: '${campaignId}' — sadece rakam olmalı.`);
@@ -739,9 +763,10 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         const kelimeler = rows.slice(0, TAVAN).filter((r: any) => r?.campaign && r?.ad_group).map((r: any) => {
           const kw = r.ad_group_criterion?.keyword ?? {};
           const m = r.metrics ?? {};
-          // Aynı sözleşme kelime yüzeyinde de geçerli: okunamayan maliyet/dönüşüm 0'a
-          // çevrilirse "bu kelime hiç kazandırmıyor, durdur" kararı bilinmeyen üzerine
-          // kurulur. Okunamayan alan satırdan düşer, adı ilan edilir.
+          // The same contract holds on the keyword surface: turning an unreadable cost or
+          // conversion count into 0 builds the verdict "this keyword earns nothing, stop it"
+          // on top of an unknown. An unreadable field is dropped from the row and its name is
+          // announced.
           const alanlar = {
             maliyet: mikrodanTutar(m.cost_micros),
             tiklama: sayiOku(m.clicks),
@@ -766,7 +791,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               ? ` ⚠ OKUNAMAYAN ALAN: ${k.okunamayanAlanlar.join(", ")} — 0 varsayma`
               : "")
         );
-        // Kırpma duyurulur: sessiz kesme, listede olmayan kelimeyi "yok" sandırır.
+        // Truncation is announced: cutting silently makes a keyword that is missing from the
+        // list look as though it does not exist.
         const uyari = kesildi
           ? `\n\nUYARI: liste en pahalı ${TAVAN} kelimede KESİLDİ — daha fazlası var, görünmeyenler bu tabloda yok.`
           : "";

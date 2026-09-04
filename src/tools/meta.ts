@@ -44,10 +44,11 @@ const HEDEFLER = [
 ] as const;
 
 /**
- * Yapılandırma eksikse araç ÇALIŞMAZ — ve bunu harcamadan ÖNCE söyler.
+ * With configuration missing the tool DOES NOT RUN — and it says so BEFORE any spending.
  *
- * Eksik yapılandırmayı çağrı anında sessizce "yapacak bir şey yok" saymak, ajana
- * "Meta tarafı kapalı" yerine "Meta tarafı sorunsuz" izlenimi verirdi.
+ * Treating missing configuration as a quiet "there is nothing to do" at call time would give
+ * the agent the impression that "the Meta side is fine" rather than "the Meta side is
+ * switched off".
  */
 function yapilandirmaEksik(ayar: { metaToken?: string; metaAdAccountId?: string }): string | null {
   if (!ayar.metaToken) {
@@ -145,10 +146,10 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
         const eski = mevcut.gunlukButce;
 
         /**
-         * Mevcut bütçe OKUNAMADIYSA artış sayılır.
+         * If the current budget CANNOT BE READ it counts as an increase.
          *
-         * "Bilinmiyor" ile "düşük" aynı şey değildir: okunamayan bir değerin altında
-         * kaldığımızı varsaymak, ölçemediğimiz bir şeyi güvenli ilan etmek olurdu.
+         * "Unknown" and "lower" are not the same thing: assuming we are below a value we
+         * could not read would be declaring something safe that we failed to measure.
          */
         const eskiBilinmiyor = eski === undefined || !Number.isFinite(eski);
         if (eskiBilinmiyor || dailyBudget > eski!) {
@@ -164,15 +165,15 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
                 `Hesap güvenlik tavanı: ${ctx.config.maxDailyBudget}`,
               ],
               /**
-               * REKLAM HESABI KİMLİĞİ YALNIZ İNSANA GÖSTERİLİR.
+               * THE AD ACCOUNT ID IS SHOWN TO THE HUMAN ONLY.
                *
-               * Bu değer ajanın gönderdiği bir argüman değil, SUNUCU TARAFI
-               * yapılandırmadır (META_AD_ACCOUNT_ID): ajan onu hiç bilmez ve bilmesi de
-               * gerekmez. Oysa `satirlar` elicitation'sız istemcide ret metniyle birlikte
-               * ajana dönüyordu — yani her reddedilen bütçe denemesi hesap kimliğini model
-               * bağlamına ve transkriptlere yazıyordu. Karar veren insanın parasını hangi
-               * hesaptan harcayacağını görmesi ise şarttır; bu yüzden satır silinmedi,
-               * KANAL DEĞİŞTİRDİ.
+               * This value is not an argument the agent sent but SERVER-SIDE configuration
+               * (META_AD_ACCOUNT_ID): the agent never knows it and has no need to. Yet
+               * `satirlar` came back to the agent together with the refusal on a client
+               * without elicitation — so every refused budget attempt wrote the account ID
+               * into the model's context and from there into transcripts. The human making
+               * the decision, on the other hand, must see which account the money comes
+               * from; so the line was not deleted, it CHANGED CHANNEL.
                */
               insanSatirlari: [`Reklam hesabı: ${ctx.config.metaAdAccountId}`],
               soru: "Meta bütçe artışını onaylıyor musun?",
@@ -180,16 +181,17 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
               agAyar: ctx.config,
               hesapId: ctx.config.metaAdAccountId,
               /**
-               * Riskteki tutar YENİ bütçedir: karar verilirse günlük harcamanın çıkacağı
-               * tavan budur ve çağıranın kendi girdisi olduğu için eski bütçe okunamamış
-               * olsa bile bilinir (Google tarafındaki update_campaign_budget ile aynı kural).
+               * The amount at risk is the NEW budget: it is the ceiling daily spending
+               * will rise to if the decision is made, and because it is the caller's own
+               * input it is known even when the old budget could not be read — the same
+               * rule as update_campaign_budget on the Google side.
                */
               tutar: dailyBudget,
             },
             confirm
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
-          // Onay penceresi boyunca kelepçe değişmiş olabilir (bkz. onaySonrasiKelepce).
+          // The clamp may have moved while the prompt was open (see onaySonrasiKelepce).
           const bayat = onaySonrasiKelepce(getCtx().config, dailyBudget);
           if (bayat) return text(bayat);
         }
@@ -232,19 +234,20 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
         const kanal = metaKanali(ctx.config);
 
         /**
-         * DURAKLATMA HİÇBİR OKUMAYA BAĞLI DEĞİLDİR — kapalı arıza burada TERS çalışır.
+         * PAUSING DEPENDS ON NO READ AT ALL — fail-closed runs the other way round here.
          *
-         * Okuma kapının ÖNÜNDE ve koşulsuzdu. Meta'da 500 ve #17 hız sınırı sıradan
-         * olaylardır ve GET 15 saniyeyi aşabilir; o anda `kampanyaOku` fırlatınca araç
-         * isError ile dönüyor ve durdurma POST'u HİÇ denenmiyordu. Yani kampanya para
-         * yakarken "hemen durdur" diyen kullanıcı, ilgisiz bir okuma arızası yüzünden
-         * kampanyayı yayında bırakıyordu; ajan da hata gördüğü için genelde geri çekilir.
+         * The read sat IN FRONT of the gate and was unconditional. Meta returns 500s and #17
+         * rate limits routinely, and a GET can exceed fifteen seconds; when `kampanyaOku`
+         * threw at that moment the tool came back with isError and the pause POST was NEVER
+         * attempted. So the user watching a campaign burn money and saying "stop it now" was
+         * left with the campaign live because of an unrelated read failure — and an agent
+         * that sees an error usually backs off.
          *
-         * Kapalı arıza HARCAMA ARTIŞI için "yapma" demektir; harcamayı DURDURAN işlem
-         * için güvenli yön "YAP"tır. Kampanya adı burada yalnız bir gözlemdir: mesajı
-         * güzelleştirir, hiçbir kararı belirlemez, dolayısıyla okunamaması durdurmayı
-         * engelleyemez. Google ikizi bunu zaten böyle yapıyordu (tools/write.ts: bütün
-         * okumalar ENABLED dalının içinde).
+         * Fail-closed means "do not" for a spending INCREASE; for the operation that STOPS
+         * spending the safe direction is "DO". The campaign name is only an observation
+         * here: it decorates the message and decides nothing, so failing to read it cannot
+         * prevent the pause. The Google twin already worked this way (tools/write.ts: every
+         * read sits inside the ENABLED branch).
          */
         if (status === "PAUSED") {
           await kanal.durumDegistir(campaignId, "PAUSED");
@@ -252,7 +255,7 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
           try {
             ad = (await kanal.kampanyaOku(campaignId)).ad;
           } catch {
-            /* ad bir gözlemdir, kapı değil — durdurma zaten uygulandı */
+            /* the name is an observation, not a gate — the pause has already been applied */
           }
           return text(`Meta kampanyası "${ad}" durumu: PAUSED.`);
         }
@@ -261,36 +264,38 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
 
         {
           /**
-           * BÜTÇE TAVANI YAYINA ALMADA DA GEÇERLİ — ve bu, bütçeyi bu araç
-           * belirlemediği için atlanması en kolay yerdir.
+           * THE BUDGET CEILING APPLIES TO GOING LIVE TOO — and because this tool does not
+           * set the budget, this is the easiest place to skip it.
            *
-           * Kampanya başka bir yerde (Meta Ads Manager'da elle) kurulmuş olabilir ve
-           * bizim hiç görmediğimiz bir günlük bütçe taşıyabilir. Tavan yalnız BİZİM
-           * yazdığımız bütçelere uygulanırsa, hesap sahibinin koyduğu kelepçe "Aegis
-           * üzerinden kurulan kampanyalar" kelepçesine dönüşür — oysa vaat harcamanın
-           * kendisi üzerine. Google tarafındaki ikizi bunu zaten yapıyor
-           * (tools/write.ts, set_campaign_status ENABLED dalı); burada eksikti.
+           * The campaign may have been created somewhere else, by hand in Meta Ads Manager,
+           * and may carry a daily budget we have never seen. If the ceiling applies only to
+           * budgets WE wrote, the clamp the account owner set becomes a clamp on "campaigns
+           * created through Aegis" — while the promise was about the spending itself. The
+           * Google twin already does this (tools/write.ts, the ENABLED branch of
+           * set_campaign_status); it was missing here.
            *
-           * OKUNAMAYAN BÜTÇE DE RET: tavanı doğrulayamıyorsak tavanın altında
-           * olduğunu varsayamayız. Bu, dosyanın birkaç fonksiyon yukarıdaki
-           * "bilinmiyor ile düşük aynı şey değildir" kuralının aynısıdır.
+           * AN UNREADABLE BUDGET IS REFUSED TOO: if we cannot verify the ceiling we cannot
+           * assume we are under it. This is the same rule as "unknown is not the same as
+           * lower", a few functions above.
            */
           const gunluk = mevcut.gunlukButce;
           if (gunluk === undefined || !Number.isFinite(gunluk)) {
             /**
-             * SEBEP TAHMİN EDİLMEZ, İSTEMCİDEN GELİR. Okuma artık iki katmanlı (kampanya
-             * düzeyi CBO, yoksa reklam setleri toplamı), dolayısıyla "okunamadı" birden
-             * çok farklı duruma karşılık gelir: sayfa taşması, ömürlük bütçe, ACTIVE set
-             * bulunmaması, biçimsiz yanıt. Operatöre hangisi olduğunu söylemeyen bir ret,
-             * onu neyi düzelteceğini bilmeden bırakır.
+             * THE REASON IS NOT GUESSED, IT COMES FROM THE CLIENT. The read is now
+             * two-layered (campaign-level CBO, and failing that the sum of the ad sets), so
+             * "could not be read" corresponds to several different situations: page
+             * overflow, a lifetime budget, an ACTIVE set
+             * not being present, a malformed response. A refusal that does not tell the
+             * operator which one it was leaves them without knowing what to fix.
              */
             return text(
               `Reddedildi: "${mevcut.ad}" kampanyasının günlük bütçesi doğrulanamadı, ` +
                 `dolayısıyla hesap güvenlik tavanına (${ctx.config.maxDailyBudget}) uyup uymadığı ` +
                 `bilinmiyor. Güvenlik gereği doğrulanamayan bütçeyle yayına alınmaz.` +
-                // Sebep AJANIN gördüğü metne giriyor; sınırda ikinci kez temizlenir
-                // (jeton maskesi + 300 karakter tavanı). İstemci tarafı da temizliyor:
-                // bu, tek bir çıkışın atlanmasıyla sınırın delinmemesi içindir.
+                // The reason enters text the AGENT sees, so it is cleaned a second time at
+                // the boundary (token masking plus a 300-character cap). The client side
+                // cleans it too: that way missing a single exit does not breach the
+                // boundary.
                 (mevcut.butceNotu ? ` Sebep: ${hataTemizle(mevcut.butceNotu, ctx.config.metaToken)}.` : "")
             );
           }
@@ -316,15 +321,15 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
                       : ""),
               ],
               /**
-               * REKLAM HESABI KİMLİĞİ YALNIZ İNSANA GÖSTERİLİR.
+               * THE AD ACCOUNT ID IS SHOWN TO THE HUMAN ONLY.
                *
-               * Bu değer ajanın gönderdiği bir argüman değil, SUNUCU TARAFI
-               * yapılandırmadır (META_AD_ACCOUNT_ID): ajan onu hiç bilmez ve bilmesi de
-               * gerekmez. Oysa `satirlar` elicitation'sız istemcide ret metniyle birlikte
-               * ajana dönüyordu — yani her reddedilen bütçe denemesi hesap kimliğini model
-               * bağlamına ve transkriptlere yazıyordu. Karar veren insanın parasını hangi
-               * hesaptan harcayacağını görmesi ise şarttır; bu yüzden satır silinmedi,
-               * KANAL DEĞİŞTİRDİ.
+               * This value is not an argument the agent sent but SERVER-SIDE configuration
+               * (META_AD_ACCOUNT_ID): the agent never knows it and has no need to. Yet
+               * `satirlar` came back to the agent together with the refusal on a client
+               * without elicitation — so every refused budget attempt wrote the account ID
+               * into the model's context and from there into transcripts. The human making
+               * the decision, on the other hand, must see which account the money comes
+               * from; so the line was not deleted, it CHANGED CHANNEL.
                */
               insanSatirlari: [`Reklam hesabı: ${ctx.config.metaAdAccountId}`],
               soru: "Meta kampanyasını yayına almayı onaylıyor musun?",
@@ -332,17 +337,19 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
               agAyar: ctx.config,
               hesapId: ctx.config.metaAdAccountId,
               /**
-               * Riskteki tutar kampanyanın günlük bütçesidir — ama YALNIZ okunabildiyse.
-               * Meta okuması bütçeyi vermediğinde (yukarıdaki "OKUNAMADI" satırı) alan
-               * hiç yazılmaz: kayıtta 0 görmek, denetçiye ortada para yokmuş gibi görünürdü.
+               * The amount at risk is the campaign's daily budget — but ONLY when it could
+               * be read. When the Meta read does not yield a budget (the "OKUNAMADI" line
+               * above) the field is not written at all: seeing 0 in the record would look to
+               * an auditor as though no money were involved.
                */
-              // Buraya gelindiyse bütçe okunmuş ve sonludur: yukarıdaki kapı aksini eler.
+              // Reaching this point means the budget was read and is finite: the gate above
+              // eliminates anything else.
               tutar: gunluk,
             },
             confirm
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
-          // Onay penceresi boyunca kelepçe değişmiş olabilir (bkz. onaySonrasiKelepce).
+          // The clamp may have moved while the prompt was open (see onaySonrasiKelepce).
           const bayat = onaySonrasiKelepce(getCtx().config, gunluk);
           if (bayat) return text(bayat);
         }

@@ -41,9 +41,10 @@ function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: num
 }
 
 /*
- * `mikrodanTutar` BURADAN util.ts'E TAŞINDI. Sözleşme burada doğdu (okunamayan bütçe 0
- * sayılınca 0 her tavanı geçiyordu) ama okuma yüzeyleri kendi `?? 0` kalıplarını
- * sürdürdüğü için aynı hata raporlarda yaşamaya devam ediyordu; tek tanım, tek davranış.
+ * `mikrodanTutar` MOVED FROM HERE TO util.ts. The contract was born here — an unreadable
+ * budget counted as 0, and 0 cleared every ceiling — but because the read surfaces kept
+ * their own `?? 0` idioms the same mistake went on living in the reports. One definition,
+ * one behaviour.
  */
 
 /**
@@ -75,19 +76,20 @@ async function liveCampaignGuard(
    * An empty result, a missing status field or an unexpected type all count as
    * "unknown", and unknown means ask — a spend gate must not open on ambiguity.
    *
-   * BEYAZ LİSTE, KARA LİSTE DEĞİL. Bu kapı bir kez kara listeyle yazılmıştı:
-   * "ENABLED/UNKNOWN/UNSPECIFIED dışındaki her ad kesin taslaktır". Google
-   * `campaign.status` alanını enum numarası (2), enum adı ("ENABLED") ya da JSON
-   * dönüşümüne göre sayısal METİN ("2") olarak verebilir; listede adı geçmeyen her
-   * değer — "2", "enabled", "SERVING" — yayındaki bir kampanyayı "taslak" sayıp
-   * kapıyı sessizce atlatıyordu: ne onay istemi, ne CAMARA zinciri, ne denetim satırı.
-   * Kara liste, kapıyı yazanın o gün aklına gelen adlarla sınırlıdır; beyaz liste ise
-   * yarın gelecek bilinmeyen adı da "bilinmiyor" tarafına koyar.
+   * AN ALLOWLIST, NOT A BLOCKLIST. This gate was once written as a blocklist: "any name
+   * other than ENABLED/UNKNOWN/UNSPECIFIED is definitely a draft". Google can give
+   * `campaign.status` as an enum number (2), an enum name ("ENABLED"), or — depending on the
+   * JSON conversion — a numeric STRING ("2"); every value not named in that list — "2",
+   * "enabled", "SERVING" — treated a live campaign as a draft and stepped past the gate in
+   * silence: no approval prompt, no CAMARA chain, no audit line. A blocklist is limited to
+   * the names that occurred to whoever wrote the gate that day; an allowlist puts tomorrow's
+   * unknown name on the "unknown" side.
    *
-   * Artık yalnız harcamadığı KANITLANMIŞ iki durum onaydan muaftır: PAUSED ve REMOVED.
-   * Sayı ↔ ad çevrimi enum'un kendi sözlüğüyle yapılır (sözlük çift yönlüdür:
-   * [2] → "ENABLED" ve ["ENABLED"] → 2), böylece sayısal metin de gerçek adına çözülür;
-   * çözülemeyen değer büyük harfe indirgenir ve beyaz listede yoksa "bilinmiyor" olur.
+   * Only the two states PROVEN not to spend are now exempt from approval: PAUSED and
+   * REMOVED. The number-to-name conversion uses the enum's own dictionary, which is
+   * bidirectional ([2] gives "ENABLED" and ["ENABLED"] gives 2), so a numeric string
+   * resolves to its real name too; a value that does not resolve is upper-cased, and if it
+   * is not in the allowlist it becomes "unknown".
    */
   const ham = rows.length ? rows[0]?.campaign?.status : undefined;
   const cozulen =
@@ -99,24 +101,26 @@ async function liveCampaignGuard(
 
   const kampanyaAdi = rows.length ? String(rows[0]?.campaign?.name ?? "(adsız)") : "(bulunamadı)";
   /**
-   * "Yayında" diyebilmek için durumun ENABLED olduğunu GÖRMEK gerekir. Beyaz liste
-   * dışında kalan her şey (boş yanıt, tanınmayan ad, beklenmedik tip) kullanıcıya
-   * "doğrulanamadı" diye bildirilir — kapı kapalı tarafta olsa bile insana yanlış
-   * bir kesinlik sunmak, onayı bilgisiz bir tıklamaya çevirirdi.
+   * To say "live", the status has to be SEEN to be ENABLED. Everything outside the
+   * allowlist — an empty response, an unrecognised name, an unexpected type — is reported to
+   * the user as "could not be verified". Even with the gate erring on the closed side,
+   * offering a human a false certainty would turn the approval into an uninformed click.
    */
   const belirsiz = durumAdi === "ENABLED" ? "" : " (kampanya durumu doğrulanamadı — güvenli tarafa geçildi)";
 
   /**
-   * Denetim izi için RİSKTEKİ TUTAR: kampanya yayında olduğuna göre bu bütçe, onay
-   * verilirse harcanmaya devam edecek günlük büyüklüktür.
+   * THE AMOUNT AT RISK, for the audit trail: since the campaign is live, this budget is the
+   * daily magnitude that will keep being spent if approval is given.
    *
-   * AYRI SORGU, bilinçli: `campaign_budget.*` alanları GAQL'de `FROM ad_group` üzerinden
-   * seçilemez, dolayısıyla yukarıdaki guard sorgusuna eklenmesi guard'ın TAMAMINI kırardı.
-   * Bu okuma yalnız onay istenecek yolda (kampanya yayında ya da durumu belirsiz) koşar.
+   * A SEPARATE QUERY, deliberately: `campaign_budget.*` fields cannot be selected through
+   * `FROM ad_group` in GAQL, so adding them to the guard query above would break the guard
+   * ENTIRELY. This read runs only on the path where approval will be asked for — the
+   * campaign is live, or its status is uncertain.
    *
-   * OKUNAMAZSA ALAN YAZILMAZ ve akış etkilenmez: tutar bir gözlemdir, kapı değildir —
-   * bütçe okuması patladı diye meşru bir onay istemi düşürülmez, kayıt yalnızca bu
-   * kararın büyüklüğünü BİLMEDİĞİNİ söyler (uydurmaz).
+   * IF IT CANNOT BE READ THE FIELD IS NOT WRITTEN and the flow is unaffected: the amount is
+   * an observation, not a gate — a legitimate approval prompt is not dropped because a
+   * budget read failed, and the record simply says it does NOT KNOW this decision's
+   * magnitude rather than inventing one.
    */
   const kampanyaNo = where.campaignId ? cleanId(where.campaignId) : String(rows[0]?.campaign?.id ?? "");
   let tutar: number | undefined;
@@ -141,9 +145,11 @@ async function liveCampaignGuard(
       soru: `${eylem} onaylıyor musun?`,
       risk: "high",
       agAyar: ctx.config,
-      // Denetim günlüğü çok-kiracılı modda hangi hesabın kararı olduğunu bilmeli.
+      // In multi-tenant mode the audit log has to know whose account the decision was
+      // about.
       hesapId: normalizeCustomerId(customerId),
-      // Okunabildiyse riskteki günlük tutar; okunamadıysa undefined (alan hiç yazılmaz).
+      // The daily amount at risk when it could be read; undefined otherwise, in which case
+      // the field is not written at all.
       tutar,
     },
     confirm
@@ -181,11 +187,12 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           .array(z.string().length(2))
           .min(1)
           /**
-           * ÜST SINIR ŞEMA DÜZEYİNDE. Komşu diziler (keywords 50, headlines 15,
-           * add_keywords 100) hep kelepçeliydi, bu biri değildi: dünyada 200 kadar ülke
-           * kodu varken sınırsız dizi, tek bir mutasyona yüz binlerce `campaign_criterion`
-           * işlemi koyup Google'a gönderiyor ve çıktısıyla ajanın bağlamını dolduruyordu.
-           * Sınır şemada durur ki ret, tek bir yazma yolu çalışmadan önce düşsün.
+           * THE UPPER BOUND SITS AT THE SCHEMA LEVEL. The neighbouring arrays (keywords 50,
+           * headlines 15, add_keywords 100) were always clamped; this one was not. With
+           * roughly 200 country codes in the world, an unbounded array could put hundreds of
+           * thousands of `campaign_criterion` operations into a single mutation, send them to
+           * Google, and fill the agent's context with the output. The bound lives in the
+           * schema so the refusal lands before a single write path runs.
            */
           .max(50)
           .describe(
@@ -200,10 +207,10 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       const guardMsg = budgetGuardFor(ctx, dailyBudget);
       if (guardMsg) return text(guardMsg);
       /**
-       * TEKİLLEŞTİRME: aynı ülke iki kez gelirse Google'a iki aynı konum ölçütü gitmesi
-       * mutasyonu boşuna büyütür (ve ikincisi zaten hata olarak döner). Anahtar
-       * kelimelerde `dedupe` ile yapılan şey burada geo id üzerinden yapılır: 'tr' ile
-       * 'TR' aynı hedeftir, metin olarak değil ÇÖZÜMLENMİŞ id olarak karşılaştırılır.
+       * DEDUPLICATION: if the same country arrives twice, sending two identical location
+       * criteria to Google enlarges the mutation for nothing — and the second comes back as
+       * an error anyway. What `dedupe` does for keywords is done here on the geo id: 'tr' and
+       * 'TR' are the same target, compared as RESOLVED ids rather than as text.
        */
       const geoIds: number[] = [];
       const hedefUlkeler: string[] = [];
@@ -417,18 +424,18 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         );
         if (!row) return text(`Kampanya bulunamadı: ${campaignId}`);
         /**
-         * KAPALI ARIZA — PAYLAŞIMLILIK OKUNAMAZSA DOKUNULMAZ.
+         * FAIL CLOSED — IF SHAREDNESS CANNOT BE READ, NOTHING IS TOUCHED.
          *
-         * `explicitly_shared` proto'da `optional bool`: alan yanıtta hiç bulunmayabilir
-         * (eski API sürümü, kısmi yanıt, alanı düşüren bir ara katman). Burası düz
-         * truthiness ile yazılmıştı: undefined/null "paylaşımlı değil" sayılıyor,
-         * yani PAYLAŞIMLILIĞIN OKUNAMAMASI ile "kampanyaya özel" aynı kapıya
-         * çıkıyordu — aynı bütçeyi kullanan başka kampanyaların tavanı sessizce
-         * düşürülebilirdi (azaltma yolu onay bile istemez).
+         * `explicitly_shared` is an `optional bool` in the proto: the field may be absent
+         * from the response entirely (an older API version, a partial response, a middle
+         * layer that drops it). This was written with plain truthiness, so undefined and null
+         * counted as "not shared" — meaning FAILING TO READ SHAREDNESS led to the same door
+         * as "campaign-specific", and the ceiling of other campaigns using the same budget
+         * could be quietly lowered (the lowering path does not even ask for approval).
          *
-         * İki satır aşağıdaki `amount_micros` okuması zaten bu disiplinle yazılmıştı;
-         * paylaşımlılık ondan daha az önemli değil: yalnız kesin `false` "kampanyaya
-         * özel" demektir, boolean olmayan her değer "bilinmiyor"dur ve reddedilir.
+         * The `amount_micros` read two lines below was already written with this discipline,
+         * and sharedness is no less important: only an explicit `false` means
+         * "campaign-specific", while any non-boolean value is "unknown" and is refused.
          */
         const paylasimli = row.campaign_budget?.explicitly_shared;
         if (typeof paylasimli !== "boolean") {
@@ -467,16 +474,17 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               agAyar: ctx.config,
               hesapId: normalizeCustomerId(customerId),
               /**
-               * Riskteki tutar YENİ bütçedir: karar verilirse günlük harcamanın çıkacağı
-               * tavan budur. Eski bütçe okunamamış olabilir (eskiBilinmiyor) ama yeni
-               * değer çağıranın kendi girdisidir — her iki durumda da bilinir.
+               * The amount at risk is the NEW budget: it is the ceiling daily spending
+               * will rise to if the decision is made. The old budget may have been
+               * unreadable (eskiBilinmiyor), but the new value is the caller's own input —
+               * known either way.
                */
               tutar: newDailyBudget,
             },
             confirm
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
-          // Onay penceresi boyunca kelepçe değişmiş olabilir (bkz. onaySonrasiKelepce).
+          // The clamp may have moved while the prompt was open (see onaySonrasiKelepce).
           const bayat = onaySonrasiKelepce(getCtx().config, newDailyBudget);
           if (bayat) return text(bayat);
         }
@@ -505,13 +513,14 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
         "KULLANMA: negatif kelimeyi TÜM kampanyaya uygulamak istiyorsan — o add_campaign_negative_keywords'tür ve genelde doğrusu odur. " +
         "GÜVENLİK: negatif kelime harcamayı AZALTTIĞI için onay istemez; pozitif kelime canlı kampanyada onay ister.",
       /**
-       * YIKICI İŞARET, İKİZLERİYLE TUTARLI. Bu araç canlı kampanyaya pozitif kelime
-       * eklerken liveCampaignGuard'ı "high" risk etiketiyle çağırıyor — yani kodun kendi
-       * risk modeli onu yayına almakla aynı kefeye koyuyor. İşaret WRITE_SAFE kaldığı
-       * sürece iki şey birden bozuktu: destructiveHint'e bakan istemci bu yazmayı
-       * sürtünmesiz geçiriyordu ve kapiKapsami gözcüsü aracı hiç görmüyordu (o gözcü
-       * yalnız yıkıcı işaretlileri tarıyor). Negatif kelime yolu onay istemez, ama
-       * işaret ARACIN tamamı içindir ve aracın en riskli yolu belirler.
+       * THE DESTRUCTIVE HINT, CONSISTENT WITH ITS TWINS. When this tool adds a positive
+       * keyword to a live campaign it calls liveCampaignGuard with the "high" risk label —
+       * so the code's own risk model puts it in the same class as going live. While the hint
+       * stayed WRITE_SAFE, two things were broken at once: a client that reads
+       * destructiveHint let this write through without friction, and the kapiKapsami guard
+       * never saw the tool at all, since it only scans the ones marked destructive. The
+       * negative-keyword path needs no approval, but the hint is for the TOOL as a whole, and
+       * a tool is defined by its riskiest path.
        */
       annotations: WRITE_DESTRUCTIVE,
       inputSchema: {
@@ -661,11 +670,12 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           );
           if (!row) return text(`Kampanya bulunamadı: ${campaignId}`);
           /**
-           * `?? 0` BURADAN KALDIRILDI: okunamayan bütçeyi 0 sayıyordu ve 0 her tavanı
-           * geçtiği için, bütçesi görünmeyen bir kampanya sessizce yayına alınabiliyordu.
-           * Bu, deponun her yerde savunduğu "bilinmiyor ile düşük aynı şey değildir"
-           * kuralının tam tersiydi ve sessiz olduğu için Meta'daki eksik kapıdan daha
-           * tehlikeliydi: orada kapı hiç yoktu, burada kapı VAR ama hep yeşil yanıyordu.
+           * `?? 0` was REMOVED here: it counted an unreadable budget as 0, and since 0
+           * clears every ceiling, a campaign whose budget was invisible could go live in
+           * silence. That was the exact opposite of the rule this repository defends
+           * everywhere — "unknown is not the same as lower" — and being silent made it more
+           * dangerous than the missing gate on the Meta side: there the gate did not exist,
+           * here the gate DID exist and always showed green.
            */
           const micros = row.campaign_budget?.amount_micros;
           if (micros === undefined || micros === null || !Number.isFinite(Number(micros))) {
@@ -720,10 +730,11 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               agAyar: ctx.config,
               hesapId: normalizeCustomerId(customerId),
               /**
-               * Riskteki tutar kampanyanın günlük bütçesidir — ama YALNIZ okunabildiyse.
-               * Yukarıdaki `daily` okunamayan bütçeyi 0'a çeviriyor (tavan kontrolü onu
-               * zaten reddediyor); o 0 denetim kaydına GİREMEZ, çünkü "bilinmiyor" ile
-               * "sıfır" aynı şey değildir. Bu yüzden ham alan ayrıca okunur.
+               * The amount at risk is the campaign's daily budget — but ONLY when it could
+               * be read. The `daily` above turns an unreadable budget into 0 (the ceiling
+               * check refuses it anyway); that 0 must NOT enter the audit record, because
+               * "unknown" and "zero" are not the same thing. Hence the raw field is read
+               * separately.
                */
               tutar: mikrodanTutar(row.campaign_budget?.amount_micros),
             },
@@ -731,9 +742,10 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           );
           if (!onay.onaylandi) return text(onay.mesaj!);
           /**
-           * Kelepçe onaydan ÖNCE okunmuştu; istem 10 dakika açık kalabilir. Mutasyondan
-           * hemen önce tazesine bakılır, yoksa "yazmayı kapattım" eylemi bekleyen isteği
-           * durdurmuyordu (bkz. onaySonrasiKelepce).
+           * The clamp was read BEFORE the approval, and the prompt can stay open for ten
+           * minutes. It is looked at again immediately before the mutation; without that,
+           * the act of switching writes off did not stop a pending request (see
+           * onaySonrasiKelepce).
            */
           const bayat = onaySonrasiKelepce(getCtx().config, daily);
           if (bayat) return text(bayat);
