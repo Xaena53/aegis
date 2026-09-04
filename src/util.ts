@@ -75,13 +75,14 @@ export function toMicrosInt(amount: number): number {
 }
 
 /**
- * KAPALI ARIZA SAYI OKUMA: yalnız gerçekten sayıya dönen bir değer sayı sayılır.
+ * FAIL-CLOSED NUMBER READING: only a value that genuinely becomes a number counts as one.
  *
- * `Number(null)` ve `Number("")` sıfır üretir, `Number(undefined)` NaN — yani yaygın
- * `Number(x ?? 0)` kalıbı "alan hiç gelmedi" ile "değer sıfırdı" arasındaki farkı siliyor.
- * Bu depoda o fark parasal: okunamayan bir maliyeti 0 diye raporlamak ajana "harcama yok"
- * demektir ve ajan bütçe yükseltir. Okunamadıysa undefined döner; çağıran alanı ya hiç
- * yazmaz ya da metinde "OKUNAMADI" diye itiraf eder.
+ * `Number(null)` and `Number("")` produce zero, `Number(undefined)` produces NaN — so the
+ * common `Number(x ?? 0)` idiom erases the difference between "the field never arrived" and
+ * "the value was zero". In this repository that difference is monetary: reporting a cost
+ * that could not be read as 0 tells the agent "nothing was spent", and the agent raises the
+ * budget. When the value cannot be read this returns undefined, and the caller either omits
+ * the field entirely or admits it in the text as "OKUNAMADI" (unreadable).
  */
 export function sayiOku(ham: unknown): number | undefined {
   if (typeof ham !== "number" && typeof ham !== "string") return undefined;
@@ -90,15 +91,17 @@ export function sayiOku(ham: unknown): number | undefined {
 }
 
 /**
- * Google Ads `amount_micros` → hesabın para birimindeki tutar.
+ * Google Ads `amount_micros` -> an amount in the account's currency.
  *
- * Bu sözleşme önce write.ts'te doğdu (okunamayan bütçe 0 sayılınca 0 her tavanı geçiyor,
- * kampanya sessizce yayına alınabiliyordu), sonra Meta istemcisinde tekrarlandı; okuma
- * yüzeyleri (read.ts, resources.ts) ise hâlâ `?? 0` kullanıyor ve aynı yanlışı sessizce
- * rapora yazıyordu. Tek yardımcıya taşındı ki "bilinmiyor ≠ 0" kuralının tek tanımı olsun.
+ * This contract was born in write.ts (an unreadable budget counted as 0, and 0 clears every
+ * ceiling, so a campaign could quietly go live), then repeated in the Meta client — while
+ * the read surfaces (read.ts, resources.ts) still used `?? 0` and wrote the same mistake
+ * into their reports without a word. It moved into one helper so that "unknown is not 0"
+ * has a single definition.
  *
- * Negatif değer de RET: Google negatif micros göndermez, geldiyse okuma bozuktur.
- * Micros DEĞİL para birimi döner: kayda düşen sayı insanın okuduğu sayıdır.
+ * A negative value is REFUSED too: Google does not send negative micros, so a negative
+ * reading means the read itself is broken. It returns the currency amount, NOT micros: the
+ * number that lands in the record is the number a person reads.
  */
 export function mikrodanTutar(ham: unknown): number | undefined {
   const sayi = sayiOku(ham);
@@ -106,7 +109,8 @@ export function mikrodanTutar(ham: unknown): number | undefined {
   return sayi / 1e6;
 }
 
-/** Rapor metninde okunamayan sayı SUSMAZ: "0.00" yerine açık bir itiraf basılır. */
+/** In report text an unreadable number does NOT stay silent: instead of "0.00" it prints an
+ * explicit admission. */
 export function sayiMetni(v: number | undefined, basamak = 0): string {
   return v === undefined ? "OKUNAMADI" : v.toFixed(basamak);
 }
@@ -144,15 +148,15 @@ export function normalizeGaql(query: string): string {
 }
 
 /**
- * Metin sabitinin İÇİNDEKİ ham satır sonunu GAQL kaçış dizisine çevirir.
+ * Converts a raw newline INSIDE a string literal into its GAQL escape sequence.
  *
- * Sabitleri olduğu gibi geri koymak, bu fonksiyonun var olma nedeni olan arızayı sabitin
- * İÇİNDEN geri getiriyordu: istemcinin alan ayrıştırıcısı (parser.js, `( from .*)` regex'i
- * `s` bayrağı OLMADAN) noktayı satır sonunda durdurur. Adında satır sonu geçen bir
- * kampanyayı sorgulayan istekte SELECT listesinin SON alanı (ölçümde metrics.clicks)
- * bozuk bir ada dönüşüp satırlara hiç yazılmıyor; ajan bunu "tıklama yok" diye okuyor.
- * Kaçış dizisi sabitin EŞLEŞTİĞİ metni değiştirmez, yalnız ham kontrol karakterini
- * sorgudan çıkarır.
+ * Putting the literals back untouched reinstated the very fault this function exists to
+ * prevent, this time from INSIDE the literal: the client's field parser (parser.js, whose
+ * `( from .*)` regex runs WITHOUT the `s` flag) stops the dot at a newline. In a request
+ * querying a campaign whose name contains a newline, the LAST field of the SELECT list
+ * (metrics.clicks, when measured) turns into a malformed name and is never written to the
+ * rows — and the agent reads that as "no clicks". The escape does not change the text the
+ * literal MATCHES; it only takes the raw control character out of the query.
  */
 function satirSonuKacir(sabit: string): string {
   return sabit.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
@@ -171,12 +175,13 @@ function maskGaqlStrings(q: string): string {
  * it, so an existing LIMIT is clamped rather than trusted. The PARAMETERS clause must stay
  * after LIMIT, which is where GAQL requires it.
  *
- * SONDAKİ NOKTALI VİRGÜL BURADA DÜŞER. GAQL'de ifade sonlandırıcı yoktur, ama SQL
- * alışkanlığıyla yazılan "... LIMIT 500000;" sorgusunda `LIMIT\s+(\d+)$` çapası tutmuyor,
- * kelepçe hiç çalışmıyor ve sorgu "LIMIT 500000; LIMIT 100" olarak gidiyordu: tavan
- * atlanmış, üstüne anlaşılmaz bir QueryError üretilmiş oluyordu. Kırpma, sabitleri
- * MASKELENMİŞ metin üzerinden yapılır ki sabit içinde biten bir ";" yanlışlıkla silinmesin
- * ve gövde ile maske aynı uzunlukta kalsın (m.index bu eşitliğe dayanıyor).
+ * THE TRAILING SEMICOLON IS DROPPED HERE. GAQL has no statement terminator, but on a
+ * query written out of SQL habit as "... LIMIT 500000;" the `LIMIT\s+(\d+)$` anchor does not
+ * match, the clamp never runs, and the query goes out as "LIMIT 500000; LIMIT 100": the
+ * ceiling is bypassed and an unintelligible QueryError is produced on top. The trim is done
+ * against the text with literals MASKED, so that a ";" ending inside a literal is not
+ * removed by accident and the body and the mask stay the same length (m.index depends on
+ * that equality).
  */
 export function ensureGaqlLimit(query: string, limit: number): string {
   const q = normalizeGaql(query);
@@ -364,19 +369,22 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
 }
 
 /**
- * EN AZ KULLANILANI DÜŞÜREREK bir Map'i tavana çeker — ve düşen anahtarları söyler.
+ * Brings a Map down to its ceiling by EVICTING THE LEAST RECENTLY USED — and names what it
+ * dropped.
  *
- * Map ekleme sırasını korur, dolayısıyla ilk anahtar en eskidir; çağıran her ERİŞİMDE
- * kaydı silip yeniden eklediği sürece "en eski" gerçekten "en az kullanılan" olur.
+ * A Map preserves insertion order, so the first key is the oldest; as long as the caller
+ * deletes and re-inserts an entry on every ACCESS, "oldest" really does mean "least
+ * recently used".
  *
- * NEDEN AYRI BİR FONKSİYON: yerinde yazıldığında bekçisiz kalıyordu. http.ts bir giriş
- * noktasıdır, testten import edilemez; tavan oradayken `while (ctxCache.size >= 500)`
- * satırını `while (false)` yapmak — yani tavanı tamamen kaldırmak — takımı yeşil
- * bırakıyordu (mutasyonla ölçüldü). Saf fonksiyon olarak burada davranışsal sınanabilir.
+ * WHY IT IS A SEPARATE FUNCTION: written in place, it had no guard. http.ts is an entry
+ * point and cannot be imported from a test; while the ceiling lived there, turning
+ * `while (ctxCache.size >= 500)` into `while (false)` — that is, removing the bound
+ * entirely — left the suite green (measured with a mutation). As a pure function it can be
+ * tested behaviourally here.
  *
- * Eski hâli `cache.clear()` idi ve bu tek kiracının davranışını bütün kiracılara
- * yayıyordu: 500 farklı anahtar üreten bir kiracı, herkesin bağlamını ve onlara asılı
- * kısa ömürlü hesap önbelleğini düşürebiliyordu.
+ * Its earlier form was `cache.clear()`, which spread one tenant's behaviour across every
+ * tenant: a tenant producing 500 distinct keys could drop everybody's context, and the
+ * short-lived account cache hanging off it.
  */
 export function lruYerAc<K, V>(cache: Map<K, V>, tavan: number): K[] {
   const dusenler: K[] = [];

@@ -34,10 +34,11 @@ async function kaynakGuvenli<T>(uri: string, isi: () => Promise<T>): Promise<T> 
 /**
  * Returns the accounts campaigns can be created in (non-manager accounts).
  *
- * `erisilemedi` olan hesap ÖNERİLMEZ: detayı okunamadığı için yönetici olup olmadığı
- * bilinmiyor ve önerilse her çağrısı izin hatasıyla dönerdi. Tamamlama protokolü yalnız
- * aday KİMLİK dizisi taşıyabildiği için eksiklik burada duyurulamaz — o yük
- * `aegis://accounts` kaynağının (tamListeMi/not) ve list_accounts aracının üstündedir.
+ * An `erisilemedi` (unreadable) account is NOT suggested: its details could not be read,
+ * so whether it is a manager account is unknown, and suggesting it would mean every call
+ * against it comes back as a permissions error. The completion protocol can only carry an
+ * array of candidate IDs, so the omission cannot be announced here — that burden sits on
+ * the `aegis://accounts` resource (tamListeMi/not) and on the list_accounts tool.
  */
 async function reklamHesaplari(getCtx: ContextProvider): Promise<string[]> {
   try {
@@ -48,7 +49,7 @@ async function reklamHesaplari(getCtx: ContextProvider): Promise<string[]> {
   }
 }
 
-/** URI'den gelen serbest metni müşteri kimliğine indirger (rakam dışı her şey atılır). */
+/** Reduces free text from the URI to a customer ID (everything but digits is dropped). */
 function musteriKimligi(deger: unknown): string {
   return String(deger ?? "").replace(/\D/g, "");
 }
@@ -66,10 +67,11 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
       kaynakGuvenli(uri.href, async () => {
       const { liste, eksik } = await getCtx().tumHesaplar();
       /**
-       * "toplam" alanı KALDIRILDI. Kırpılmış ya da bir hesabı okunamamış bir listeye
-       * toplam yazmak, sayıyı kesin bir gerçek gibi sunuyordu: ajan 130'u hesabın
-       * tamamı sanıp kullanıcının aradığı hesap için "öyle bir hesabınız yok" diyordu.
-       * Artık gösterilen satır sayısı ile listenin TAM olup olmadığı ayrı ayrı yazılır.
+       * The "total" field was REMOVED. Putting a total on a list that was truncated, or
+       * that had an account it could not read, presented the number as settled fact: the
+       * agent took 130 for the whole account set and told the user "you have no such
+       * account". The number of rows shown and whether the list is COMPLETE are now stated
+       * separately.
        */
       const nedenler: string[] = [];
       if (eksik.okunamayan.length)
@@ -87,7 +89,8 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
         hesaplar: liste.map((h) => ({
           id: h.id,
           ad: h.ad,
-          // Okunamayan hesap "reklam hesabı" diye sunulamaz: yöneticiliği BİLİNMİYOR.
+          // An unreadable account cannot be presented as an "ad account": whether it is a
+          // manager account is UNKNOWN.
           tur: h.erisilemedi
             ? "bilinmiyor (detay okunamadı — kampanya için kullanma)"
             : h.yonetici
@@ -114,11 +117,12 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
     async (uri, { customerId }) =>
       kaynakGuvenli(uri.href, async () => {
       /**
-       * Kimlik ÖNCE doğrulanır, kelepçeler SONRA yazılır. Öncesinde bu şablon gelen
-       * metni hiç sormadan geri yazıyordu: "0000000000" ya da "bu-hesap-yok" için de
-       * "yazmaIzni: true, tavan: 500" diyen, yetkili görünüşlü bir rapor üretiyordu.
-       * /guvenlik-durumu istemi ajana "tahmin etme, kaynağa bak" derken kaynak
-       * erişimi hiç doğrulanmamış bir hesap için olumlu beyanda bulunuyordu.
+       * Identity is verified FIRST, the clamps are reported SECOND. Before this, the
+       * template echoed whatever text arrived without asking anything: for "0000000000" or
+       * "no-such-account" it still produced an authoritative-looking report saying
+       * "writes: true, ceiling: 500". The /guvenlik-durumu prompt tells the agent "do not
+       * guess, read the resource" — while the resource was making a positive statement
+       * about an account whose access had never been checked.
        */
       const cid = musteriKimligi(customerId);
       if (cid.length !== 10)
@@ -126,9 +130,9 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           `Geçersiz müşteri ID: '${customerId}' — Google Ads müşteri ID'si 10 hanelidir. list_accounts ile doğru ID'yi bul.`
         );
       /**
-       * Erişim KANITLANIR. Sorgu patlarsa kaynakGuvenli yerelleştirilmiş hatayı taşır;
-       * boş satır dönerse hesabın okunabildiği BİLİNMİYOR demektir ve bilinmeyen =
-       * RET: kelepçe alanlarının hiçbiri yazılmaz.
+       * Access is PROVEN. If the query throws, kaynakGuvenli carries the localised error;
+       * if it returns no rows, whether the account can be read is UNKNOWN — and unknown
+       * means REFUSE: none of the clamp fields are written.
        */
       const satirlar = await getCtx().queryWithRetry(cid, `SELECT customer.id FROM customer LIMIT 1`);
       if (!satirlar.length)
@@ -185,11 +189,12 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
         not: "Tüm kampanyalar (performans verisi için campaign_performance aracını kullan).",
         kampanyalar: satirlar.filter((r: any) => r?.campaign).map((r: any) => {
           /**
-           * `?? 0` BURADAN KALDIRILDI. Bütçesi okunamayan bir kampanya kataloğa
-           * "gunlukButce: 0" diye giriyordu; /kampanya-denetle ajanı bunu "bütçesiz
-           * kalmış" diye okuyor ve toplamları eksik hesaplıyordu. Kapı beslemiyor ama
-           * yanlış bilgi de fail-closed kuralının ihlali: bilinmiyor ≠ 0. Değer
-           * okunamazsa alan JSON'a HİÇ yazılmaz, yerine açık bir bayrak konur.
+           * `?? 0` was REMOVED here. A campaign whose budget could not be read entered
+           * the catalogue as "gunlukButce: 0"; the /kampanya-denetle agent read that as
+           * "left without a budget" and computed totals that were short. This does not
+           * feed a gate, but wrong information is still a breach of the fail-closed rule:
+           * unknown is not 0. When the value cannot be read the field is left out of the
+           * JSON entirely and an explicit flag takes its place.
            */
           const gunlukButce = mikrodanTutar(r.campaign_budget?.amount_micros);
           return {

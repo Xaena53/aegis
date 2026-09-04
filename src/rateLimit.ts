@@ -53,17 +53,17 @@ export class RateLimiter {
    * Limit check. A rejected request does NOT increment the counters — otherwise a
    * client over the limit would keep extending its own penalty.
    *
-   * @param adet Bu çağrının kaç JETON düşeceği — yani kaç İŞLEM yapacağı.
+   * @param adet How many TOKENS this call spends — that is, how many OPERATIONS it performs.
    *
-   * SAYILAN ŞEY HTTP İSTEĞİ DEĞİL, İŞLEMDİR. Sayaç istek başına bir kez arttığı sürece
-   * tek bir POST'a konan N elemanlı bir JSON-RPC dizisi N araç çağrısını tek jetona
-   * satın alıyordu: paylaşılan Google/Meta kotası, operatörün CAMARA kotası ve bu
-   * sürecin kendisi, limitin hiç görmediği bir çarpanla tüketilebiliyordu. Ölçüt bu
-   * yüzden "kaç istek geldi" değil "kaç işlem yapılacak" olmalıdır.
+   * WHAT IS COUNTED IS THE OPERATION, NOT THE HTTP REQUEST. While the counter rose once
+   * per request, a JSON-RPC array of N elements in a single POST bought N tool calls for
+   * one token: the shared Google/Meta quota, the operator's CAMARA quota and this process
+   * itself could all be drained by a multiplier the limit never saw. The measure has to be
+   * "how many operations will run", not "how many requests arrived".
    *
-   * Tavanı tek başına aşan bir toplu istek de reddedilir (kısmen koşup yarıda kesmek
-   * yerine): yarısı uygulanmış bir toplu harcama isteği, hiç uygulanmamış olandan çok
-   * daha zor geri alınır.
+   * A batch that exceeds the ceiling on its own is refused outright rather than run part
+   * way and cut off: a half-applied batch of spending changes is far harder to undo than
+   * one that never ran.
    */
   check(userId: number, adet = 1): RateLimitResult {
     const t = this.now();

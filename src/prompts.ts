@@ -28,13 +28,14 @@ export function registerPrompts(server: McpServer, getCtx: ContextProvider): voi
         const { liste } = await getCtx().tumHesaplar();
         const onek = deger.replace(/\D/g, "");
         /**
-         * Kırpma SDK'ya bırakılır. Burada slice(0,20) yapmak sayıyı da yalan
-         * söyletiyordu: SDK `total`i aldığı diziden üretir, 40 eşleşen hesabı olan
-         * kullanıcıya "total: 20, hasMore: false" derdi. Tam listeyi verince SDK
-         * 100'de kırpar ve hasMore'u doğru bildirir.
+         * Truncation is left to the SDK. Doing slice(0, 20) here made the count lie as
+         * well: the SDK derives `total` from the array it is handed, so a user with 40
+         * matching accounts was told "total: 20, hasMore: false". Given the full list,
+         * the SDK truncates at 100 and reports hasMore correctly.
          *
-         * `erisilemedi` hesap önerilmez: detayı okunamadığı için yönetici olup
-         * olmadığı bilinmiyor, önerilse her çağrısı izin hatasıyla dönerdi.
+         * An `erisilemedi` (unreadable) account is never suggested: its details could not
+         * be read, so whether it is a manager account is unknown, and suggesting it would
+         * mean every call against it comes back as a permissions error.
          */
         return liste
           .filter((h) => !h.yonetici && !h.erisilemedi && h.id.startsWith(onek)) // campaigns cannot be created in an MCC

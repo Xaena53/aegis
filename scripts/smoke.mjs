@@ -41,16 +41,17 @@ const CALL_TIMEOUT_MS = 90_000;
 /* ── freshness precondition ─────────────────────────────────────────────────────── */
 
 /**
- * DERLEME TAZELİĞİ ÖNKOŞULU — kapalı arıza, istemci kurulmadan ÖNCE.
+ * BUILD-FRESHNESS PRECONDITION — fail closed BEFORE the client is even constructed.
  *
- * Bu betiğin çıktısı bir FİŞTİR: "canlı doğrulandı" diye PR'a yapıştırılır. Fişin
- * değeri, sınanan ikilinin depodaki kaynağı temsil etmesine bağlı. Kapıyı gevşeten bir
- * katkıcı `npm run build`i unutursa, eski derlemenin hâlâ sağlam kapısı "geçti" der ve
- * fiş, artık var olmayan bir sürüm için verilmiş olur. Bayat VE tazeliği ölçülemeyen
- * derlemede koşu hiç başlamaz — "bilinmiyor" ile "temiz" aynı şey değildir.
+ * This script's output is a RECEIPT: it gets pasted into a pull request as "verified live".
+ * The receipt is only worth anything if the binary under test represents the source in the
+ * repository. If a contributor loosens a gate and forgets `npm run build`, the older
+ * build's still-intact gate reports "pass" and the receipt is issued for a version that no
+ * longer exists. On a stale build — and on one whose freshness cannot be measured — the run
+ * does not start at all: "unknown" and "clean" are not the same thing.
  *
- * Sınanan ikilinin mtime'ı rapora basılır: fişi okuyan, hangi derlemenin sınandığını
- * betiğe güvenmek zorunda kalmadan görebilsin.
+ * The mtime of the binary under test is printed in the report, so whoever reads the receipt
+ * can see which build was exercised without having to take the script's word for it.
  */
 const TAZELIK = derlemeTazeligi(ROOT);
 if (!TAZELIK.taze) {
@@ -278,14 +279,15 @@ try {
   /* ── refusal paths: the guards, verified against the live account ─────────────── */
 
   /**
-   * BU BÖLÜM CANLI HESAPTA GERÇEK PARA ÜZERİNDE KOŞAR ve bir çelişki taşır: kapıların
-   * reddettiğini kanıtlamak için gerçekten yasak çağrıyı yapar. Testin güvenliği, tam
-   * da sınadığı kapıya bağlıdır — kapı düşerse kanıt üreten çağrı, zararın kendisi olur
-   * (tavan üstü bütçe yazılır ya da duraklatılmış bir kampanya yayına girer).
+   * THIS SECTION RUNS AGAINST A LIVE ACCOUNT WITH REAL MONEY, and it carries a
+   * contradiction: to prove the gates refuse, it genuinely makes the forbidden call. The
+   * test's safety depends on the very gate it is testing — if the gate falls, the call that
+   * was meant to produce evidence becomes the damage itself (a budget above the ceiling is
+   * written, or a paused campaign goes live).
    *
-   * Test kaldırılmıyor: kapıların canlı kanıtı bu ürünün asıl iddiası ve simülasyonla
-   * yerine konamaz. Bunun yerine YARIÇAP sınırlanıyor — geri alma, harcamayı DÜŞÜREN
-   * yönde olduğu için onay kapısına takılmaz ve her zaman çalışabilir.
+   * The test is not removed: live proof of the gates is this product's central claim and
+   * simulation cannot stand in for it. What is bounded instead is the BLAST RADIUS — the
+   * rollback moves spending DOWN, so it never meets the approval gate and can always run.
    */
   async function geriAl(ne, cagri) {
     const g = await arac(mcp, cagri.ad, cagri.arg);
@@ -326,7 +328,7 @@ try {
       });
       const butceSonra = Number((sonra.yapisal?.satirlar ?? [])[0]?.campaign_budget?.amount_micros ?? -1);
       if (butceSonra !== butceOnce && butceOnce > 0) {
-        // Bütçe DÜŞÜRME onay istemez: geri alma her koşulda geçebilir.
+        // LOWERING a budget needs no approval: the rollback can always get through.
         await geriAl(`bütçe ${butceOnce / 1e6} değerine`, {
           ad: "update_campaign_budget",
           arg: { customerId: CID, campaignId: kampanyaId, newDailyBudget: butceOnce / 1e6 },
@@ -348,7 +350,7 @@ try {
       });
       const durumSonra = String((sonra.yapisal?.satirlar ?? [])[0]?.campaign?.status ?? "");
       if (durumSonra !== durumOnce && durumSonra === "ENABLED") {
-        // DURAKLATMA harcamayı düşürür: onay istemez, dolayısıyla geri alma geçebilir.
+        // PAUSING reduces spend: it needs no approval, so the rollback can get through.
         await geriAl("kampanya PAUSED durumuna", {
           ad: "set_campaign_status",
           arg: { customerId: CID, campaignId: kampanyaId, status: "PAUSED" },

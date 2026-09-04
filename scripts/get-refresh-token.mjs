@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
-// Google OAuth refresh token üretici.
-// Kullanım: .env içine GOOGLE_ADS_CLIENT_ID ve GOOGLE_ADS_CLIENT_SECRET yazdıktan sonra `npm run auth`.
-// Tarayıcı açılır, Google hesabınla izin verirsin, refresh token terminale yazılır.
+// Google OAuth refresh-token generator.
+// Usage: put GOOGLE_ADS_CLIENT_ID and GOOGLE_ADS_CLIENT_SECRET in .env, then `npm run auth`.
+// A browser opens, you grant access with your Google account, and the refresh token is
+// printed to the terminal.
 import http from "node:http";
 import { exec } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
-// .env'i sade biçimde oku (bağımlılıksız)
+// Read .env in the simplest way possible (no dependency)
 if (existsSync(".env")) {
   for (const line of readFileSync(".env", "utf8").split(/\r?\n/)) {
     const m = line.match(/^([A-Z_]+)=(.*)$/);
@@ -78,7 +79,8 @@ const server = http.createServer(async (req, res) => {
     }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end("<h2>Tamam! Terminale dönebilirsin, bu sekmeyi kapat.</h2>");
-    // .env'e otomatik yaz (varsa satırı güncelle, yoksa ekle; dosya yoksa .env.example'dan başlat)
+    // Write it into .env automatically: update the line if present, append it if not,
+    // and start from .env.example when the file does not exist yet.
     try {
       let envText = existsSync(".env")
         ? readFileSync(".env", "utf8")

@@ -14,9 +14,9 @@ export { normalizeCustomerId, formatAdsError } from "./util.js";
 export type { AegisConfig } from "./config.js";
 
 /**
- * Tek hesap kaydı. `erisilemedi` ⇒ hesabın detayları okunamadı: yönetici olup olmadığı
- * BİLİNMİYOR, kampanya için kullanılamaz. `yonetici: false` burada "bilinmiyor" demektir,
- * "reklam hesabı" demek DEĞİLDİR.
+ * One account record. `erisilemedi` (unreadable) means the account's details could not be
+ * read: whether it is a manager account is UNKNOWN, so it cannot be used for a campaign.
+ * `yonetici: false` here means "unknown" — it does NOT mean "this is an ad account".
  */
 export interface HesapKaydi {
   id: string;
@@ -26,21 +26,21 @@ export interface HesapKaydi {
 }
 
 /**
- * Hesap listesi + listenin neyi kaçırdığı.
+ * The account list, plus what the list is missing.
  *
- * `eksik.var` true iken liste TAM DEĞİLDİR ve çağıran bunu kullanıcıya taşımak
- * zorundadır: kırpılmış listeyi "hesabın tamamı" diye sunmak, aranan hesap listede
- * olmadığında ajanı "öyle bir hesabınız yok" sonucuna götürür.
+ * When `eksik.var` is true the list is NOT COMPLETE, and the caller is obliged to carry
+ * that to the user: presenting a truncated list as "all your accounts" leads the agent to
+ * conclude "you have no such account" when the one being looked for is not in it.
  */
 export interface HesapSonucu {
   liste: HesapKaydi[];
   eksik: {
     var: boolean;
-    /** Erişilebilir görünen ama detayı okunamayan üst hesaplar. */
+    /** Parent accounts that look reachable but whose details could not be read. */
     okunamayan: string[];
-    /** Üst hesap sayısı tavanı aştı: listede hiç görünmeyen üst hesaplar var. */
+    /** The parent-account count hit the cap: some parents never appear in the list at all. */
     ustHesapKirpildi: boolean;
-    /** Alt hesap listesi tavana dayanan MCC'ler. */
+    /** Manager accounts whose child-account listing reached the cap. */
     altHesabiKirpilan: string[];
   };
 }
@@ -90,22 +90,23 @@ export class AdsContext {
    * listings need this flattened view, and the cache keeps a keystroke from
    * turning into an API round trip.
    *
-   * Dönüş bir ZARFTIR: liste + listenin NEYİ KAÇIRDIĞI. Çıplak dizi dönmek, çağıranın
-   * `liste.length`i "hesabın tamamı" sanmasına yol açıyordu; kırpılmış ya da bir hesabı
-   * okunamamış liste ile tam liste birbirinden ayırt edilemiyordu.
+   * The return value is an ENVELOPE: the list, plus WHAT THE LIST IS MISSING. Returning a
+   * bare array led callers to read `liste.length` as "all the accounts"; a truncated list,
+   * or one with an account that could not be read, was indistinguishable from a complete
+   * one.
    */
   async tumHesaplar(): Promise<HesapSonucu> {
     const now = this.simdi();
     if (this.hesapCache) {
       /**
-       * EKSİK sonuç da önbelleğe girer, ama kısa bir SOĞUMA penceresiyle. İki ayrı
-       * arıza var ve ikisi de gerçek:
-       *   - Eksik listeyi tam TTL boyunca sabitlemek: API düzeldikten sonra da ajan
-       *     "hesabınız yok" demeye devam eder.
-       *   - Eksik sonucu hiç önbelleklememek: kalıcı olarak okunamayan TEK hesap,
-       *     her tamamlama tuşunu 30-60 sorguluk yeni bir hasata çevirir ve kota
-       *     tükenince arıza daha da büyür.
-       * Soğuma penceresi ikisinin arasındaki tek doğru yer.
+       * An INCOMPLETE result is cached too, but under a short COOL-DOWN window. There are
+       * two distinct failures here and both are real:
+       *   - Freezing an incomplete list for the full TTL: the agent keeps saying "you have
+       *     no accounts" long after the API has recovered.
+       *   - Not caching an incomplete result at all: a SINGLE permanently unreadable
+       *     account turns every completion keystroke into a fresh harvest of 30-60
+       *     queries, and once the quota runs out the failure gets worse.
+       * The cool-down window is the only right place between the two.
        */
       const ttl = this.hesapCache.sonuc.eksik.var ? AdsContext.EKSIK_SOGUMA_MS : AdsContext.HESAP_TTL_MS;
       if (now - this.hesapCache.zaman < ttl) return this.hesapCache.sonuc;
@@ -126,7 +127,8 @@ export class AdsContext {
     const altHesabiKirpilan: string[] = [];
     const tumUst = await this.listAccessibleCustomers();
     // Cap the parent accounts: uncapped, a single completion fans out into hundreds of queries.
-    // Kırpma artık SESSİZ değil: tavanı aşan hesap sayısı eksiklik olarak zarfa yazılır.
+    // Truncation is no longer SILENT: accounts beyond the cap are recorded in the
+    // envelope as a gap.
     const ustHesaplar = tumUst.slice(0, AdsContext.UST_HESAP_TAVANI);
     const ustHesapKirpildi = tumUst.length > AdsContext.UST_HESAP_TAVANI;
     for (const id of ustHesaplar) {
@@ -142,24 +144,25 @@ export class AdsContext {
         }
         if (yonetici) {
           /**
-           * `customer_client.level = 1` YOK — bilerek. O yan tümce yalnız DOĞRUDAN
-           * çocukları getirir; iki katmanlı bir ajans MCC'sinde gerçek reklam hesapları
-           * alt-MCC'lerin altındadır ve listede HİÇ görünmezdi: ajan "erişilebilir
-           * hesabınız yok" der ya da MCC seçip USER_PERMISSION_DENIED alırdı.
-           * Filtresiz sorgu tüm torunları (alt-MCC'ler dahil) verir; MCC'nin kendi
-           * satırı `gorulen` ile elenir.
+           * There is deliberately NO `customer_client.level = 1`. That clause returns only
+           * DIRECT children; in a two-tier agency manager account the real ad accounts sit
+           * under sub-managers and would NEVER appear in the list — the agent would say
+           * "you have no reachable accounts", or pick the manager account and get
+           * USER_PERMISSION_DENIED. Unfiltered, the query returns every descendant
+           * (sub-managers included); the manager's own row is filtered out via `gorulen`.
            *
-           * LIMIT tavan+2: tam tavan kadar satır dönerse kırpılıp kırpılmadığını
-           * ANLAYAMAYIZ, o yüzden bir kırpma probu; bir de MCC'nin KENDİ satırı için
-           * (customer_client sorgusu yöneticinin kendisini de level 0 olarak döndürür).
+           * LIMIT is cap+2: if exactly cap rows come back we CANNOT TELL whether the list
+           * was truncated, so one row is a truncation probe — and one is for the manager's
+           * OWN row, since a customer_client query returns the manager itself at level 0.
            */
           const cocuklar: any[] = await this.queryWithRetry(
             id,
             `SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager
              FROM customer_client LIMIT ${AdsContext.ALT_HESAP_TAVANI + 2}`
           );
-          // MCC'nin kendi satırı kırpma ölçümüne KATILMAZ; yoksa tam tavan kadar alt
-          // hesabı olan MCC yanlışlıkla "kırpıldı" diye işaretlenirdi.
+          // The manager's own row does NOT count towards the truncation measurement;
+          // otherwise a manager with exactly cap child accounts would be wrongly flagged
+          // as truncated.
           const cocukSatirlari = cocuklar.filter((c: any) => String(c.customer_client?.id ?? "") !== id);
           if (cocukSatirlari.length > AdsContext.ALT_HESAP_TAVANI) altHesabiKirpilan.push(id);
           for (const c of cocukSatirlari.slice(0, AdsContext.ALT_HESAP_TAVANI)) {
@@ -175,10 +178,10 @@ export class AdsContext {
         }
       } catch {
         /**
-         * One unreadable account must not sink the whole list. Hesap listeden DÜŞMEZ:
-         * "okunamadı" ile "yok" aynı şey değildir — düşürmek, ajanın kullanıcıya
-         * "öyle bir hesabınız yok" demesine yol açıyordu. `erisilemedi` ile yayılır ve
-         * sonuç EKSİK işaretlenir.
+         * One unreadable account must not sink the whole list, and the account is NOT
+         * dropped from it: "could not be read" and "does not exist" are not the same thing,
+         * and dropping it led the agent to tell the user "you have no such account". It is
+         * carried through marked `erisilemedi`, and the result is flagged INCOMPLETE.
          */
         okunamayan.push(id);
         if (!gorulen.has(id)) {
@@ -197,21 +200,24 @@ export class AdsContext {
       },
     };
     /**
-     * Damga hasadın BİTİŞİNDE alınır. Başlangıç damgasıyla, 30 yönetici hesabı gezen
-     * ve withRetry uykularıyla dakikaya yaklaşan bir hasat DOĞDUĞU AN bayat oluyordu:
-     * önbellek hiç isabet etmiyor, koruma tam da en çok sorgu üreten kurulumda kalkıyordu.
+     * The timestamp is taken when the harvest FINISHES. Stamped at the start, a harvest
+     * that walks 30 manager accounts and approaches a minute with withRetry's sleeps was
+     * stale THE MOMENT IT WAS BORN: the cache never hit, and the protection lifted in
+     * exactly the installation that generates the most queries.
      */
     this.hesapCache = { zaman: this.simdi(), sonuc };
     return sonuc;
   }
 
-  /** Enjekte edilebilir saat: testler TTL/soğuma sınırlarını gerçek zaman beklemeden geçer. */
+  /** Injectable clock: tests cross the TTL and cool-down boundaries without waiting on
+   * real time. */
   protected simdi(): number {
     return Date.now();
   }
 
   private static readonly HESAP_TTL_MS = 60_000;
-  /** Eksik sonucun ömrü: yeniden denemeyi geciktirecek kadar uzun, arızayı sabitlemeyecek kadar kısa. */
+  /** How long an incomplete result lives: long enough to delay a retry, short enough not
+   * to freeze the failure in place. */
   private static readonly EKSIK_SOGUMA_MS = 10_000;
   private static readonly UST_HESAP_TAVANI = 30;
   private static readonly ALT_HESAP_TAVANI = 100;

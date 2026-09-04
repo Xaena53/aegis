@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * GÜVEN ZİNCİRİNİN CANLI DOĞRULAMASI — `npm run agtest`
+ * LIVE VERIFICATION OF THE TRUST CHAIN — `npm run agtest`
  *
- * `npm run smoke` Google tarafını gerçek hesaba karşı sınar; bu betik aynı şeyi AĞ
- * tarafı için yapar: altı halkalı zincir, kademeli doğrulama ve risk eşlemesi, Nokia
- * Network-as-Code platformuna karşı, tek komutta.
+ * `npm run smoke` exercises the Google side against a real account; this script does the
+ * same for the NETWORK side: the six-link chain, step-up verification and the risk
+ * mapping, against the Nokia Network-as-Code platform, in one command.
  *
- * HER ADIM ÜRETİM YOLUNDAN GEÇER: nacIstemciSecenekleri() ve agDogrula(). Elle kurulmuş
- * URL ya da elle yazılmış başlık yok — bu ayrım önemli, çünkü haftalarca "Device Status
- * hesabımızda kapalı" sandığımız 404'ler tam olarak elle kurulmuş URL'lerden geliyordu;
- * SDK'nın kendi yolu baştan beri doğruydu. Bir kapıyı ancak kapının kendisinden geçerek
- * doğrulayabilirsiniz.
+ * EVERY STEP GOES THROUGH THE PRODUCTION PATH: nacIstemciSecenekleri() and agDogrula().
+ * No hand-built URLs, no hand-written headers — and that distinction matters, because the
+ * 404s we spent weeks reading as "Device Status is not enabled on our account" came from
+ * exactly those hand-built URLs; the SDK's own paths were right all along. You can only
+ * verify a gate by going through the gate itself.
  *
- * Yeşil çıktı, karar mantığının VE telin birlikte çalıştığının kanıtıdır — birim testler
- * sahte kanal enjekte ettiği için tek başına o kanıtı veremez.
+ * A green run is proof that the decision logic AND the wire work together — something the
+ * unit tests cannot show on their own, because they inject a fake channel.
  *
- * GEREKSİNİM: Nokia NaC Simulator katmanı ve .env içinde AEGIS_NAC_TOKEN. Kullanılan
- * numaralar simülatörün tanımlı hatlarıdır (…1001 temiz, …0404 HTTP 404 döndürür).
+ * REQUIRES: the Nokia NaC Simulator tier and AEGIS_NAC_TOKEN in .env. The numbers used are
+ * the simulator's documented lines (…1001 answers clean, …0404 returns HTTP 404).
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,7 +117,7 @@ console.log("\n╔══ Q2 — rapidapiHost: SDK'nın kendi seçeneği ══�
     s.headers["X-RapidAPI-Host"] === s.rapidapiHost,
     `header = ${s.headers["X-RapidAPI-Host"]}`
   );
-  // Üretim yolunun gerçekten çalıştığı yukarıdaki Q1 çağrılarıyla zaten kanıtlandı.
+  // That the production path really works is already proven by the Q1 calls above.
   kayit(
     "bu yapılandırmayla canlı çağrılar 200 dönüyor",
     sonuclar[0][1] && sonuclar[1][1],
@@ -136,7 +136,8 @@ console.log("\n╔══ Q3a — geriye bakış pencereleri (24s / 72s) ══�
 
 console.log("\n╔══ Q3b — 200 DIŞINDAKİ yanıt sonuçsuz sayılıyor mu (Aleksi: 404) ═══════════╗");
 {
-  // Simülatörün 404 döndüren numarası; Aleksi 404 IDENTIFIER_NOT_FOUND/TARGET_NOT_FOUND dedi.
+  // The simulator line that returns 404; Aleksi identified it as
+  // IDENTIFIER_NOT_FOUND / TARGET_NOT_FOUND.
   env({ ...TEMEL, AEGIS_APPROVER_PHONE: "+99999990404" });
   const k = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(
@@ -171,11 +172,11 @@ console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══�
     `${k.kademe?.dogrulayan.length ?? 0} bağımsız gerçek sinyal: ${k.kademe?.dogrulayan.join(",") ?? "-"}`
   );
   /**
-   * KEFİL İLGİLİ OLMAK ZORUNDA. Bu kontrol eskiden yalnız SAYIYA bakıyordu ("en az iki
-   * gerçek sinyal") ve sayı, erişilebilirlik halkasını da kefil saydığı için doluyordu.
-   * Erişilebilirlik bir CANLILIK sinyalidir: ele geçirilmiş bir SIM'deki telefon da
-   * şebekeden erişilebilirdir, dolayısıyla o sinyalle ÇELİŞMEZ ve ona kefil olamaz
-   * (bkz. KEFIL_ESLEMESI). Canlı kontrol artık sayı yerine bunu ölçüyor.
+   * A VOUCHER HAS TO BE RELEVANT. This check used to look only at the COUNT ("at least
+   * two real signals"), and the count only added up because reachability was counted as a
+   * voucher. Reachability is a LIVENESS signal: the handset holding a stolen SIM answers
+   * the network too, so it never DISAGREES with that signal and cannot vouch for it (see
+   * KEFIL_ESLEMESI). The live check now measures that instead of a number.
    */
   kayit(
     "canlılık sinyali kefil sayılmıyor (erişilebilirlik yükseltme taşımaz)",
@@ -188,7 +189,7 @@ console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══�
     `iz.kademe = ${(k.iz as any).kademe}`
   );
 
-  // GÜVENLİK SINIRI: çağrı yönlendirme açıkken yükseltme YASAK
+  // SECURITY BOUNDARY: no escalation while call forwarding is active
   env({ ...TEMEL, AEGIS_STEPUP: "1", AEGIS_CALLFWD_SIMULATE: "acik" });
   const y = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(
@@ -197,7 +198,7 @@ console.log("\n╔══ Q3c — kademeli doğrulama (step-up) canlı ═══�
     `retNedeni = ${(y.iz as any).retNedeni}`
   );
 
-  // 404 + kademe açık: doğrulayan yok, yine ret
+  // 404 with step-up on: no voucher, so still a refusal
   env({ ...TEMEL, AEGIS_APPROVER_PHONE: "+99999990404", AEGIS_STEPUP: "1" });
   const z = await agDogrula(nacConfigFromEnv() as any, "high");
   kayit(

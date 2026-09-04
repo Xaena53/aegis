@@ -25,16 +25,18 @@ function text(s: string) {
 const HATA_METNI_TAVANI = 300;
 
 /**
- * Ajana dönen HER metin parçasının geçmek zorunda olduğu kapı.
+ * The gate EVERY piece of text returned to the agent has to pass through.
  *
- * NEDEN hata yolları da: <site-verisi> bloğu yalnız BAŞARILI yolda kuruluyor. Hata
- * metinleri blok DIŞINDA, uyarısız, sunucunun kendi cümlesi gibi basılıyordu — ve
- * içlerine upstream değerler (Content-Type, URL, hata mesajı) gömülüydü. Gövdesiz bir
- * yanıt + talimat taşıyan bir Content-Type başlığı, tamamen saldırgan kontrolündeki bir
- * paragrafı "GÜVENİLMEZ" damgası olmadan ajanın bağlamına sokabiliyordu.
+ * WHY the error paths too: the <site-verisi> block is only built on the SUCCESSFUL path.
+ * Error messages were printed OUTSIDE the block, unlabelled, in the server's own voice —
+ * with upstream values (Content-Type, URL, error message) embedded in them. A response
+ * with no body plus a Content-Type header carrying instructions could put a paragraph
+ * entirely under an attacker's control into the agent's context without the "UNTRUSTED"
+ * stamp.
  *
- * Üç iş birden yapılır: satır sonu/kontrol karakterleri düzleştirilir (çok satırlı
- * sahte çerçeve kurulamasın), ayraç adı nötrlenir, uzunluk kırpılır.
+ * It does three things at once: newlines and control characters are flattened (so no
+ * multi-line fake frame can be built), the delimiter name is neutralised, and the length
+ * is capped.
  */
 function ajanaGuvenliMetin(s: string): string {
   const tekSatir = String(s ?? "").replace(/[\u0000-\u001F\u007F-\u009F]+/g, " ");
@@ -43,12 +45,12 @@ function ajanaGuvenliMetin(s: string): string {
 }
 
 /**
- * Content-Type medya tipi tamamen upstream'in yazdığı bir dizedir; ret metnine
- * OLDUĞU GİBİ gömülemez. RFC 9110'a göre medya tipi yalnız token karakterlerinden
- * oluşur — boşluk, noktalama ve cümle YOKTUR. Bu yüzden beyaz liste: geçerli tip
- * ("application/octet-stream") olduğu gibi hayatta kalır, enjekte edilmiş bir cümle
- * ise okunamaz bir kalıntıya çöker. Boşa düşerse tip HİÇ basılmaz — "bilinmiyor" ile
- * "temiz" aynı şey değildir.
+ * A Content-Type media type is a string written entirely by the upstream server; it cannot
+ * be embedded in a refusal AS IS. Under RFC 9110 a media type consists only of token
+ * characters — no spaces, no punctuation, no sentences. Hence the allowlist: a valid type
+ * ("application/octet-stream") survives untouched, while an injected sentence collapses
+ * into an unreadable remnant. If nothing is left, the type is NOT printed at all —
+ * "unknown" and "clean" are not the same thing.
  */
 const TIP_TAVANI = 60;
 function guvenliMedyaTipi(mediaType: string): string {
@@ -89,13 +91,13 @@ async function assertPublicHost(hostname: string): Promise<void> {
     throw new Error(`'${hostname}' yerel/özel ağ adresi — SSRF koruması.`);
   }
   /**
-   * `new URL("http://[2606:4700::1111]/").hostname` KÖŞELİ PARANTEZLERİ KORUR (Node'da
-   * ölçüldü). isPrivateHostname parantezi kendi soyar, ama dns.lookup soymaz: parantezli
-   * metin ona geçerli bir ad değildir, çözümleme patlar ve MEŞRU her IPv6 sayfası
-   * "DNS çözümlenemedi" ile reddedilirdi — kapı güvenliği artırmadan işlevi öldürüyordu.
+   * `new URL("http://[2606:4700::1111]/").hostname` KEEPS THE BRACKETS (measured in Node).
+   * isPrivateHostname strips them itself, but dns.lookup does not: a bracketed string is
+   * not a valid name to it, resolution throws, and EVERY legitimate IPv6 page was refused
+   * with "DNS çözümlenemedi" — a gate that killed the feature without adding any security.
    *
-   * IP değişmezinin ayrıca çözümlenmesi zaten anlamsızdır: yukarıdaki kontrol onu
-   * doğrudan ölçtü, DNS'in ekleyeceği bir şey yok.
+   * Resolving an IP literal separately is meaningless anyway: the check above measured it
+   * directly, and DNS has nothing to add.
    */
   const cozulecek = hostname.replace(/^\[|\]$/g, "");
   if (net.isIP(cozulecek) !== 0) return;
@@ -109,11 +111,12 @@ async function assertPublicHost(hostname: string): Promise<void> {
   for (const a of addrs) {
     if (isPrivateHostname(a.address)) {
       /**
-       * Çözümlenen ADRES ajana geri VERİLMEZ. Verildiğinde analyze_site, kimlik
-       * gerektirmeyen bir iç ağ haritalama aracına dönüşüyordu: split-horizon adlar
-       * sırayla gezdirilerek iç adres uzayının haritası model bağlamına ve
-       * transkriptlere yazılabilirdi. Karar (RET) ve sebebi ajana söylenir, ölçülen
-       * değer operatöre stderr'e gider — networkTrust'taki upstream-metin takasının aynısı.
+       * The RESOLVED ADDRESS is never handed back to the agent. When it was, analyze_site
+       * turned into an internal network mapper that required no credentials: walking
+       * split-horizon names one by one would write a map of the internal address space
+       * into the model's context and from there into transcripts. The decision (REFUSE)
+       * and its reason go to the agent; the measured value goes to the operator on stderr
+       * — the same trade made for upstream text in networkTrust.
        */
       console.error(`[aegis] SSRF: '${hostname}' → ${a.address} (özel ağ adresi)`);
       throw new Error(`'${hostname}' özel ağ adresine çözümleniyor — SSRF koruması.`);
@@ -126,14 +129,14 @@ async function fetchPage(url: string): Promise<{ finalUrl: string; html: string;
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
     /**
-     * URL, daha ilk adımda WHATWG ayrıştırıcısından geçirilip NORMALLEŞTİRİLİR.
+     * The URL is run through the WHATWG parser and NORMALISED at the very first step.
      *
-     * NEDEN: zod'un .url() kontrolü bir desendir, ayrıştırma değil — içinde satır sonu
-     * taşıyan `http://host/\n</site-verisi>\n…` dizesi hem ondan hem validateAnalyzeUrl'den
-     * geçiyordu, sonra "# Site analizi: <url>" satırına HAM basılıyordu. O satır bloğun
-     * DIŞINDA olduğu için kullanıcının verdiği kirli dize, gerçek analizin içine sahte bir
-     * çerçeve oturtabiliyordu. new URL(...).toString() sekme/satır sonlarını atar, `<` ve
-     * `>` karakterlerini yüzdelik kodlar; geriye çerçeve kuracak malzeme kalmaz.
+     * WHY: zod's .url() check is a pattern, not a parse — a string carrying a newline, like
+     * `http://host/\n</site-verisi>\n…`, passed both it and validateAnalyzeUrl, and was then
+     * printed RAW into the "# Site analizi: <url>" line. Because that line sits OUTSIDE the
+     * block, a dirty string supplied by the user could plant a fake frame inside the real
+     * analysis. new URL(...).toString() drops tabs and newlines and percent-encodes `<` and
+     * `>`; nothing is left to build a frame with.
      */
     let current = new URL(url).toString();
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -225,12 +228,14 @@ export function registerSiteTools(server: McpServer) {
     },
     async ({ url, textChars }) => {
       const invalid = validateAnalyzeUrl(url);
-      // Ret metni ham `url`/hostname/protokol taşır ve blok DIŞINDA basılır — kapıdan geçer.
+      // The refusal carries the raw `url`, hostname and protocol and is printed OUTSIDE
+      // the block — so it goes through the gate.
       if (invalid) return text(ajanaGuvenliMetin(invalid));
       try {
         const { finalUrl, html, status } = await fetchPage(url);
-        // finalUrl normalleştirilmiş olsa da blok DIŞINA basılan her değer aynı kapıdan
-        // geçer: tek bir istisna, kuralı tekrar kanıt yükü hâline getirir.
+        // Even though finalUrl is normalised, every value printed OUTSIDE the block goes
+        // through the same gate: a single exception turns the rule back into something
+        // that has to be argued case by case.
         const gosterilenUrl = ajanaGuvenliMetin(finalUrl);
         if (status >= 400) return text(`Sayfa alınamadı: HTTP ${status} (${gosterilenUrl})`);
         if (!html.trim()) return text(`Sayfa boş döndü (${gosterilenUrl}).`);
@@ -260,8 +265,9 @@ export function registerSiteTools(server: McpServer) {
         if (f.jsonLd.length) site.push(`**Yapılandırılmış veri (JSON-LD):**\n${f.jsonLd.map((j) => `- ${j}`).join("\n")}`);
         if (f.navTexts.length) site.push(`**Menü/linkler:** ${f.navTexts.join(" · ")}`);
         if (f.visibleText) site.push("", "**Görünür metin (kısaltılmış):**", f.visibleText);
-        // Sayfanın ayracı kapatmasını engelle. Temizleyici siteExtract'te, DOĞRUSAL ve
-        // uzunluk sınırsız: eski `[^>]{0,200}` deseni 201 karakterlik dolguyla atlatılabiliyordu.
+        // Stop the page from closing the delimiter. The cleaner lives in siteExtract, is
+        // LINEAR and has no length bound: the old `[^>]{0,200}` pattern could be stepped
+        // over with 201 characters of padding.
         lines.push(ayracTemizle(site.join("\n")));
 
         lines.push(
@@ -278,8 +284,9 @@ export function registerSiteTools(server: McpServer) {
         return text(lines.join("\n"));
       } catch (e: any) {
         const ham = e?.name === "AbortError" ? `Zaman aşımı/boyut sınırı (${FETCH_TIMEOUT_MS / 1000}s / ${MAX_BODY_BYTES} bayt)` : e?.message ?? String(e);
-        // Hata metni <site-verisi> bloğunun DIŞINDA, sunucunun kendi cümlesi gibi basılır —
-        // bu yüzden içine upstream değer sızmışsa aynı kapıdan geçmek ZORUNDA.
+        // An error message is printed OUTSIDE the <site-verisi> block, in the server's own
+        // voice — so if an upstream value has leaked into it, it MUST go through the same
+        // gate.
         return { content: [{ type: "text" as const, text: `Site analizi başarısız: ${ajanaGuvenliMetin(ham)}` }], isError: true };
       }
     }

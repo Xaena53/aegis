@@ -1,23 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Video demosunun EKRANA BASTIĞI sabit metinler — yan etkisiz.
+ * Fixed strings the video demo PRINTS TO THE SCREEN — free of side effects.
  *
- * Ayrı bir dosyada, çünkü scripts/video-demo.mts bir GİRİŞ NOKTASIDIR: içe aktarıldığı
- * anda demoyu koşturur ve gerçek CAMARA çağrıları yapar. Metni oradan import etmek,
- * test takımını her koşuda ağa çıkarırdı.
+ * They live in their own file because scripts/video-demo.mts is an ENTRY POINT: importing
+ * it runs the demo and makes real CAMARA calls. Pulling the text from there would take the
+ * test suite onto the network on every run.
  */
 
 /**
- * SIM değişimi retinin İNGİLİZCE karşılığı — videoda anlaşılırlığı bu taşır.
+ * The ENGLISH rendering of the SIM-swap refusal — this is what carries comprehension in
+ * the video.
  *
- * Ürünün metinleri Türkçedir; bu bir eksiklik değil, bugünkü hedef pazarın dilidir ve
- * çok dilli ret metinleri yol haritasında durur. Ama jüri uluslararası, ve videonun en
- * kritik karesinde anlaşılmayan bir metin kanıt sayılmaz. Ham Türkçe çıktı ekrandan
- * SİLİNMEZ — "raw output" etiketiyle hemen altında durur.
+ * The product's own messages are in Turkish. That is not an omission: it is the language of
+ * the market it was built for, and multilingual refusals are on the roadmap. But the jury is
+ * international, and in the video's most important frame a message nobody can read does not
+ * count as evidence. The raw Turkish output is NOT removed from the screen — it sits
+ * directly below, labelled "raw output".
  *
- * SADIK ÇEVİRİ: ham çıktının söylediğinden ne fazlasını söyler ne azını. Elle yazıldığı
- * için kayabilir; test/videoCevirisi.test.ts ikisinin de aynı ÖLÇÜLEBİLİR olguları
- * (pencere, sinyal adı, istemin gösterilmemesi, harcamanın durması) söylediğini çiviler.
+ * A FAITHFUL TRANSLATION: it says neither more nor less than the raw output does. Written by
+ * hand, it can drift, so test/videoCevirisi.test.ts pins both against the same MEASURABLE
+ * facts — the window, the signal's name, that no prompt was shown, and that no spend was
+ * applied.
  */
 export const INGILIZCE_RET = [
   "REFUSED: NETWORK VERIFICATION FAILED — the approver's SIM card changed",

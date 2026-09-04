@@ -25,7 +25,7 @@
  * advertises the elicitation capability so the strong consent path is exercised.
  *
  * Usage:
- *   node scripts/demo-agent.mjs "Hesabımı incele ve israf var mı söyle"
+ *   node scripts/demo-agent.mjs "Review my account and tell me where spend is wasted"
  *   (requires ANTHROPIC_API_KEY or an `ant auth login` profile)
  */
 import { existsSync } from "node:fs";
