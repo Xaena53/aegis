@@ -5,7 +5,7 @@
 
 *Güven kapısı Aegis, onaylayıcının hattının ele geçirilip geçirilmediğini mobil ağa sorar (GSMA Open Gateway / CAMARA) — insana sorulmadan ve para hareket etmeden önce.*
 
-[![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
 [![Test](https://img.shields.io/badge/test-975-brightgreen.svg)](test/)
@@ -46,7 +46,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 **Node ≥ 22.13** gerekir — barındırılan mod yerleşik `node:sqlite` kullanır.
 
 ```bash
-git clone https://github.com/Xaena53/google-ads-mcp.git aegis
+git clone https://github.com/Xaena53/aegis.git aegis
 cd aegis
 npm ci && npm run build && npm test
 ```

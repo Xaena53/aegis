@@ -16,7 +16,7 @@ import { registerResources } from "./resources.js";
 import type { ContextProvider } from "./adsClient.js";
 
 /** AGPL §13: MCP clients are users interacting over a network too. */
-const SOURCE_URL = process.env.AEGIS_SOURCE_URL?.trim() || "https://github.com/Xaena53/google-ads-mcp";
+const SOURCE_URL = process.env.AEGIS_SOURCE_URL?.trim() || "https://github.com/Xaena53/aegis";
 
 export function buildServer(getCtx: ContextProvider): McpServer {
   const server = new McpServer(

@@ -56,5 +56,5 @@ Corresponding Source, so what an instance does with data is always inspectable.
 ## Contact
 
 Questions about this policy or the software: open an issue at
-[github.com/Xaena53/google-ads-mcp](https://github.com/Xaena53/google-ads-mcp/issues)
+[github.com/Xaena53/aegis](https://github.com/Xaena53/aegis/issues)
 or write to bedometom@gmail.com.

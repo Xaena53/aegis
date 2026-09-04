@@ -5,7 +5,7 @@
 
 *Aegis, its trust gate, asks the mobile network (GSMA Open Gateway / CAMARA) whether the approver's line was taken over — before any human is prompted, and before any money moves.*
 
-[![CI](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/google-ads-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
 [![Tests](https://img.shields.io/badge/tests-975-brightgreen.svg)](test/)
@@ -46,7 +46,7 @@ being a story the agent tells and becomes a fact the server can verify.
 Requires **Node ≥ 22.13** — the hosted mode uses the built-in `node:sqlite`.
 
 ```bash
-git clone https://github.com/Xaena53/google-ads-mcp.git aegis
+git clone https://github.com/Xaena53/aegis.git aegis
 cd aegis
 npm ci && npm run build && npm test
 ```

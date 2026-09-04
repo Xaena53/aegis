@@ -146,7 +146,7 @@ async function fetchPage(url: string): Promise<{ finalUrl: string; html: string;
         signal: ctrl.signal,
         redirect: "manual",
         headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; AegisBot/0.1; +https://github.com/Xaena53/google-ads-mcp)",
+          "User-Agent": "Mozilla/5.0 (compatible; AegisBot/0.1; +https://github.com/Xaena53/aegis)",
           Accept: "text/html,application/xhtml+xml",
           "Accept-Language": "tr,en;q=0.8",
         },

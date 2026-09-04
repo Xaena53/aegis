@@ -36,7 +36,7 @@ import {
  * This URL must genuinely resolve: running a publicly reachable service while the
  * repository is private violates the license.
  */
-const SOURCE_URL = process.env.AEGIS_SOURCE_URL?.trim() || "https://github.com/Xaena53/google-ads-mcp";
+const SOURCE_URL = process.env.AEGIS_SOURCE_URL?.trim() || "https://github.com/Xaena53/aegis";
 
 const PORT = parseNumEnv("PORT", process.env.PORT, 8787);
 const PUBLIC_URL = process.env.AEGIS_PUBLIC_URL?.trim() || `http://localhost:${PORT}`;

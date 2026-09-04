@@ -87,4 +87,4 @@ is undocumented is a guard nobody dares to touch later.
   unrecognised configuration value, contradictory configuration, or an endpoint that does
   not answer within its timeout all end in refusal, never in a quiet pass.
 
-[Unreleased]: https://github.com/Xaena53/google-ads-mcp/commits/main
+[Unreleased]: https://github.com/Xaena53/aegis/commits/main
