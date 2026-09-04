@@ -62,8 +62,30 @@ test("prova/demo/duman koşuları önce derler (bayat ikili sahneye çıkmasın)
 });
 
 test("CI üretim bağımlılıklarında zafiyet kapısını korur", () => {
+  /**
+   * Kapı artık `npm run audit` üzerinden koşuyor: düz `npm audit`, düzeltilemeyen tek bir
+   * tavsiye yüzünden yapıyı kırmızıda tutuyordu ve tek çıkışı eşiği `high`'a çekmekti —
+   * yani gözetmek için kurulduğu sınıfı görmemek. Sarmalayıcı eşiği `moderate`'te tutar,
+   * gerekçesi ve gözden geçirme tarihi yazılı istisnalara izin verir.
+   *
+   * İDDİA ÇİFT: komut CI'da olmalı VE gerçekten üretim bağımlılıklarını moderate eşiğiyle
+   * denetlemeli. Yalnız komut adına bakmak, betiğin içi boşaltıldığında sessiz kalırdı.
+   */
   const ci = oku(".github/workflows/ci.yml");
-  assert.match(ci, /npm audit --omit=dev --audit-level=moderate/);
+  assert.match(ci, /npm run audit/, "CI'da bağımlılık denetimi adımı yok");
+
+  const betik = oku("scripts/bagimlilikDenetimi.mjs");
+  assert.match(betik, /--omit=dev/, "denetim üretim bağımlılıklarını hedeflemeli");
+  assert.match(betik, /const ESIK = SIDDET_SIRASI\.moderate/, "eşik moderate'te kalmalı");
+  assert.match(betik, /process\.exit\(1\)/, "karar verilmemiş bir tavsiye yapıyı kırmalı");
+
+  /**
+   * Her istisna gerekçe, ölçüm ve gözden geçirme tarihi taşımak zorunda. Bunlar olmadan
+   * liste, kimsenin ne zaman ve neden koyduğunu bilmediği bir susturma listesine dönüşür.
+   */
+  for (const alan of ["neden:", "olcum:", "gozdenGecir:"]) {
+    assert.ok(betik.includes(alan), `istisna kaydında '${alan}' alanı yok`);
+  }
 });
 
 test("kilit haftalık tazelenir (kapı sürekli kırmızıda kalmasın)", () => {
