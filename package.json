@@ -30,7 +30,8 @@
     "prova": "node scripts/prova.mjs",
     "agtest": "node --import tsx scripts/agDogrula.mts",
     "metatest": "node --import tsx scripts/metaDogrula.mts",
-    "brain": "node scripts/growth-brain.mjs"
+    "brain": "node scripts/growth-brain.mjs",
+    "video": "node --import tsx scripts/video-demo.mts"
   },
   "engines": {
     "node": ">=22.13.0"
