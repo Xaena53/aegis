@@ -11,6 +11,7 @@ import "dotenv/config";
 import http from "node:http";
 import { randomUUID, randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "./server.js";
 import { AdsContext } from "./adsClient.js";
@@ -141,11 +142,35 @@ const MAX_SESSIONS = 1_000;
 const MAX_SESSIONS_PER_USER = 10; // a single user must not drain the pool
 const SWEEP_MS = 60_000;
 
-// Per-user rate limit that protects the shared Google Ads quota
+/**
+ * PER-USER RATE LIMIT — AND THE DEFAULT IS STATED IN THE UNIT IT CHARGES.
+ *
+ * The counter used to spend one token per JSON-RPC message, and 120-a-minute was chosen
+ * against that unit. Pricing the account-tree harvest at what it really costs upstream
+ * (HASAT_ISLEM_BEDELI = 61 operations, see mesajIslemBedeli) changed the unit and left the
+ * number where it was, which MEASURED turned the most ordinary turn into a 429: list_accounts
+ * spends 61, reading aegis://accounts straight afterwards spends 61 more, and 122 > 120. So
+ * "list the accounts, then read the account resource" — and equally the first completion
+ * keystroke after a list_accounts — met a refusal at the shipped default. The direction was
+ * fail-closed, so nothing upstream was ever at risk; but a ceiling that turns away the normal
+ * case teaches operators to raise it blindly, and a ceiling raised blindly protects nothing.
+ *
+ * The default is therefore restated in the charged unit: six harvests plus ordinary traffic
+ * (6 * 61 = 366, rounded up to a flat 400). test/faz5Http.test.ts runs the real RateLimiter
+ * with the number shipped here and refuses a default that cannot carry a two-harvest turn.
+ *
+ * THE DAY CEILING STAYS WHERE IT WAS, deliberately: that is the one protecting the shared
+ * Google developer token, and in operation units 2000 buys 32 complete harvests a day per
+ * tenant. An operator who needs more headroom raises AEGIS_RATE_PER_DAY — the setting exists
+ * for exactly that.
+ */
+const VARSAYILAN_DK_ISLEM = 400;
+const VARSAYILAN_GUN_ISLEM = 2000;
+
 const limiter = new RateLimiter({
   // parseNumEnv is required: an empty env var gives Number("") === 0, which would 429 every request
-  perMinute: parseNumEnv("AEGIS_RATE_PER_MINUTE", process.env.AEGIS_RATE_PER_MINUTE, 120),
-  perDay: parseNumEnv("AEGIS_RATE_PER_DAY", process.env.AEGIS_RATE_PER_DAY, 2000),
+  perMinute: parseNumEnv("AEGIS_RATE_PER_MINUTE", process.env.AEGIS_RATE_PER_MINUTE, VARSAYILAN_DK_ISLEM),
+  perDay: parseNumEnv("AEGIS_RATE_PER_DAY", process.env.AEGIS_RATE_PER_DAY, VARSAYILAN_GUN_ISLEM),
 });
 
 /**
@@ -157,10 +182,27 @@ const limiter = new RateLimiter({
  * runs. They are counted here because both ceilings are about THIS process rather than
  * about the shared Google quota.
  */
-interface Pencere {
-  start: number;
-  count: number;
-}
+/**
+ * THE WINDOW SLIDES; IT IS NEVER RESTARTED WHOLESALE — the rule rateLimit.ts states, for the
+ * reason it measured. The first form here kept `{ start, count }` and zeroed the counter once
+ * the span had elapsed, which is a TUMBLING window, and a tumbling window doubles at the
+ * turnover. MEASURED on that form with a controlled clock: one bucket opened a window, spent
+ * its whole allowance at t+59.900s and 60 more requests at t+60.001s — 119 requests inside
+ * 101 ms against a ceiling published as 60 a minute. A ceiling that doubles by waiting for
+ * the clock is not the ceiling this file publishes, and on the OAuth surface each of those
+ * requests is one more real POST to Google's token endpoint.
+ *
+ * WHY THE RateLimiter CLASS IS NOT REUSED VERBATIM: it is keyed by a numeric user id and
+ * charges tokens against two spans at once. One of the two surfaces below is keyed by a
+ * SOCKET ADDRESS, and both count whole requests against a single span, so what is shared with
+ * rateLimit.ts is the algorithm rather than the class — the individual hits are kept, and a
+ * hit stays charged until it is genuinely PENCERE_MS old.
+ *
+ * MEMORY. A hit list cannot outgrow the ceiling it feeds, because past that ceiling the
+ * request is refused before another hit is appended; the number of BUCKETS is bounded by
+ * lruYerAc; and sweep() drops the buckets that have gone quiet.
+ */
+type Pencere = number[];
 const PENCERE_MS = 60_000;
 
 /**
@@ -199,22 +241,48 @@ const KOTU_ISTEK_DK_TAVANI = 20;
 const KOTU_ISTEK_KOVA_TAVANI = 10_000;
 const kotuIstekPencereleri = new Map<number, Pencere>();
 
-/** The window in force for this key, restarted once the old one has run out. */
-function pencereTazele<K>(pencereler: Map<K, Pencere>, anahtar: K, kovaTavani: number): Pencere {
-  const now = Date.now();
-  let p = pencereler.get(anahtar);
-  if (!p || now - p.start >= PENCERE_MS) {
-    p = { start: now, count: 0 };
-    // Memory ceiling: these maps are fed by unauthenticated callers, so they are bounded
-    // (sweep drops expired windows as well).
-    lruYerAc(pencereler, kovaTavani);
-    pencereler.set(anahtar, p);
-  }
-  return p;
+/**
+ * Drops the hits that have left the window, in place. They are appended in time order, so
+ * what leaves is always a prefix of the list.
+ */
+function pencereBuda(liste: Pencere, now: number): Pencere {
+  let i = 0;
+  while (i < liste.length && now - liste[i] >= PENCERE_MS) i++;
+  if (i > 0) liste.splice(0, i);
+  return liste;
 }
 
-function kalanBekleme(p: Pencere): number {
-  return Math.max(1, Math.ceil((p.start + PENCERE_MS - Date.now()) / 1000));
+/**
+ * The pruned hit list of a bucket that is about to be CHARGED — created on first use.
+ *
+ * The entry is re-inserted on every access, because lruYerAc evicts by map order and that
+ * order only means "least recently used" if the caller refreshes it. Without the refresh a
+ * busy bucket could be evicted while an idle one survived, and an evicted bucket comes back
+ * with a full allowance.
+ */
+function pencereAl<K>(pencereler: Map<K, Pencere>, anahtar: K, kovaTavani: number): Pencere {
+  const now = Date.now();
+  let liste = pencereler.get(anahtar);
+  if (liste) pencereler.delete(anahtar);
+  else {
+    liste = [];
+    // Memory ceiling: these maps are fed by unauthenticated callers, so the number of buckets
+    // is bounded here (sweep drops the ones that have gone quiet as well).
+    lruYerAc(pencereler, kovaTavani);
+  }
+  pencereler.set(anahtar, liste);
+  return pencereBuda(liste, now);
+}
+
+/**
+ * Seconds to wait before the ceiling has room again. Hits leave oldest first, so the deadline
+ * is the moment the oldest hit still inside the window turns PENCERE_MS old — waiting exactly
+ * that long really does free a slot.
+ */
+function kalanBekleme(liste: Pencere): number {
+  const enEski = liste[0];
+  if (enEski === undefined) return 1;
+  return Math.max(1, Math.ceil((enEski + PENCERE_MS - Date.now()) / 1000));
 }
 
 /**
@@ -232,9 +300,9 @@ function istemciKovasi(req: http.IncomingMessage): string {
  * caller's own penalty.
  */
 function oauthKotasi(req: http.IncomingMessage): number | undefined {
-  const p = pencereTazele(oauthPencereleri, istemciKovasi(req), OAUTH_KOVA_TAVANI);
-  if (p.count >= OAUTH_DK_TAVANI) return kalanBekleme(p);
-  p.count++;
+  const liste = pencereAl(oauthPencereleri, istemciKovasi(req), OAUTH_KOVA_TAVANI);
+  if (liste.length >= OAUTH_DK_TAVANI) return kalanBekleme(liste);
+  liste.push(Date.now());
   return undefined;
 }
 
@@ -271,14 +339,25 @@ function stateHarca(state: string): void {
 
 /** Records a /mcp request that was refused before it ran. */
 function kotuIstekKaydet(userId: number): void {
-  pencereTazele(kotuIstekPencereleri, userId, KOTU_ISTEK_KOVA_TAVANI).count++;
+  const liste = pencereAl(kotuIstekPencereleri, userId, KOTU_ISTEK_KOVA_TAVANI);
+  // The list cannot outgrow the ceiling it feeds: at the ceiling the next request is turned
+  // away above the body read, so nothing more is recorded. The cap makes that a property of
+  // this function rather than of the call order, which concurrent requests could bend.
+  if (liste.length < KOTU_ISTEK_DK_TAVANI) liste.push(Date.now());
 }
 
-/** Seconds to wait when this user's refused-request ceiling has already been reached. */
+/**
+ * Seconds to wait when this user's refused-request ceiling has already been reached.
+ *
+ * READ-ONLY ON PURPOSE: an unknown user gets no bucket. This runs on EVERY authenticated
+ * request, so creating an entry here would turn the ordinary path into the thing that fills
+ * the map.
+ */
 function kotuIstekCezasi(userId: number): number | undefined {
-  const p = kotuIstekPencereleri.get(userId);
-  if (!p || Date.now() - p.start >= PENCERE_MS) return undefined;
-  return p.count >= KOTU_ISTEK_DK_TAVANI ? kalanBekleme(p) : undefined;
+  const liste = kotuIstekPencereleri.get(userId);
+  if (!liste) return undefined;
+  pencereBuda(liste, Date.now());
+  return liste.length >= KOTU_ISTEK_DK_TAVANI ? kalanBekleme(liste) : undefined;
 }
 
 /**
@@ -304,24 +383,92 @@ function gunlukHatasi(e: unknown): string {
 setRuntimeMode("hosted", `${PUBLIC_URL}/connect`);
 
 /**
- * META CREDENTIALS ARE NOT CARRIED IN HOSTED MODE — and the operator is told so, out loud.
+ * META TOOLS ARE NOT OFFERED IN HOSTED MODE — and "not offered" is enforced, not narrated.
  *
  * config.ts reads AEGIS_META_TOKEN / AEGIS_META_AD_ACCOUNT_ID, but that config object
  * belongs to the single-tenant stdio entry point. The hosted context is assembled per TENANT
  * in contextFor() below and deliberately does not include them: one operator token handed to
  * every tenant would let tenant A spend tenant B's Meta budget, which is the one boundary
- * this server exists to hold. The drop used to be SILENT — both fields are optional on
- * AegisConfig so nothing failed to compile, and docker-compose hands the whole .env to the
- * container — so an operator who had genuinely set the variables was told by the Meta tools
- * that they were "not defined", with nothing anywhere to break that loop.
+ * this server exists to hold.
+ *
+ * SAYING SO TO THE OPERATOR WAS NOT ENOUGH. buildServer registers the Meta tools
+ * unconditionally, and the hosted server is a buildServer, so all three stayed in tools/list
+ * and answered every call by declaring AEGIS_META_TOKEN undefined — a sentence that is FALSE
+ * for the operator who had set the variable, and that sends the agent off to repair a
+ * configuration which was never the problem. A startup warning lands in the operator's
+ * terminal; it never reaches the agent, whose whole view of this server is tools/list and the
+ * answer a tool gives. Worse, the two surfaces then contradicted each other: the terminal
+ * said "switched off, leave it", the tool said "undefined, go define it". The tools are
+ * therefore REMOVED from the hosted server, which makes one sentence true instead of two
+ * sentences at war.
+ *
+ * FAIL CLOSED ON THE REMOVAL ITSELF. It goes through the SDK's own tool registry, so a future
+ * SDK could reshape that registry and the removal would quietly stop working — which is the
+ * very failure this block exists to prevent. Each name is therefore checked GONE afterwards,
+ * and a removal that cannot be proven stops the process at startup rather than letting a
+ * hosted deployment come up carrying a surface it believes it does not have.
  */
+const HOSTED_KAPALI_ARACLAR = [
+  "create_meta_campaign",
+  "update_meta_campaign_budget",
+  "set_meta_campaign_status",
+] as const;
+
+/** A tool as the SDK's registry holds it — only the part this file uses. */
+interface KayitliArac {
+  remove?: () => void;
+}
+
+/**
+ * Removes the tools hosted mode does not carry credentials for, and proves they are gone.
+ * Throws when even one of them survives, so the caller can refuse rather than serve a list it
+ * cannot stand behind.
+ */
+function hostedKapaliAraclariKaldir(mcp: McpServer): void {
+  const kayit = (mcp as unknown as { _registeredTools?: Record<string, KayitliArac> })._registeredTools;
+  const kalan: string[] = [];
+  for (const ad of HOSTED_KAPALI_ARACLAR) {
+    const arac = kayit?.[ad];
+    if (arac && typeof arac.remove === "function") arac.remove();
+    if (!kayit || kayit[ad]) kalan.push(ad);
+  }
+  if (kalan.length) {
+    throw new Error(
+      `hosted modda kapalı olması gereken araçlar kaldırılamadı: ${kalan.join(", ")}` +
+        " (MCP SDK'sının araç kaydı beklenen şekilde değil)"
+    );
+  }
+}
+
+/**
+ * The removal is exercised ONCE at startup, on a server nothing is connected to. The
+ * alternative is discovering an SDK change on the first tenant's first request, which is the
+ * failure mode validateHostedEnv above exists to rule out: a process that reports itself
+ * healthy and is not.
+ */
+try {
+  hostedKapaliAraclariKaldir(
+    buildServer(() => {
+      throw new Error("açılış denetimi: bu sunucu örneği hiçbir isteği karşılamaz");
+    })
+  );
+} catch (e) {
+  console.error(
+    `[aegis-http] BAŞLATILAMADI — Meta araçları hosted moddan kaldırılamadı: ${gunlukHatasi(e)}\n` +
+      `  Bu araçlar hosted modda ÇALIŞAMAZ (kiracı başına Meta kimlik bilgisi yoktur) ve\n` +
+      `  listede kalmaları ajana yanlış gerekçe döndürür. Süreç bu hâlde açılmıyor.`
+  );
+  process.exit(1);
+}
+
 if (process.env.AEGIS_META_TOKEN?.trim() || process.env.AEGIS_META_AD_ACCOUNT_ID?.trim()) {
   console.error(
     "[aegis-http] UYARI: AEGIS_META_TOKEN / AEGIS_META_AD_ACCOUNT_ID tanımlı ama HOSTED MODDA " +
-      "KULLANILMIYOR — Meta araçları bu modda kapalıdır. Tek operatör jetonunu tüm kiracılara " +
-      "açmak kiracı izolasyonunu kırardı; Meta tarafı yalnız tek kiracılı stdio modunda " +
-      "(npm start) çalışır. Meta araçlarının 'AEGIS_META_TOKEN tanımlı değil' yanıtı bu modda " +
-      "değişkeni doldurmadığın anlamına GELMEZ."
+      "KULLANILMIYOR. Tek operatör jetonunu tüm kiracılara açmak kiracı izolasyonunu kırardı; " +
+      `bu yüzden Meta araçları (${HOSTED_KAPALI_ARACLAR.join(", ")}) hosted sunucunun araç ` +
+      "listesinden ÇIKARILIR — ajan onları ne görür ne çağırabilir, dolayısıyla 'AEGIS_META_TOKEN " +
+      "tanımlı değil' yanıtı da bu modda hiç üretilmez. Meta tarafı yalnız tek kiracılı stdio " +
+      "modunda (npm start) çalışır."
   );
 }
 
@@ -405,10 +552,10 @@ function contextFor(user: StoredUser): AdsContext {
       maxDailyBudget: user.maxDailyBudget,
       // NO metaToken / metaAdAccountId, deliberately: those are the OPERATOR's credentials
       // and this object is one TENANT's. Handing the operator's Meta token to every tenant
-      // would let tenant A spend tenant B's Meta budget. Meta tools are therefore inert in
-      // hosted mode, and the startup warning above says so to the operator's face — if this
-      // ever changes, the credentials must arrive PER TENANT (store + kiraciAnahtarDilimi)
-      // and that warning has to go with them.
+      // would let tenant A spend tenant B's Meta budget. That is why the Meta tools are
+      // removed from the hosted server above rather than merely left to fail — if this ever
+      // changes, the credentials must arrive PER TENANT (store + kiraciAnahtarDilimi), and
+      // HOSTED_KAPALI_ARACLAR and its startup warning have to go with them.
       ...nac,
     });
     /**
@@ -447,19 +594,34 @@ const pendingSessions = new Map<number, number>();
 
 /**
  * DROPS WHAT HAS EXPIRED. Every collection here is fed by a path that runs before, or
- * instead of, real work, so the sweep is what turns their ceilings into something other
- * than "the process's memory": idle MCP `sessions`, the OAuth surface's `oauthPencereleri`,
- * the refused-request `kotuIstekPencereleri`, the already-spent `harcananState`, and the
+ * instead of, real work: idle MCP `sessions`, the OAuth surface's `oauthPencereleri`, the
+ * refused-request `kotuIstekPencereleri`, the already-spent `harcananState`, and the
  * per-user counters behind `limiter`.
+ *
+ * WHAT THE SWEEP IS THE CEILING OF — ONE OF THE FIVE, NOT ALL FIVE. This block used to say
+ * the sweep was what turned every ceiling here into something other than the process's
+ * memory. Measured against the code, that holds for `limiter` alone: rateLimit.ts keeps one
+ * hit list per user id in a map with no bound of its own, so without the sweep that map grows
+ * with the user table. The other four are bounded where they are written — sessions against
+ * MAX_SESSIONS in handleMcp, and the three maps above it by lruYerAc at OAUTH_KOVA_TAVANI,
+ * KOTU_ISTEK_KOVA_TAVANI and HARCANAN_STATE_TAVANI entries. For those four the sweep is
+ * hygiene: it returns memory the ceiling would otherwise hold until eviction, and it keeps a
+ * bucket that has gone quiet from occupying a slot an active caller could need.
  *
  * "OAuth STATE" here means the SPENT-state record, not a pending-state pool. The state
  * itself is stateless — a signed cookie (signState / verifyState) — and the only thing kept
  * server-side is the note that a given state has already been spent. The pending pool was
  * deleted when the cookie replaced it, and for several commits afterwards this line still
  * promised a sweep of "OAuth state" that by then happened nowhere: the sentence outlived
- * its code. test/faz4Http.test.ts now ties the two together in BOTH directions — the names
- * backticked above are read as the list of swept collections, so dropping a sweep, or
- * adding one silently, fails there.
+ * its code.
+ *
+ * THE TWO ARE TIED TOGETHER IN BOTH DIRECTIONS by test/faz5Http.test.ts: the names backticked
+ * above are read as the list of swept collections, and the body is read for every spelling
+ * that empties one — delete, clear and sweep, on a bare name or on a member path. The earlier
+ * watcher in test/faz4Http.test.ts recognised only a bare name followed by delete or sweep,
+ * and MEASURED, adding pendingSessions.clear() to this body while writing nothing here left
+ * the whole suite green. Anything in this block inside backticks is a claim that it is swept;
+ * refer to something else without them.
  */
 function sweep(): void {
   const now = Date.now();
@@ -473,11 +635,12 @@ function sweep(): void {
       }
     }
   }
-  // Expired windows are dropped here as well as when they are next touched: a bucket that
-  // is never asked about again must not stay resident — and two of these three maps are fed
-  // by callers who never authenticate.
-  for (const [k, p] of oauthPencereleri) if (now - p.start >= PENCERE_MS) oauthPencereleri.delete(k);
-  for (const [k, p] of kotuIstekPencereleri) if (now - p.start >= PENCERE_MS) kotuIstekPencereleri.delete(k);
+  // Hits that have left the window are dropped here as well as when the bucket is next
+  // touched, and a bucket left holding none is dropped with them: a bucket nobody asks about
+  // again must not stay resident — and two of these three maps are fed by callers who never
+  // authenticate.
+  for (const [k, liste] of oauthPencereleri) if (!pencereBuda(liste, now).length) oauthPencereleri.delete(k);
+  for (const [k, liste] of kotuIstekPencereleri) if (!pencereBuda(liste, now).length) kotuIstekPencereleri.delete(k);
   for (const [k, bitis] of harcananState) if (now >= bitis) harcananState.delete(k);
   limiter.sweep();
 }
@@ -961,6 +1124,21 @@ function mcpMesajAdedi(body: unknown): number {
  */
 const HASAT_ISLEM_BEDELI = 61;
 
+/**
+ * WHICH MESSAGE SHAPES CARRY THAT PRICE — AND WHY THE TWO SETS ARE NAILED TO THE CODE.
+ *
+ * mesajIslemBedeli charges 1 for everything it does not recognise, so a harvesting surface
+ * that is missing from these sets is not a loud failure but a silent discount: the tool works,
+ * the suite stays green, and the shared quota goes back to being drained by a multiplier the
+ * counter cannot see. A hand-written set that nothing compares against the code is a price
+ * list vouching for a cost it never observed.
+ *
+ * test/faz5Http.test.ts is what observes it. It walks src/ for every MCP registration whose
+ * handler reaches AdsContext.tumHesaplar or listAccessibleCustomers — directly or through a
+ * helper — and fails when a tool name or a resource URI it finds is absent from the set below.
+ * Add a harvesting tool tomorrow and the price list is what turns red, not the quota.
+ */
+
 /** Tool calls that harvest the whole account tree (tools/read.ts · list_accounts). */
 const HASAT_ARACLARI = new Set(["list_accounts"]);
 
@@ -1144,6 +1322,10 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   // The tools of this session only ever see this one user's CURRENT context
   try {
     const server = buildServer(() => contextFor(live.user));
+    // Before the transport is attached, so the tools are gone from the FIRST tools/list this
+    // session can answer. A failure here throws and the session is refused (fail closed):
+    // serving a list this process cannot stand behind is what the removal exists to prevent.
+    hostedKapaliAraclariKaldir(server);
     await server.connect(transport);
     await transport.handleRequest(req, res, body);
   } finally {
@@ -1205,7 +1387,14 @@ const server = http.createServer(async (req, res) => {
  * LAST-RESORT SAFETY NET. An unexpected error while handling one request must not take
  * the service down for everyone: when the process dies, every in-memory MCP session dies
  * with it and all clients start getting `404 session_not_found`. Log the error and stay
- * up. Both entry points need this — stdio mode installs the same handlers in index.ts.
+ * up.
+ *
+ * THE OTHER ENTRY POINT DOES THE OPPOSITE, ON PURPOSE — the two do NOT behave alike, whatever
+ * this comment used to claim. src/index.ts prints a cleaned one-line summary and then calls
+ * `process.exit(1)`, from BOTH of its crash handlers, the rejection one included. Stdio serves
+ * exactly ONE client and holds no session for anyone else, so closing the door there costs one
+ * supervised restart; doing it here would evict every other tenant's live session over a single
+ * request's bug. Do not copy that exit into this file — the divergence is the design.
  */
 process.on("unhandledRejection", (e) => console.error("[aegis-http] unhandledRejection:", gunlukHatasi(e)));
 process.on("uncaughtException", (e) => console.error("[aegis-http] uncaughtException:", gunlukHatasi(e)));

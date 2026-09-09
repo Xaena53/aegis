@@ -16,8 +16,25 @@
  * ANTHROPIC_API_KEY escapes on the first, GEMINI_API_KEY on the second. An "extract, then
  * assert absence" watcher is punched through exactly there: extract too widely, or test
  * membership too loosely, and the hole is invisible. For the .env.example surface this file
- * removes both narrowings: EVERY environment variable whoever reads it, and a real
- * assignment LINE rather than a mention.
+ * removes both narrowings: reads are collected with NO prefix filter — `env.X`, `env["X"]`
+ * and destructuring alike — and documentation is a real assignment LINE, not a mention.
+ *
+ * PHASE 5 — the same trap was then measured INSIDE this file, and both halves stayed green
+ * while doing harm:
+ *   - a name that appears only in a code COMMENT counted as "read", so a dead button could be
+ *     kept alive by prose. MEASURED: `AEGIS_SAHTE_DUGME=` added to .env.example plus a single
+ *     comment naming it → 8/8 green, the dead button was not caught.
+ *   - a destructured read was invisible, so an undocumented MANDATORY key could hide inside
+ *     `const { OPENAI_API_KEY } = process.env`. MEASURED: 8/8 green.
+ * The scan is therefore kept as TWO sets, and each drives the direction in which its way of
+ * being wrong is the SAFE way:
+ *   - RAW text (comments included) drives "read but undocumented": counting a comment as a
+ *     read can only DEMAND more documentation, it can never hide a live variable.
+ *   - COMMENT-FREE text drives "documented but dead" and the exception liveness check: the
+ *     stripper can only take too much, and a read it loses turns a live setting into a LOUD
+ *     failure rather than into silence.
+ * The extractor itself is pinned by a literal fixture (first test), so neither direction can
+ * rot as quietly as both just did.
  *
  * WHAT MAKES EACH TEST TWO-WAY — a documentation watcher that can only rot in one direction
  * is a vacuum watcher:
@@ -118,19 +135,50 @@ function dosyalar(dizin) {
 }
 
 /**
- * Every environment read in src/ and scripts/, WITHOUT the AEGIS_ prefix filter: the defect
- * being closed here is a variable that is not called AEGIS_anything. `process.env.X` is
- * covered by the same pattern as the injected `env.X`, because "is this name read" does not
- * depend on where the environment object came from.
+ * Source with its comments removed. JavaScript accepts a comment only when it is CLOSED, so
+ * every comment a compiling file in this repo can contain is matched here: this cannot leave
+ * one behind. It can take too much — a `//` inside a string or a regex (`"https://…"`)
+ * swallows the rest of that line — and that is the direction this set is allowed to be wrong
+ * in, because the two places it is used turn a lost read into a loud red, not into silence.
  */
-function okunanDegiskenler() {
+function yorumsuz(kaynak) {
+  return kaynak.replace(/\/\*[\s\S]*?\*\//g, "\n").replace(/\/\/[^\n]*/g, "");
+}
+
+/**
+ * The environment names ONE piece of text reads, in the three shapes source code uses:
+ * `env.X`, `env["X"]`, and destructuring — `const { X } = process.env`, the shape a measured
+ * mutation walked straight through. `process.env` and an injected `env` share the patterns,
+ * because "is this name read" does not depend on where the object came from.
+ *
+ * One shape is out of reach of any text scan and is therefore NOT claimed: a fully computed
+ * name — `process.env[k]` walking a list of names, as missingCredentials() does over REQUIRED
+ * in src/config.ts and validateHostedEnv() does over an inline list in src/http.ts. Those
+ * names stay covered only because each of them is ALSO read directly somewhere, and that is
+ * precisely what the dead-button comparison below measures for every documented line.
+ */
+function metindekiOkumalar(metin) {
+  const adlar = new Set();
+  for (const m of metin.matchAll(
+    /\benv(?:\.([A-Z][A-Z0-9_]*)|\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\])/g
+  )) {
+    adlar.add(m[1] ?? m[2]);
+  }
+  for (const m of metin.matchAll(/\{([^{}]*)\}\s*=\s*(?:process\s*\.\s*)?env\b/g)) {
+    for (const parca of m[1].split(",")) {
+      const ad = parca.replace(/^\s*\.\.\./, "").split(/[:=]/)[0].trim();
+      if (/^[A-Z][A-Z0-9_]*$/.test(ad)) adlar.add(ad);
+    }
+  }
+  return adlar;
+}
+
+/** Every environment read in src/ and scripts/, WITHOUT the AEGIS_ prefix filter. */
+function tara(hazirla) {
   const okunan = new Map();
   for (const f of KOD_DIZINLERI.flatMap((d) => dosyalar(path.join(KOK, d)))) {
-    const icerik = readFileSync(f, "utf8");
-    for (const m of icerik.matchAll(
-      /\benv(?:\.([A-Z][A-Z0-9_]*)|\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\])/g
-    )) {
-      const ad = m[1] ?? m[2];
+    const metin = hazirla(readFileSync(f, "utf8"));
+    for (const ad of metindekiOkumalar(metin)) {
       if (!okunan.has(ad)) okunan.set(ad, new Set());
       okunan.get(ad).add(path.relative(KOK, f).split(path.sep).join("/"));
     }
@@ -142,6 +190,12 @@ function okunanDegiskenler() {
   );
   return okunan;
 }
+
+/** RAW — a comment counts as a read on purpose; over-counting here only demands more docs. */
+const okunanDegiskenler = () => tara((kaynak) => kaynak);
+
+/** COMMENT-FREE — prose cannot keep a setting alive: a sentence is not a read. */
+const gercekOkumalar = () => tara(yorumsuz);
 
 /**
  * Names that are read but deliberately have NO line of their own. Each carries a condition
@@ -168,7 +222,7 @@ const ISTISNALAR = [
       "konsola yazan gösteri betikleri okur; sunucunun davranışını değiştirmez",
     dogrula: () => {
       const src = dosyalar(path.join(KOK, "src")).filter((f) =>
-        /\benv(\.NO_COLOR|\[\s*["']NO_COLOR["']\s*\])/.test(readFileSync(f, "utf8"))
+        metindekiOkumalar(readFileSync(f, "utf8")).has("NO_COLOR")
       );
       assert.deepEqual(
         src,
@@ -179,6 +233,53 @@ const ISTISNALAR = [
     },
   },
 ];
+
+/* ── 0) TARAYICININ KENDİSİ ölçülüyor ────────────────────────────────────────── */
+
+/**
+ * Every shape the two scans have to agree — or deliberately disagree — on, as ONE literal.
+ * No file is read here, so this test measures the extractor and nothing else.
+ */
+const TARAYICI_NUMUNESI = [
+  "const a = env.AL_UYE;",
+  'const b = env["AL_KOSE"];',
+  "const c = process.env.AL_SUREC;",
+  "const { AL_YIKIM } = process.env;",
+  'const { AL_TAKMA: x = "d" } = env;',
+  "// yorum: process.env.YALNIZ_SATIR_YORUMU",
+  "/* yorum: env.YALNIZ_BLOK_YORUMU */",
+  'const u = "https://ornek.test/yol"; const d = env.AL_URL_SONRASI;',
+].join("\n");
+
+test("tarayıcı üç okuma biçimini de görüyor; yorumlar YALNIZ ham kümede sayılıyor", () => {
+  /**
+   * The anti-vacuum guard for this file's own extractor: both measured holes are pinned here
+   * as data, so a future rewrite of the patterns cannot reopen either one silently.
+   *   - drop the destructuring pattern → AL_YIKIM / AL_TAKMA vanish from both sets → red;
+   *   - stop stripping comments → YALNIZ_* appear in the comment-free set → red;
+   *   - teach the extractor itself to skip comments → YALNIZ_* leave the raw set → red.
+   * What it does NOT pin is the wiring above — which of the two sets each test is handed.
+   * That is one line each, and it is the real files that were mutated to prove it.
+   *
+   * AL_URL_SONRASI is the tolerated over-reach, pinned rather than hidden: it sits after a
+   * `://` on its line, so the stripper takes it along with the "comment" it thinks it found.
+   * That costs a false "dead button" red, never a silent pass — the safe way to be wrong.
+   */
+  const dogrudan = ["AL_UYE", "AL_KOSE", "AL_SUREC"];
+  const yikim = ["AL_YIKIM", "AL_TAKMA"];
+  const yorumdakiler = ["YALNIZ_SATIR_YORUMU", "YALNIZ_BLOK_YORUMU"];
+
+  assert.deepEqual(
+    [...metindekiOkumalar(TARAYICI_NUMUNESI)].sort(),
+    [...dogrudan, ...yikim, ...yorumdakiler, "AL_URL_SONRASI"].sort(),
+    "ham tarayıcı üç okuma biçiminden birini ya da yorumdaki anmayı görmüyor"
+  );
+  assert.deepEqual(
+    [...metindekiOkumalar(yorumsuz(TARAYICI_NUMUNESI))].sort(),
+    [...dogrudan, ...yikim].sort(),
+    "yorumsuz küme ya bir yorumu içeri alıyor ya da gerçek bir okumayı kaybediyor"
+  );
+});
 
 /* ── 1) OPERATÖR SENARYOSU: dosyayı kopyala, doldur, sağlayıcıyı seç ──────────── */
 
@@ -334,6 +435,10 @@ test("kodun okuduğu HER ortam değişkeninin .env.example'da kendi satırı var
   /**
    * The wide direction, without the AEGIS_ prefix filter that let this defect through and
    * without accepting a mere mention. What counts is a line the operator can fill in.
+   *
+   * Measured on RAW source — comments included — because here over-counting is the safe way
+   * to be wrong: a name that turns out to live only in a comment merely gets documented, while
+   * a live read the scan lost would leave an operator at a wall with no line to fill in.
    */
   const okunan = okunanDegiskenler();
   const belgeli = belgeliDegiskenler();
@@ -356,13 +461,19 @@ test(".env.example'ın sunduğu her satır GERÇEKTEN okunuyor (ölü düğme yo
   /**
    * The other direction. A settable line nothing reads is a button wired to nothing — the
    * same harm as a missing line, from the opposite side.
+   *
+   * Measured on COMMENT-FREE source, because a sentence is not a read: one comment naming
+   * `process.env.AEGIS_SAHTE_DUGME` used to be enough to keep an offered-but-dead line green.
    */
-  const okunan = okunanDegiskenler();
+  const okunan = gercekOkumalar();
   const olu = [...belgeliDegiskenler()].filter((a) => !okunan.has(a)).sort();
   assert.deepEqual(
     olu,
     [],
-    `.env.example bu ayarları sunuyor ama kod hiçbirini okumuyor: ${olu.join(", ")}`
+    `.env.example bu ayarları sunuyor ama kod hiçbirini okumuyor: ${olu.join(", ")}. ` +
+      `Adın bir YORUMDA geçmesi sayılmaz; düğmenin ucunda gerçek bir okuma olmalı. ` +
+      `(Okuma, aynı satırda "://" geçen bir dizeden SONRA geliyorsa yorum ayıklayıcısı onu da ` +
+      `düşürür — bu yön, sessiz kalmaktansa kırmızı olsun diye bilerek seçildi.)`
   );
 });
 
@@ -372,8 +483,11 @@ test("her istisna hâlâ GEÇERLİ: okunuyor, kendi satırı yok ve gerekçesi �
    * standard than the rules it excuses: an entry nothing reads any more, or one that has
    * since gained its own line, is itself a defect — a stale exception silently widens the
    * hole. Each `dogrula` re-measures the reason the exception was granted.
+   *
+   * Liveness is read off the COMMENT-FREE set for the same reason as the dead-button test: an
+   * exception whose last remaining "read" is a sentence has expired.
    */
-  const okunan = okunanDegiskenler();
+  const okunan = gercekOkumalar();
   const belgeli = belgeliDegiskenler();
   for (const istisna of ISTISNALAR) {
     assert.ok(

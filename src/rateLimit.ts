@@ -21,8 +21,9 @@
  * storage such as Redis.
  *
  * The hit list needs no cap of its own: an entry is appended only when a call is ALLOWED,
- * every entry carries at least one token, hits are dropped once they leave the widest
- * window, and the tokens inside that window can never exceed `perDay`.
+ * every entry carries at least one token (pozitifSayi is what makes that true rather than
+ * assumed), hits are dropped once they leave the widest window, and the tokens inside that
+ * window can never exceed `perDay`.
  */
 export interface RateLimitConfig {
   perMinute: number;
@@ -44,13 +45,48 @@ export interface RateLimitResult {
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 
+/**
+ * A count that reaches this module has to be a real number, and an impossible one is
+ * REFUSED rather than quietly corrected.
+ *
+ * Every ceiling here is a `>` comparison, and a comparison against NaN is FALSE — so a
+ * non-finite count does not overflow the limit, it DISABLES it. MEASURED on the earlier
+ * form, which clamped with `Math.max(1, Math.floor(adet))`: one `check(user, NaN)` was
+ * allowed, stored a hit worth NaN tokens, and every later call for that user then compared
+ * a NaN sum against the ceiling and passed too — a 3/minute, 5/day user took 8 of 8 further
+ * calls, and `remaining()` answered `{ minute: null, day: null }`. One unusable number and
+ * the tenant is outside the shared-quota guard for the rest of the process's life.
+ *
+ * The clamp was also silently wrong in the small: `adet = 0` and `adet = -5` were charged as
+ * 1 without a word, and a fractional 2.9 operations was charged as 2 — an undercount on the
+ * exact counter that exists to stop undercounting.
+ */
+function pozitifSayi(ad: string, deger: number, tamsayi: boolean): number {
+  const gecerli = tamsayi ? Number.isInteger(deger) && deger >= 1 : Number.isFinite(deger) && deger > 0;
+  if (!gecerli) {
+    // Numbers only — nothing here can carry upstream text, a token or PII into the message.
+    throw new Error(
+      `RateLimiter: ${ad} ${tamsayi ? "1 veya daha büyük bir tam sayı" : "0'dan büyük sonlu bir sayı"} olmalı ` +
+        `(gelen: ${String(deger)}) — geçersiz sayı sayacı sessizce devre dışı bırakır (kapalı arıza).`
+    );
+  }
+  return deger;
+}
+
 export class RateLimiter {
   private vuruslar = new Map<number, Vurus[]>();
 
   constructor(
     private cfg: RateLimitConfig,
     private now: () => number = Date.now
-  ) {}
+  ) {
+    // A ceiling that is not a usable number is not a ceiling: NaN loses every comparison
+    // below, which would let the limiter answer "allowed" forever. The bound is the same one
+    // config.ts::parseNumEnv already enforces on the env vars these come from (finite, > 0),
+    // so nothing that survives that reader can be refused here.
+    pozitifSayi("perMinute", cfg.perMinute, false);
+    pozitifSayi("perDay", cfg.perDay, false);
+  }
 
   /**
    * The user's hits that are still inside the widest window, pruned in place. Returns a
@@ -99,6 +135,8 @@ export class RateLimiter {
    * client over the limit would keep extending its own penalty.
    *
    * @param adet How many TOKENS this call spends — that is, how many OPERATIONS it performs.
+   *   It must be a whole number of at least 1; anything else THROWS (see pozitifSayi) rather
+   *   than being clamped into the nearest plausible figure.
    *
    * WHAT IS COUNTED IS THE OPERATION, NOT THE HTTP REQUEST. While the counter rose once
    * per request, a JSON-RPC array of N elements in a single POST bought N tool calls for
@@ -112,7 +150,7 @@ export class RateLimiter {
    */
   check(userId: number, adet = 1): RateLimitResult {
     const t = this.now();
-    const istenen = Math.max(1, Math.floor(adet));
+    const istenen = pozitifSayi("adet", adet, true);
     const liste = this.canli(userId, t);
 
     const dakika = this.sayim(liste, t, MINUTE_MS);
