@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { completable } from "@modelcontextprotocol/sdk/server/completable.js";
 import type { ContextProvider } from "./adsClient.js";
+import type { AegisConfig } from "./config.js";
 
 function metin(text: string) {
   return { messages: [{ role: "user" as const, content: { type: "text" as const, text } }] };
@@ -146,11 +147,13 @@ export function registerPrompts(server: McpServer, getCtx: ContextProvider): voi
     "guvenlik-durumu",
     {
       title: "Bu bağlantının güvenlik ayarları",
-      description: "Bu MCP bağlantısının hangi kelepçelerle çalıştığını (bütçe tavanı, yazma izni) açıklar.",
+      description:
+        "Bu MCP bağlantısının hangi kelepçelerle çalıştığını (bütçe tavanı, yazma izni) ve CAMARA ağ kapısının açık mı kapalı mı olduğunu açıklar.",
       argsSchema: {},
     },
-    () =>
-      metin(
+    () => {
+      const kapi = agKapisiOzeti(getCtx);
+      return metin(
         `Bu Aegis bağlantısının güvenlik ayarlarını bana açıkla:\n` +
           `1. list_accounts ile hangi hesaplara erişimim olduğunu göster.\n` +
           `2. Bir reklam hesabı seç ve "aegis://accounts/<hesapId>/limits" KAYNAĞINI oku. ` +
@@ -158,8 +161,134 @@ export function registerPrompts(server: McpServer, getCtx: ContextProvider): voi
           `yazma aracını deneme amaçlı çağırma.\n` +
           `3. Kaynaktaki "kurallar" listesini bana aktar ve şunu da ekle: YAYINDAKİ bir kampanyaya ` +
           `reklam ya da pozitif anahtar kelime eklemek de onayımı gerektirir.\n` +
-          `4. Tavanı ya da yazma iznini değiştirmek istersem ne yapmam gerektiğini söyle ` +
+          `4. AĞ KAPISI DURUMU: ${kapi.durum} — ${kapi.aciklama} Bu satırı raporunda AYNEN aktar. ` +
+          `limits kaynağındaki "kurallar" listesi TEK BAŞINA bu bağlantının TAM güvenlik resmi ` +
+          `DEĞİLDİR: ağ kapısının durumu bu satırdan ya da aynı kaynağın "agKapisi" alanından ` +
+          `okunur — ikisi de agKapisiOzeti'nden türer, çelişemezler. Bu durumu başka hiçbir ` +
+          `yerden çıkarma, tahmin etme, deneme amaçlı yazma aracı çağırma.\n` +
+          `5. Tavanı ya da yazma iznini değiştirmek istersem ne yapmam gerektiğini söyle ` +
           `(bunu sen yapamazsın; hesap sahibi olarak ayar sayfasından ben yaparım).`
-      )
+      );
+    }
   );
+}
+
+/**
+ * THE STATE OF THE CAMARA NETWORK GATE, for the security-posture surface.
+ *
+ * /guvenlik-durumu is where a user asks what is protecting this connection, and it used to
+ * answer with the write permission and the budget ceiling alone: the network gate — the
+ * product's headline control — was named by no read surface at all (neither this prompt,
+ * nor the limits resource's rule list, nor the server instructions). On a deployment with
+ * no NAC token the agent therefore reported a complete-looking safety picture while every
+ * spend increase reached the human with no network check behind it.
+ *
+ * EXPORTED because the limits resource carries the same state (see resources.ts). An agent
+ * that skips the prompt and reads aegis://accounts/{id}/limits directly is asking the same
+ * question and must not get a different — smaller — answer. There is ONE mapping, not two:
+ * a second copy would be a second place to go stale, and the two surfaces could then
+ * disagree about whether the gate is running.
+ *
+ * Only a STATE WORD leaves this function. The token and the approver's number are examined
+ * for PRESENCE only and never enter the text: prompt text is visible to the model, to the
+ * client's log and to the user.
+ *
+ * The mapping follows the top of the chain in networkTrust.ts (simSwapKatmani/simDogrula):
+ * a simulation channel takes effect BEFORE the real one; a simulation together with a real
+ * token is contradictory and refuses; a missing approver number refuses in both channels;
+ * and with neither a token nor a simulation no link queries anything at all, so the gate
+ * passes everything.
+ *
+ * FAIL CLOSED: when the configuration cannot be read the gate is NOT reported as working.
+ * Unknown is reported as unknown, with the instruction to treat it as closed — "unknown"
+ * must never be rendered as "protected".
+ */
+export function agKapisiOzeti(getCtx: ContextProvider): { durum: string; aciklama: string } {
+  let cfg: AegisConfig | undefined;
+  try {
+    cfg = getCtx()?.config;
+  } catch {
+    cfg = undefined;
+  }
+  if (!cfg)
+    return {
+      durum: "OKUNAMADI",
+      aciklama:
+        "bu bağlantının ayarları okunamadı, ağ kapısının durumu belirlenemedi; güvenlik gereği " +
+        "KAPALI kabul et ve ağ doğrulaması yapıldığını VARSAYMA.",
+    };
+  const jeton = cfg.nacToken?.trim();
+  const simulasyon = cfg.nacSimulate?.trim();
+  const onaylayici = cfg.approverPhone?.trim();
+  if (jeton && simulasyon)
+    return {
+      durum: "ÇELİŞKİLİ YAPILANDIRMA",
+      aciklama:
+        "gerçek ağ jetonu ile simülasyon kanalı birlikte tanımlı; belirsiz yapılandırmada kapı " +
+        "geçiş vermez, harcama artışları REDDEDİLİR.",
+    };
+  if (!jeton && !simulasyon)
+    return {
+      durum: "KAPALI",
+      aciklama:
+        "bu kurulumda hiçbir ağ sorgusu yapılmaz (AEGIS_NAC_TOKEN tanımlı değil): harcama artışları " +
+        "ve yayına alma, ağ doğrulaması YAPILMADAN doğrudan insan onayına gider — SIM'i değişmiş bir " +
+        "onaylayıcı da onay istemini görüp onaylayabilir.",
+    };
+  if (!onaylayici)
+    return {
+      durum: "EKSİK YAPILANDIRMA",
+      aciklama:
+        "ağ kapısı yarım yapılandırılmış (AEGIS_APPROVER_PHONE tanımlı değil); kapı bu hâlde " +
+        "çalışamaz ve güvenlik gereği harcama artışlarını REDDEDER.",
+    };
+  if (simulasyon)
+    return {
+      durum: "SİMÜLASYON",
+      aciklama:
+        "kararlar demo kanalından üretilir, GERÇEK ağ sorgusu YAPILMAZ; bu bir gösteri kurulumudur, " +
+        "canlı koruma sayılmaz.",
+    };
+  /**
+   * STEP-UP CHANGES WHAT "AÇIK" MEANS, so the state has to name it.
+   *
+   * "If verification fails the prompt is never shown" holds only while step-up is OFF (the
+   * default). With AEGIS_STEPUP=1 a refusal reason in KADEME_UYGUN — a swapped SIM among
+   * them — no longer ends in a flat refusal. Measured: agDogrula({stepUp:true}, "high")
+   * against a channel answering "swapped" returns `engel: undefined` with
+   * `kademe: {neden:"sim-degisti"}`, and approval.ts then SHOWS a prompt that names the
+   * degraded signal. Writing the strict sentence unconditionally paints the posture
+   * STRONGER than it is — the very mistake test/zincirBelgeKademe.test.ts already forbids
+   * in README.md / README.tr.md / docs/DEMO.md, re-appearing on a surface that goes
+   * straight into the model's context.
+   *
+   * FAIL CLOSED ON THE SWITCH TOO: only an explicit `false` earns the strict sentence. A
+   * configuration whose stepUp cannot be read (not a boolean) is UNKNOWN, and unknown is
+   * described the WEAKER way — a prompt may still appear — because overstating the gate is
+   * the failure this function exists to prevent.
+   */
+  const temel =
+    "harcama artışı ve yayına alma istekleri, onay istemi GÖSTERİLMEDEN ÖNCE gerçek CAMARA " +
+    "(GSMA Open Gateway) sorgularından geçer";
+  if (cfg.stepUp === false)
+    return {
+      durum: "AÇIK",
+      aciklama:
+        `${temel}; kademeli doğrulama KAPALI (AEGIS_STEPUP varsayılanı), bu yüzden yükseltme ` +
+        "yolu yoktur ve bozuk sinyalli istek doğrudan REDDEDİLİR.",
+    };
+  if (cfg.stepUp === true)
+    return {
+      durum: "AÇIK",
+      aciklama:
+        `${temel}; kademeli doğrulama AÇIK (AEGIS_STEPUP=1) ve yükseltme istemi GÖSTERİLİR, ama doğrulama başarısızsa onay istemi hiç gösterilmez.`,
+    };
+  return {
+    durum: "AÇIK",
+    aciklama:
+      `${temel}; ancak kademeli doğrulamanın (AEGIS_STEPUP) açık mı kapalı mı olduğu ` +
+      "OKUNAMADI: güvenlik gereği AÇIK kabul et — doğrulama başarısızken de bozuk sinyali " +
+      "adıyla söyleyen bir onay istemi GÖSTERİLEBİLİR, 'istem hiç gösterilmez' garantisine " +
+      "GÜVENME.",
+  };
 }

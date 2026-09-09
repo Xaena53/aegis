@@ -8,7 +8,15 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { enums } from "google-ads-api";
 import { formatAdsError, type ContextProvider } from "./adsClient.js";
+import { agKapisiOzeti } from "./prompts.js";
 import { mikrodanTutar } from "./util.js";
+
+/**
+ * Row cap of the campaign catalogue. It is reported to the reader (satirTavani) and
+ * interpolated into the query, so the announced cap and the LIMIT actually sent can
+ * never drift apart.
+ */
+const KAMPANYA_TAVANI = 200;
 
 function json(uri: string, veri: unknown) {
   return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(veri, null, 2) }] };
@@ -140,10 +148,29 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           `${cid} hesabı doğrulanamadı — erişilebilir olduğu teyit edilemedi, kelepçe raporu üretilmedi. list_accounts ile hesabı doğrula.`
         );
       const cfg = getCtx().config;
+      /**
+       * THE NETWORK GATE BELONGS IN THE GUARDRAIL REPORT TOO.
+       *
+       * This resource calls itself "the security settings of this connection" and the
+       * /guvenlik-durumu prompt orders the agent to READ IT instead of guessing — while
+       * the gate, the product's headline control, appeared nowhere in it. An agent that
+       * skips the prompt and reads this resource straight (which is exactly what the
+       * prompt tells it to do) saw write permission and a budget ceiling and concluded
+       * that was the whole picture: on a deployment with no NAC token every spend
+       * increase reaches the human with no network check behind it, and nothing here
+       * said so.
+       *
+       * The mapping is NOT re-derived here. It is imported from prompts.ts so the prompt
+       * line and this field can never disagree about whether the gate is running; a
+       * second copy would be a second place to go stale. The helper reports PRESENCE
+       * only — no token and no approver number can reach this JSON.
+       */
+      const kapi = agKapisiOzeti(getCtx);
       return json(uri.href, {
         customerId: cid,
         yazmaIzni: cfg.writeEnabled,
         gunlukButceTavani: cfg.maxDailyBudget,
+        agKapisi: { durum: kapi.durum, aciklama: kapi.aciklama },
         kurallar: [
           "Kampanyalar her zaman duraklatılmış (PAUSED) oluşturulur.",
           "Yayına alma ve bütçe ARTIŞI kullanıcının açık onayını gerektirir.",
@@ -151,6 +178,8 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           "Bütçe azaltma ve negatif anahtar kelime ekleme onay gerektirmez (harcamayı düşürür).",
           "Tavanı yalnız hesap sahibi yükseltebilir; ajan kendi limitini değiştiremez.",
           "Tavan tek KAMPANYA başınadır, hesabın toplam harcaması için değildir.",
+          "CAMARA ağ kapısının durumu bu listede DEĞİL, yukarıdaki `agKapisi` alanındadır; " +
+            "kurallar listesi tek başına bu bağlantının tam güvenlik resmi değildir.",
         ],
       });
       })
@@ -164,7 +193,9 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
     }),
     {
       title: "Kampanya listesi",
-      description: "Bir hesaptaki TÜM kampanyalar (katalog): durum, kanal, günlük bütçe. Performans için campaign_performance aracını kullan.",
+      description:
+        "Bir hesabın kampanya kataloğu (en yeni 200 kampanya): durum, kanal, günlük bütçe. " +
+        "Liste kırpılmış olabilir — tamListeMi alanına bak. Performans için campaign_performance aracını kullan.",
       mimeType: "application/json",
     },
     async (uri, { customerId }) =>
@@ -182,12 +213,45 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
         `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
                 campaign_budget.amount_micros
          FROM campaign WHERE campaign.status != 'REMOVED'
-         ORDER BY campaign.id DESC LIMIT 200`
+         ORDER BY campaign.id DESC LIMIT ${KAMPANYA_TAVANI}`
       );
+      /**
+       * READABILITY IS TESTED ON THE ID ITSELF, not on the mere presence of a `campaign`
+       * object. Testing only for the object let a row that arrived WITHOUT `campaign.id`
+       * into the catalogue as `id: "undefined"` — an invented identity — while its `durum`
+       * and `kanal` silently vanished from the JSON (the enum lookup on an undefined key
+       * yields undefined, and JSON.stringify drops such fields). Worse, `okunamayanSatir`
+       * stayed 0 and the list was announced as COMPLETE, so an unreadable row was served
+       * as a settled record. Unknown is not a value: a row without an id cannot enter the
+       * catalogue, and the drop is COUNTED. Shrinking the list in silence turns a partial
+       * read into a smaller-looking account.
+       */
+      const okunabilir = satirlar.filter((r: any) => r?.campaign?.id != null);
+      const okunamayanSatir = satirlar.length - okunabilir.length;
+      /**
+       * The query asks for exactly KAMPANYA_TAVANI rows, so a FULL page is
+       * indistinguishable from "there were more": it is declared INCOMPLETE, not complete.
+       * Unknown is not "nothing was cut" — the same rule the sibling aegis://accounts
+       * resource follows, and the reason its "total" field was removed.
+       */
+      const tavanaDegdi = satirlar.length >= KAMPANYA_TAVANI;
+      const nedenler: string[] = [];
+      if (tavanaDegdi)
+        nedenler.push(
+          `liste ${KAMPANYA_TAVANI} satırlık tavana ulaştı: en yeni ${KAMPANYA_TAVANI} kampanya dışında kalanlar burada YOK`
+        );
+      if (okunamayanSatir) nedenler.push(`${okunamayanSatir} satır okunamadı ve kataloğa giremedi`);
       return json(uri.href, {
         customerId: cid,
-        not: "Tüm kampanyalar (performans verisi için campaign_performance aracını kullan).",
-        kampanyalar: satirlar.filter((r: any) => r?.campaign).map((r: any) => {
+        gosterilen: okunabilir.length,
+        satirTavani: KAMPANYA_TAVANI,
+        tamListeMi: nedenler.length === 0,
+        okunamayanSatir,
+        not: nedenler.length
+          ? `LİSTE EKSİK — ${nedenler.join("; ")}. Aradığın kampanya burada yoksa "yok" SONUCUNA VARMA; ` +
+            `run_gaql ya da campaign_performance ile doğrula. Performans verisi için campaign_performance aracını kullan.`
+          : "Bu hesabın kampanyalarının tamamı (performans verisi için campaign_performance aracını kullan).",
+        kampanyalar: okunabilir.map((r: any) => {
           /**
            * `?? 0` was REMOVED here. A campaign whose budget could not be read entered
            * the catalogue as "gunlukButce: 0"; the /kampanya-denetle agent read that as
@@ -261,6 +325,13 @@ export function registerResources(server: McpServer, getCtx: ContextProvider): v
           "- `metrics.*` alanları segmentlere göre değişir; `segments.date` olmadan toplam döner.",
           "- Para alanları **micros**: 1.500.000 → 1,50.",
           "- `LIMIT` verilmezse sunucu 100 ekler; çok büyük LIMIT tavana kırpılır.",
+          // The agent's own LIMIT is the cap that bites most often, and until the saturation
+          // probe existed a self-written `LIMIT 100` reported "kesildi:false" on an account
+          // holding thousands of rows. Documented here because this resource is where the
+          // agent is told to look before writing a query.
+          "- Satır tavanı, sorgunun KENDİ `LIMIT`'i ile `limit` parametresinin KÜÇÜK olanıdır; sunucu " +
+            "tavan+1 satır ister (doyma probu) ve fazlası varsa `kesildi=true` der. Kendi `LIMIT 100`'ünle " +
+            "sorup 100 satır alman 'hesapta 100 tane var' DEMEK DEĞİLDİR — `kesildi`ye bak.",
           "- Yazma yapılamaz — GAQL yalnız okumadır.",
         ].join("\n")
       )

@@ -578,10 +578,30 @@ test("KRİTİK: ana anahtar veritabanını ÇÖZEMİYORSA süreç açılmaz", as
     });
   });
 
-  rmSync(db, { force: true });
-  assert.notEqual(kod, 0, `KRİTİK: çözemediği veritabanıyla süreç açılmamalı (çıkış: ${kod})`);
-  assert.match(cikti, /ÇÖZEMİYOR/, "operatör sebebi görmeli");
-  assert.match(cikti, /döndürüldü|geri yüklendi/, "olası sebepler adıyla söylenmeli");
+  /**
+   * CLEANUP RUNS AFTER THE ASSERTIONS AND IN `finally`, AND SWALLOWS ITS OWN ERRORS.
+   *
+   * A just-killed child can still hold the SQLite handle on Windows, and `rmSync` then
+   * throws EPERM - `force: true` only suppresses ENOENT, never a lock. Deleting BEFORE
+   * the assertions let that lock decide the verdict: the test died on the unlink and the
+   * gate was never measured, neither the exit code nor stderr. Both directions of that
+   * are damage - a genuinely removed gate goes unreported, and a healthy product paints
+   * this "KRİTİK" watchman red, so its colour stops meaning anything. Same guard as the
+   * sibling helper above (`zayifAnahtarlaBaslat`), companion journal files included.
+   */
+  try {
+    assert.notEqual(kod, 0, `KRİTİK: çözemediği veritabanıyla süreç açılmamalı (çıkış: ${kod})`);
+    assert.match(cikti, /ÇÖZEMİYOR/, "operatör sebebi görmeli");
+    assert.match(cikti, /döndürüldü|geri yüklendi/, "olası sebepler adıyla söylenmeli");
+  } finally {
+    for (const ek of ["", "-wal", "-shm"]) {
+      try {
+        rmSync(db + ek, { force: true });
+      } catch {
+        /* file still locked on Windows */
+      }
+    }
+  }
 });
 
 test("ZAYIF ANA ANAHTAR: 8 karakterlik anahtarla süreç sıfırdan farklı kodla çıkar", async () => {

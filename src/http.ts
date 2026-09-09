@@ -120,7 +120,15 @@ try {
 ` +
         `  her kiracıya sebepsiz 500 döndürmek demek olurdu; onun yerine burada duruluyor.
 ` +
-        `  Çözüm: doğru AEGIS_MASTER_KEY'i geri koy ya da kullanıcıları yeniden bağla.`
+        // NO REMEDY IS REPEATED HERE. The store's refusal above already carries the whole
+        // procedure, and that procedure is offline by necessity. This line used to end with
+        // "…ya da kullanıcıları yeniden bağla" — an instruction that needs /connect, which
+        // needs a process that starts. After process.exit(1) there is no HTTP surface left to
+        // reconnect through, so the sentence pointed the operator down a road that no longer
+        // exists. What replaces it only names where the runnable procedure already is.
+        `  Onarım yordamı yukarıda, "Kurtarma" satırından başlıyor: süreç bu hâlde açılmadığı
+` +
+        `  için adımların tümü süreç DIŞINDA yürütülür.`
     );
     process.exit(1);
   }
@@ -600,15 +608,45 @@ async function handleSettings(req: http.IncomingMessage, res: http.ServerRespons
       return html(res, 403, ayarSayfasi(user, { tur: "hata", metin: "İstek reddedildi: çapraz-site form gönderimi." }));
     }
 
-    const govde = await new Promise<string>((resolve, reject) => {
-      let veri = "";
-      req.on("data", (c) => {
-        veri += c;
-        if (veri.length > 10_000) reject(new Error("gövde çok büyük"));
-      });
-      req.on("end", () => resolve(veri));
-      req.on("error", reject);
-    });
+    /**
+     * THE BODY CEILING HAS TO STOP THE STREAM, NOT ONLY THE PROMISE.
+     *
+     * The earlier version read the body with a `data` listener and, once past 10 KB, only
+     * REJECTED the promise: the listener stayed attached and the request was never
+     * destroyed, so the buffer kept growing long after the caller had already answered 500.
+     * The ceiling was ANNOUNCED but not ENFORCED - one authenticated tenant dripping a body
+     * held the socket until requestTimeout (60 s) and grew the heap the whole time.
+     * Measured on this exact pattern: a server with a 64 MB heap dies in under a second,
+     * and the process dying takes every in-memory MCP session with it (the very outcome the
+     * last-resort handlers at the bottom of this file exist to prevent).
+     *
+     * `for await` is the pattern readBody already uses: a throw out of the loop makes the
+     * async iterator DESTROY the request, so not one more byte is read. The count is in
+     * BYTES rather than characters, so a multi-byte body cannot slip past the ceiling
+     * either. An oversized body is refused outright - never truncated and applied.
+     */
+    const GOVDE_TAVANI = 10_000;
+    let govde: string;
+    try {
+      const parcalar: Buffer[] = [];
+      let boyut = 0;
+      for await (const c of req) {
+        boyut += (c as Buffer).length;
+        if (boyut > GOVDE_TAVANI) throw new Error("gövde çok büyük");
+        parcalar.push(c as Buffer);
+      }
+      govde = Buffer.concat(parcalar).toString("utf8");
+    } catch {
+      // Fail closed: no setting is touched, and the stream is already destroyed.
+      return html(
+        res,
+        413,
+        ayarSayfasi(user, {
+          tur: "hata",
+          metin: `İstek reddedildi: form gövdesi ${GOVDE_TAVANI} bayt sınırını aştı (ya da okunamadı).`,
+        })
+      );
+    }
     const form = new URLSearchParams(govde);
     const tavan = Number(form.get("tavan"));
     if (!Number.isFinite(tavan) || tavan <= 0 || tavan > MUTLAK_BUTCE_TAVANI) {
