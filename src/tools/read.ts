@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { formatAdsError, type ContextProvider } from "../adsClient.js";
 import { enums } from "google-ads-api";
-import { dateRange, ensureGaqlLimit, mikrodanTutar, sayiOku, sayiMetni } from "../util.js";
+import { dateRange, gaqlDoymaProbu, mikrodanTutar, sayiOku, sayiMetni } from "../util.js";
 
 /**
  * Carries only the fields that could GENUINELY be read into the JSON.
@@ -192,9 +192,19 @@ const ARAMA_TERIMI_SEMASI = {
 };
 
 const GAQL_SEMASI = {
-  satirSayisi: z.number().describe("API'den dönen toplam satır"),
+  satirSayisi: z
+    .number()
+    .describe("Ölçülen satır sayısı — kesildi=true ise bu bir ALT SINIRDIR, hesabın toplamı DEĞİLDİR"),
   gosterilen: z.number(),
-  kesildi: z.boolean().describe("true ise satırların bir kısmı atlandı"),
+  // The cap that cuts the list can be the QUERY'S OWN LIMIT, not just the tool's ceiling:
+  // saying "the query's whole result" would let an agent read `kesildi=true` on its own
+  // `LIMIT 100` as a tool malfunction instead of "there are more rows than you asked for".
+  kesildi: z
+    .boolean()
+    .describe(
+      "true ise EŞLEŞEN satırların bir kısmı atlandı: gördüğünden fazlası var — tavan sorgunun " +
+        "KENDİ LIMIT'i de olabilir; 'hesapta bu kadar var' SONUCUNA VARMA"
+    ),
   satirlar: z.array(z.unknown()),
 };
 
@@ -410,32 +420,86 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
       inputSchema: {
         customerId: z.string().describe("Google Ads müşteri ID (örn. 1234567890)"),
         query: z.string().describe("GAQL sorgusu, örn: SELECT campaign.name, metrics.clicks FROM campaign WHERE segments.date DURING LAST_30_DAYS"),
-        limit: z.number().int().min(1).max(1000).optional().describe("Maks satır (varsayılan 100)"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(1000)
+          .optional()
+          .describe(
+            "Maks satır (varsayılan 100). Sorgunun KENDİ LIMIT'i daha küçükse geçerli olan odur — " +
+              "o zaman liste onda kesilir ve kesildi=true gelir"
+          ),
       },
       outputSchema: GAQL_SEMASI,
     },
     async ({ customerId, query, limit }) => {
       try {
-        // A query without LIMIT pulls every page into memory — add one if it is missing
-        const rows = await getCtx().queryWithRetry(customerId, ensureGaqlLimit(query, limit ?? 100));
-        let capped = rows.slice(0, limit ?? 100);
+        const goster = limit ?? 100;
+        /**
+         * A query without LIMIT pulls every page into memory, so one is imposed — and the
+         * imposed LIMIT is cap+1: a SATURATION PROBE, the same one the report tools use
+         * (campaign 501, search terms and keywords 201, customer_client cap+2).
+         *
+         * The probe is what makes truncation MEASURABLE. Google returns at most LIMIT rows,
+         * so asking for exactly as many rows as are displayed left `rows.length > goster`
+         * unreachable and `kesildi` STRUCTURALLY false — not "nothing was cut" but "the
+         * question can never be answered". On an account holding 5000 negative keywords the
+         * tool answered "100 satır (100 gösteriliyor), kesildi:false"; the agent read that
+         * as the account HAVING 100 of them and proposed an already-excluded term again.
+         * The clamp applied to an oversized user LIMIT (the OOM protection) was silent for
+         * the same reason. Unknown is not a count: the extra row is asked for so that
+         * "exactly 100 rows exist" can be told apart from "at least 100 exist".
+         *
+         * THE PROBE MUST SURVIVE THE CALLER'S OWN LIMIT. A plain clamp leaves an existing
+         * `LIMIT 100` untouched — it is not above the ceiling — and the query goes out
+         * asking for exactly as many rows as are shown, which switches the probe back off
+         * on precisely the query an agent writes by hand. `gaqlDoymaProbu` therefore
+         * decides the effective cap (the SMALLER of the query's LIMIT and `goster`, so the
+         * caller's limit is never quietly raised) and asks for cap+1. `tavan` — not
+         * `goster` — is what every count, slice and warning below is measured against.
+         */
+        const { sorgu, tavan } = gaqlDoymaProbu(query, goster);
+        const rows = await getCtx().queryWithRetry(customerId, sorgu);
+        // The probe row is NEVER shown: it exists only to answer "is there more?".
+        let capped = rows.slice(0, tavan);
+        const doydu = rows.length > tavan;
 
         /**
          * Trim by row, never by character. Cutting the serialised text mid-value would
          * hand the agent malformed JSON; dropping whole rows keeps the payload valid.
          */
         const CHAR_CAP = 20_000;
-        let kesildi = capped.length < rows.length;
+        let buyuktu = false;
         while (capped.length > 1 && JSON.stringify(capped).length > CHAR_CAP) {
           capped = capped.slice(0, Math.floor(capped.length / 2));
-          kesildi = true;
+          buyuktu = true;
         }
+        const kesildi = doydu || buyuktu;
+
+        // The announced count comes from the MEASURED rows, never from `rows.length`: that
+        // would report the probe row, which appears in no table the agent can see — the
+        // heading and the payload would disagree.
+        const olculen = Math.min(rows.length, tavan);
+        // Both causes are named, because they call for different actions: a saturated list
+        // needs a narrower query or a higher limit, an oversized payload needs fewer fields.
+        const notlar: string[] = [];
+        if (doydu)
+          notlar.push(
+            `liste ${tavan} satırda KESİLDİ: daha fazlası var, görünmeyenler bu çıktıda YOK — ` +
+              // The cap that bit is named, because it can be the QUERY'S OWN LIMIT: telling
+              // the agent to "raise limit" when its own `LIMIT 100` is what cut the list
+              // sends it round the same loop and it reads the same wrong count again.
+              `"${olculen} satır var" SONUCUNA VARMA; sorguyu daralt, sorgudaki LIMIT'i ya da ` +
+              `limit parametresini yükselt (tavan 1000)`
+          );
+        if (buyuktu) notlar.push("çıktı büyüktü, satır sayısı azaltıldı: daha az alan seç ya da limit düşür");
 
         const ozet =
-          `${rows.length} satır (${capped.length} gösteriliyor)` +
-          (kesildi ? " — çıktı büyüktü, satır sayısı azaltıldı: daha az alan seç ya da limit düşür" : "") +
+          `${olculen} satır (${capped.length} gösteriliyor)` +
+          (notlar.length ? ` — ${notlar.join("; ")}` : "") +
           `:\n${JSON.stringify(capped)}`;
-        return ikili(ozet, { satirSayisi: rows.length, gosterilen: capped.length, kesildi, satirlar: capped });
+        return ikili(ozet, { satirSayisi: olculen, gosterilen: capped.length, kesildi, satirlar: capped });
       } catch (e) {
         return err(e);
       }

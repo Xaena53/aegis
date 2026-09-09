@@ -188,8 +188,24 @@ export function hashApiKey(plain: string): string {
   return createHash("sha256").update(plain).digest("hex");
 }
 
+/**
+ * How many unreadable row ids the startup refusal lists at once.
+ *
+ * The cap exists so a store that is broken WHOLESALE (a rotated key, a foreign restore)
+ * does not turn one fatal line into thousands. It never changes the verdict — one
+ * unreadable row still refuses — only how much of the census fits on the screen.
+ */
+const KIRIK_LISTE_TAVANI = 20;
+
 export class UserStore {
   private db: DatabaseSync;
+  /**
+   * The file actually opened, kept so the refusal below can NAME it. Which file is in use
+   * is not obvious to the operator: varsayilanYol() may have fallen back to the old
+   * `adspilot.db`, or AEGIS_DB may point somewhere else entirely — and a recovery command
+   * run against the wrong file "fixes" nothing while looking like it worked.
+   */
+  private readonly yol: string;
 
   /**
    * The file to use when AEGIS_DB is not set — WITHOUT ABANDONING THE OLD NAME.
@@ -237,6 +253,7 @@ export class UserStore {
           "kullanıcı token'ları her yeniden başlatmada sessizce silinirdi. AEGIS_DB'ye gerçek bir yol ver."
       );
     }
+    this.yol = path;
     try {
       this.db = new DatabaseSync(path);
     } catch (e: any) {
@@ -432,19 +449,92 @@ export class UserStore {
    * tenant met a 500 with no clue in it on their first request. The fault surfaced long after
    * the only moment it could be fixed (startup), and in the wrong layer.
    *
-   * One record is enough: the key either opens all of them or none.
+   * EVERY RECORD IS TRIED, NOT A SAMPLE OF ONE. This used to read a single row
+   * (`ORDER BY id LIMIT 1`) on the reasoning that "the key either opens all of them or
+   * none". That is an ASSUMPTION about the store, not a property of it: nothing stops rows
+   * encrypted under DIFFERENT keys from sitting side by side. A partial restore, a row
+   * merged back from an older backup, or a key rotation caught halfway through (some
+   * tenants have reconnected through /connect, some have not) all produce exactly that
+   * store. When the sampled row happened to be one of the readable ones, this gate answered
+   * 'calisiyor', the process came up, /health went green — and the tenants whose rows were
+   * written under the other key met the very "500 with no clue in it" this check exists to
+   * prevent. A gate that assumes uniformity reports GREEN on a store it never looked at, so
+   * the assumption is now measured: one unreadable row is enough to REFUSE.
+   *
+   * The failing record is named by its ROW ID, never by its email or its secret: the
+   * operator needs to know which row to repair, and nothing about that row travels into a
+   * log line.
+   *
+   * THE SCAN DOES NOT STOP AT THE FIRST FAILURE, AND THE REFUSAL CARRIES ITS OWN RECOVERY
+   * PROCEDURE.
+   *
+   * Widening the gate from one sampled row to every row also widened what it can lock: any
+   * unreadable row now holds the whole process down, and the only caller (http.ts) answers
+   * with process.exit(1). Under systemd's `Restart=` or Docker's `--restart`, that is a
+   * crash loop rather than a stop. So the two things the operator needs have to be IN THE
+   * REFUSAL, because after it there is no other surface left — no /connect page, no MCP
+   * tool, no admin route; the process is gone:
+   *
+   *   1) THE WHOLE CENSUS, not the first casualty. Returning at the first failure told the
+   *      operator about ONE row; repairing it and restarting revealed the next one, one
+   *      restart per broken row. Measured on a four-tenant store with rows #2 and #4
+   *      written under a foreign key, the old gate said only "kayıt #2". Counting them all
+   *      turns N restarts into one repair pass, and the count itself is the diagnosis: 1 of
+   *      4 is a merged-back row, 4 of 4 is a rotated key or a foreign restore.
+   *   2) THE WAY OUT. There is no in-process route: the codebase has no user-deletion path
+   *      (no DELETE FROM users anywhere), and reconnecting through /connect — which is what
+   *      http.ts tells the operator to do — needs a process that starts. Every repair is
+   *      therefore made OFFLINE with sqlite3, so the commands are written out here in full,
+   *      backup first, key restore before deletion, and only the rows named above.
+   *
+   * Nothing here relaxes the gate: an unreadable row still REFUSES. The row ids, the
+   * counts and the database path are the operator's own operational facts — no email, no
+   * ciphertext, no secret joins them.
    */
   anahtarCalisiyorMu(): "bos" | "calisiyor" | { hata: string } {
-    const row = this.db
-      .prepare(`SELECT refresh_token_enc FROM users ORDER BY id LIMIT 1`)
-      .get() as any;
-    if (!row) return "bos";
-    try {
-      decryptSecret(String(row.refresh_token_enc));
-      return "calisiyor";
-    } catch (e: any) {
-      return { hata: String(e?.message ?? e) };
+    const satirlar = this.db
+      .prepare(`SELECT id, refresh_token_enc FROM users ORDER BY id`)
+      .all() as any[];
+    if (!satirlar.length) return "bos";
+    const kirikIdler: number[] = [];
+    let ilkNeden = "";
+    for (const satir of satirlar) {
+      try {
+        decryptSecret(String(satir.refresh_token_enc));
+      } catch (e: any) {
+        kirikIdler.push(Number(satir.id));
+        // The first reason is kept verbatim; the rest are almost always the same sentence,
+        // and a wall of identical messages hides the census.
+        if (!ilkNeden) ilkNeden = String(e?.message ?? e);
+      }
     }
+    if (!kirikIdler.length) return "calisiyor";
+
+    const gosterilen = kirikIdler.slice(0, KIRIK_LISTE_TAVANI);
+    const kalan = kirikIdler.length - gosterilen.length;
+    // The DELETE only ever names the ids actually PRINTED, so the command stays runnable
+    // as written. A truncated list is said out loud instead of being hidden behind an
+    // ellipsis inside SQL.
+    const idListesi = gosterilen.join(", ");
+    const kirpmaNotu =
+      kalan > 0
+        ? `\n       (Liste ${KIRIK_LISTE_TAVANI} satırla sınırlı; kalan ${kalan} satır bir sonraki açılışta aynı biçimde bildirilir.)`
+        : "";
+    const kirikListesi =
+      gosterilen.map((id) => `#${id}`).join(", ") + (kalan > 0 ? `, +${kalan} satır daha` : "");
+    return {
+      hata:
+        `kayıt #${kirikIdler[0]}: ${ilkNeden}\n` +
+        `  Açılamayan kayıt: ${kirikIdler.length}/${satirlar.length} — ${kirikListesi}\n` +
+        `  Veritabanı: ${this.yol}\n` +
+        `  Kurtarma — süreç bu hâlde açılmıyor, bu yüzden onarım SÜREÇ DIŞINDA yapılır:\n` +
+        `    1) Önce yedek:  sqlite3 "${this.yol}" ".backup '${this.yol}.kurtarma-yedegi'"\n` +
+        `    2) Doğru AEGIS_MASTER_KEY'i geri koyup yeniden başlat — satırlar bununla açılıyorsa iş biter.\n` +
+        `    3) Anahtar bulunamıyorsa YALNIZ yukarıda adı geçen satırlar silinir:\n` +
+        `       sqlite3 "${this.yol}" "DELETE FROM users WHERE id IN (${idListesi});"\n` +
+        `       Bu, o kiracıların API anahtarını geçersiz kılar; /connect üzerinden yeniden bağlandıklarında\n` +
+        `       satırları geçerli anahtarla yeniden yazılır. Okunabilen satırlara DOKUNMA.${kirpmaNotu}`,
+    };
   }
 
   private rowToUser(row: any): StoredUser {

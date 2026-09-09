@@ -66,6 +66,14 @@ interface SahteSecenek {
   istemAcikken?: (config: any) => void;
   /** kampanyaOku fırlatır — Meta'da 500 / #17 hız sınırı / 15 sn zaman aşımı sıradan olaylardır. */
   okumaPatlasin?: boolean;
+  /**
+   * Okunan düğümün türü. Varsayılan "kampanya", çünkü bu düzeneğin canlandırdığı şey GERÇEK
+   * bir kampanya okuması: gerçek istemci `objective` alanını (yalnız kampanyalarda bulunur)
+   * sorar ve türü ondan saptar. Değeri açıkça vermek zorunlu — kampanyaDegilseRet bir AK
+   * LİSTE ve sessizlik gözlem sayılmaz; türünü söylemeyen bir sahte, reklam seti kimliğiyle
+   * tavan atlatma yolunu canlandırır ve para kapılarında reddedilir.
+   */
+  dugumTuru?: "kampanya" | "dogrulanmadi";
 }
 
 /** Çağrılan Meta işlemleri — "hangi araç çağrıldı" ölçülebilsin diye. */
@@ -99,6 +107,7 @@ async function kur(opts: SahteSecenek = {}) {
   const kampanya: MetaKampanya = {
     id: "120200000000001",
     ad: "Test Kampanyası",
+    dugumTuru: opts.dugumTuru ?? "kampanya",
     durum: "PAUSED",
     gunlukButce: opts.mevcutButce,
     butceNotu: opts.butceNotu,

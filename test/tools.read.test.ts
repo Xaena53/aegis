@@ -25,15 +25,24 @@ test("run_gaql: çok satırlı sorgu TEK SATIRA indirilir (sessiz veri kaybı fi
   assert.match(gonderilen, /metrics\.cost_micros FROM campaign/);
 });
 
+/**
+ * The imposed LIMIT is cap+1 ON PURPOSE — a saturation probe, not an off-by-one.
+ *
+ * Google returns at most LIMIT rows, so asking for exactly as many rows as are displayed
+ * makes `rows.length > cap` unreachable and `kesildi` structurally false: the tool could
+ * never tell "exactly 100 rows exist" from "at least 100 exist". The extra row is asked for
+ * so truncation is measurable; it is sliced off before anything is shown. What this test
+ * pins is the CAP still being imposed — that is the OOM protection — not its exact value.
+ */
 test("run_gaql: LIMIT dayatılır, devasa LIMIT tavana kırpılır (OOM koruması)", async () => {
   const { ctx, rec } = sahteContext({ queries: [[/.*/, []]] });
   const c = await baglanti(ctx);
 
   await cagir(c, "run_gaql", { customerId: MUSTERI, query: "SELECT campaign.id FROM campaign" });
-  assert.match(rec.queries.at(-1)!, /LIMIT 100$/, "LIMIT'siz sorguya tavan eklenmeli");
+  assert.match(rec.queries.at(-1)!, /LIMIT 101$/, "LIMIT'siz sorguya tavan (100) + doyma probu (+1) eklenmeli");
 
   await cagir(c, "run_gaql", { customerId: MUSTERI, query: "SELECT campaign.id FROM campaign LIMIT 500000", limit: 50 });
-  assert.match(rec.queries.at(-1)!, /LIMIT 50$/, "kullanıcının devasa LIMIT'i kırpılmalı");
+  assert.match(rec.queries.at(-1)!, /LIMIT 51$/, "kullanıcının devasa LIMIT'i istenen tavana (50) + proba kırpılmalı");
 });
 
 test("campaign_performance: enum'lar SAYI değil AD olarak gösterilir", async () => {

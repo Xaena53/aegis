@@ -80,6 +80,29 @@ export interface MetaKampanya {
    * the operator what to do about it. The refusal message carries this note verbatim.
    */
   butceNotu?: string;
+  /**
+   * WHETHER THE NODE THAT WAS READ WAS OBSERVED TO BE A CAMPAIGN.
+   *
+   * A Meta ad set id is digits too, and `id`, `name`, `status` and `daily_budget` all exist
+   * on an ad set — so the digit clamp in tools/meta.ts lets an ad set id through, the read
+   * succeeds, and the account ceiling ends up measured against that ONE set's budget while
+   * the approval prompt still says "kampanya". Nine sets at 400 each clear a ceiling of 500
+   * one at a time.
+   *
+   * The read therefore asks for `objective`, a field a Campaign has and an AdSet does not,
+   * so the channel can VOUCH FOR SOMETHING IT ACTUALLY OBSERVED. "dogrulanmadi" does not
+   * claim the node is an ad set; it says the node was never seen to be a campaign — and the
+   * money paths refuse on it, because unknown is not "campaign".
+   *
+   * THE FIELD BEING ABSENT IS REFUSED THE SAME WAY. It stays optional because not every
+   * `MetaKampanya` comes out of a read — `kampanyaOlustur` below builds one from a write
+   * response and vouches for nothing — so `kampanyaDegilseRet` (tools/meta.ts) is an ALLOW
+   * list: only the literal "kampanya" opens the money paths, and silence is not an
+   * observation.
+   */
+  dugumTuru?: "kampanya" | "dogrulanmadi";
+  /** WHY the node could not be confirmed to be a campaign; the refusal carries it verbatim. */
+  dugumNotu?: string;
 }
 
 /** The capability surface the tools need; the HTTP client is adapted to it. */
@@ -258,12 +281,43 @@ export function kampanyaDurumu(ham: unknown): { durum?: MetaOkunanDurum; not?: s
 }
 
 /**
+ * IS THE NODE WE READ A CAMPAIGN? Read from a CAMPAIGN-ONLY field, never assumed.
+ *
+ * `objective` is required on every Meta campaign and does not exist on an ad set or an ad.
+ * On the live Graph API asking for it against an ad set is already refused at the wire
+ * (`(#100) Tried accessing nonexisting field (objective) on node type (AdSet)`), so the read
+ * fails and no write follows; this function is the second line, for every response that
+ * arrives WITHOUT that field — a proxy that drops unknown fields, a stubbed transport, a
+ * future Graph version that answers partially.
+ *
+ * The bail-out value is "dogrulanmadi", not "reklam-seti": we do not diagnose what the node
+ * IS, we only refuse to vouch for what we did not see. That is the whole difference between
+ * an observation and an assumption on this path.
+ */
+export function kampanyaDugumu(ham: unknown): {
+  tur: "kampanya" | "dogrulanmadi";
+  not?: string;
+} {
+  if (typeof ham === "string" && ham.trim() !== "") return { tur: "kampanya" };
+  return {
+    tur: "dogrulanmadi",
+    not:
+      `yanıt yalnızca kampanyalarda bulunan 'objective' alanını taşımıyor ` +
+      `(objective: ${gorunurDeger(ham)}); okunan düğümün kampanya olduğu GÖZLENMEDİ — ` +
+      `reklam seti/reklam kimliği de aynı alanların hepsini döndürür`,
+  };
+}
+
+/**
  * Cleans upstream error text before it is shown to the agent.
  *
- * Meta's error bodies can echo the request URL, and access_token is a QUERY PARAMETER — so
- * showing the raw body as-is would be handing the token to the agent, and to a stolen session
- * with it. The same lesson was learned on the CAMARA side; here it is applied from the
- * start.
+ * Meta's error bodies can echo the request, and `access_token` is a query parameter the
+ * Graph API accepts and echoes back. This client no longer sends it that way (see `graf`:
+ * the token travels in the POST body or in an Authorization header), but a body written by
+ * Meta — or by a proxy in front of it — can still carry a token in that shape, so the
+ * masking stays as defence in depth. Showing a raw body as-is would be handing a token to
+ * the agent, and to a stolen session with it. The same lesson was learned on the CAMARA
+ * side; here it is applied from the start.
  */
 /** Extracts text from an exception — the same as `String(e)`, but in one place. */
 function hataMetni(e: unknown): string {
@@ -276,7 +330,60 @@ export function hataTemizle(ham: string, token?: string): string {
   return s.replace(/\s+/g, " ").slice(0, 300);
 }
 
-/** A Graph API call — bounded by a timeout, with the token only in the POST body. */
+/**
+ * "THE OUTCOME IS UNKNOWN" AS A TYPE, NOT AS A SENTENCE.
+ *
+ * tools/meta.ts must not summarise such a throw as "Meta işlemi başarısız" — that asserts
+ * nothing happened, and the agent's usual next move is a retry, which on these paths means
+ * raising the budget a SECOND time or giving birth to a second campaign. That decision used
+ * to be made by matching the WORDING of the sentences raised below: rewriting
+ * "kurulup kurulmadığı doğrulanamıyor" as "teyit edilemiyor" left every test in the suite
+ * green while silently re-labelling an unobserved write as a refusal. A doctrine carried by
+ * a phrase erodes the first time someone edits the phrase.
+ *
+ * The marker is a PROPERTY rather than the class identity alone: `instanceof` is per module
+ * instance, and this value crosses a tool boundary, so a duplicated module copy must not be
+ * able to silently turn an uncertainty back into a failure.
+ */
+export class MetaBelirsizSonuc extends Error {
+  readonly metaBelirsizSonuc = true as const;
+  constructor(mesaj: string) {
+    super(mesaj);
+    this.name = "MetaBelirsizSonuc";
+  }
+}
+
+/** Was this thrown for a write whose outcome we could not observe? */
+export function belirsizSonucMu(e: unknown): boolean {
+  return (e as { metaBelirsizSonuc?: unknown } | null | undefined)?.metaBelirsizSonuc === true;
+}
+
+/**
+ * The sentence for a write we could not observe.
+ *
+ * The instruction ("TEKRAR DENEME") comes BEFORE the cause on purpose: `hataTemizle` caps
+ * the text at 300 characters at the tool boundary, and a cause of unbounded length must not
+ * be able to push the one line the agent has to act on off the end.
+ */
+function yazmaBelirsiz(sebep: string): MetaBelirsizSonuc {
+  return new MetaBelirsizSonuc(
+    "Meta YAZMASININ SONUCU BİLİNMİYOR: hata BİZİM tarafımızda oluştu, istek Meta'ya " +
+      "ulaşmış ve UYGULANMIŞ olabilir. TEKRAR DENEME; önce Meta Ads Manager'dan kampanyanın " +
+      `güncel durumunu ve bütçesini doğrula. Sebep: ${sebep}`
+  );
+}
+
+/**
+ * A Graph API call — bounded by a timeout, with THE TOKEN NEVER IN THE URL: a POST carries
+ * it in the body, a GET in the Authorization header.
+ *
+ * The Graph API also accepts `?access_token=...`, and this function used to use it on the
+ * GET path — while this very comment claimed the token was "only in the POST body". A token
+ * in a query string is written down by everything the request passes through (proxy logs,
+ * CDN access logs, crash dumps) and comes back out of every error page that echoes the URL;
+ * hataTemizle masks it on the way out, but a secret that never enters the URL cannot leak
+ * from there at all. The header is the same secret in a place that is not logged by default.
+ */
 async function graf(
   ayar: MetaAyar,
   yol: string,
@@ -297,34 +404,65 @@ async function graf(
     if (yontem === "POST") {
       istek.headers = { "Content-Type": "application/x-www-form-urlencoded" };
       istek.body = new URLSearchParams({ ...govde, access_token: token }).toString();
+    } else {
+      istek.headers = { Authorization: `Bearer ${token}` };
     }
-    const hedefUrl = yontem === "GET" ? `${url}?${new URLSearchParams({ ...govde, access_token: token })}` : url;
+    // The query string carries ONLY the caller's fields; `govde` never gets the token
+    // merged into it here.
+    const sorgu = new URLSearchParams(govde).toString();
+    const hedefUrl = yontem === "GET" && sorgu ? `${url}?${sorgu}` : url;
     let cevap: Response;
     try {
       cevap = await fetch(hedefUrl, istek);
     } catch (e: any) {
       /**
-       * A WRITE THAT TIMED OUT IS NOT "FAILED" — ITS OUTCOME IS UNKNOWN.
+       * A WRITE WE COULD NOT OBSERVE IS NOT "FAILED" — ITS OUTCOME IS UNKNOWN.
        *
        * The abort happens on our side; Meta may already have received the request and
        * APPLIED it. Saying "the Meta operation failed" convinces the agent and the user
        * that nothing happened, and the typical next move is to retry — which can mean
        * changing the budget a second time, or giving birth to a second campaign.
        *
-       * A READ is different: aborting a GET changes nothing, so it really did fail. That is
-       * why the distinction is drawn by method.
+       * THE RULE IS THE METHOD, NOT THE NAME OF THE ERROR. This used to test for
+       * `AbortError` alone, so a POST that fell over with `TypeError: fetch failed` — how
+       * Node surfaces ECONNRESET, a socket hang up, a connection dropped AFTER the request
+       * bytes went out — was summarised to the agent as "Meta işlemi başarısız: fetch
+       * failed". Those are the same danger as a timeout and a strictly wider class of it:
+       * the request may well have reached Meta and been applied. Every transport-level
+       * throw on a WRITE is therefore an unknown outcome.
+       *
+       * A READ is different: a GET that never came back changed nothing, so it really did
+       * fail. That is why the distinction is drawn by method.
        */
-      if (e?.name === "AbortError" && yontem === "POST") {
-        throw new Error(
-          "Meta işleminin SONUCU BİLİNMİYOR: istek 15 saniyede yanıt vermediği için " +
-            "iptal edildi, ama iptal bizim tarafımızdadır — Meta isteği almış ve UYGULAMIŞ " +
-            "olabilir. TEKRAR DENEME; önce Meta Ads Manager'dan kampanyanın güncel durumunu " +
-            "ve bütçesini doğrula."
-        );
+      if (yontem === "POST") {
+        if (e?.name === "AbortError") {
+          throw new MetaBelirsizSonuc(
+            "Meta işleminin SONUCU BİLİNMİYOR: istek 15 saniyede yanıt vermediği için " +
+              "iptal edildi, ama iptal bizim tarafımızdadır — Meta isteği almış ve UYGULAMIŞ " +
+              "olabilir. TEKRAR DENEME; önce Meta Ads Manager'dan kampanyanın güncel durumunu " +
+              "ve bütçesini doğrula."
+          );
+        }
+        // The cause reaches the agent, so it is masked and capped like every other upstream
+        // text on this boundary.
+        throw yazmaBelirsiz(`bağlantı taşıma katmanında koptu (${hataTemizle(hataMetni(e), token)})`);
       }
       throw e;
     }
-    const metin = await cevap.text();
+    let metin: string;
+    try {
+      metin = await cevap.text();
+    } catch (e) {
+      /**
+       * The request went out IN FULL and Meta answered; only the body was lost on the way
+       * back. For a write that is the strongest form of "we could not observe the outcome",
+       * not a reason to tell the agent nothing happened.
+       */
+      if (yontem === "POST") {
+        throw yazmaBelirsiz(`yanıt gövdesi okunamadı (${hataTemizle(hataMetni(e), token)})`);
+      }
+      throw e;
+    }
     if (!cevap.ok) {
       throw new Error(`Meta API ${cevap.status}: ${hataTemizle(metin, token)}`);
     }
@@ -562,19 +700,40 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
        */
       const yeniId = cevap?.id;
       if (yeniId === undefined || yeniId === null || String(yeniId).trim() === "") {
-        throw new Error(
+        throw new MetaBelirsizSonuc(
           "Meta kampanya oluşturma yanıtında kimlik (id) yok — kampanyanın kurulup " +
             "kurulmadığı doğrulanamıyor. TEKRAR DENEME; önce Meta Ads Manager'dan kontrol et."
         );
       }
+      /**
+       * NO `dugumTuru` IS CLAIMED HERE, deliberately. This object is built from a POST
+       * response, not from a read that asked for `objective`; the only campaign-ness on
+       * offer would be an inference from the edge the POST was aimed at, and an inference
+       * is not an observation. `kampanyaDegilseRet` accepts nothing but an explicit
+       * "kampanya", so if this shape ever reaches a money gate it is refused rather than
+       * waved through — which is the safe direction for a value nobody verified.
+       */
       return { id: String(yeniId), ad, durum: "PAUSED", gunlukButce };
     },
     async kampanyaOku(kampanyaId) {
-      const c = await graf(ayar, kampanyaId, { fields: "id,name,status,daily_budget" }, "GET");
+      /**
+       * `objective` IS ASKED FOR BECAUSE IT IS CAMPAIGN-ONLY, not because anyone needs the
+       * value. It is the only thing in this response that an ad set id cannot also produce
+       * — see MetaKampanya.dugumTuru and kampanyaDugumu.
+       */
+      const c = await graf(
+        ayar,
+        kampanyaId,
+        { fields: "id,name,objective,status,daily_budget" },
+        "GET"
+      );
+      const dugum = kampanyaDugumu(c?.objective);
       const durum = kampanyaDurumu(c?.status);
       const temel: MetaKampanya = {
         id: String(c.id),
         ad: String(c.name ?? ""),
+        dugumTuru: dugum.tur,
+        dugumNotu: dugum.not,
         durum: durum.durum,
         durumNotu: durum.not,
       };

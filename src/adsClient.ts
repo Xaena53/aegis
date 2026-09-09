@@ -184,7 +184,22 @@ export class AdsContext {
          * carried through marked `erisilemedi`, and the result is flagged INCOMPLETE.
          */
         okunamayan.push(id);
-        if (!gorulen.has(id)) {
+        /**
+         * The account may ALREADY be in the list, having arrived as a manager's
+         * customer_client descendant before its own turn came round. Then the row is
+         * FLAGGED IN PLACE rather than repeated: the name and `yonetici` read from the
+         * parent may well be correct, but an account whose OWN query throws is precisely
+         * the one that must not be selected. Left unflagged it slipped through the
+         * `!erisilemedi` filters in resources.ts and prompts.ts and was offered as a
+         * usable ad account, while list_accounts (read.ts) reported the SAME account as
+         * unreachable - two surfaces of one server contradicting each other, and the
+         * outcome depended on nothing but the order listAccessibleCustomers happened to
+         * return.
+         */
+        const mevcut = liste.find((h) => h.id === id);
+        if (mevcut) {
+          mevcut.erisilemedi = true;
+        } else {
           gorulen.add(id);
           liste.push({ id, ad: "(detay okunamadı)", yonetici: false, erisilemedi: true });
         }

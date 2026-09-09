@@ -184,22 +184,74 @@ function maskGaqlStrings(q: string): string {
  * that equality).
  */
 export function ensureGaqlLimit(query: string, limit: number): string {
-  const q = normalizeGaql(query);
-  const masked = maskGaqlStrings(q); // same length as q, so indices stay valid
-  const pIdx = masked.search(/\bPARAMETERS\b/i);
-  const bodyEnd = pIdx >= 0 ? pIdx : q.length;
-  const govdeKesim = masked.slice(0, bodyEnd).replace(/[\s;]+$/, "").length;
-  const body = q.slice(0, govdeKesim);
-  const maskedBody = masked.slice(0, govdeKesim);
-  const kuyrukKesim = pIdx >= 0 ? masked.slice(pIdx).replace(/[\s;]+$/, "").length : 0;
-  const tail = pIdx >= 0 ? ` ${q.slice(pIdx, pIdx + kuyrukKesim).trim()}` : "";
-
+  const { body, maskedBody, tail } = gaqlBolumleri(query);
   const m = /\bLIMIT\s+(\d+)$/i.exec(maskedBody);
   if (m) {
     if (Number(m[1]) <= limit) return body + tail;
     return `${body.slice(0, m.index).trimEnd()} LIMIT ${limit}${tail}`;
   }
   return `${body} LIMIT ${limit}${tail}`;
+}
+
+/**
+ * Splits a normalised query into its body, the length-matched mask of that body, and the
+ * PARAMETERS tail. Shared by every rewrite below so the semicolon trim, the literal
+ * masking and the PARAMETERS placement are decided in exactly ONE place: a second copy of
+ * this parsing would be a second chance to disagree about where the body ends, and the
+ * index arithmetic depends on `maskedBody` and `body` having the same length.
+ */
+function gaqlBolumleri(query: string): { body: string; maskedBody: string; tail: string } {
+  const q = normalizeGaql(query);
+  const masked = maskGaqlStrings(q); // same length as q, so indices stay valid
+  const pIdx = masked.search(/\bPARAMETERS\b/i);
+  const bodyEnd = pIdx >= 0 ? pIdx : q.length;
+  const govdeKesim = masked.slice(0, bodyEnd).replace(/[\s;]+$/, "").length;
+  const kuyrukKesim = pIdx >= 0 ? masked.slice(pIdx).replace(/[\s;]+$/, "").length : 0;
+  return {
+    body: q.slice(0, govdeKesim),
+    maskedBody: masked.slice(0, govdeKesim),
+    tail: pIdx >= 0 ? ` ${q.slice(pIdx, pIdx + kuyrukKesim).trim()}` : "",
+  };
+}
+
+/**
+ * SATURATION PROBE for a free-form query: the statement to send, and the row cap it can
+ * actually measure.
+ *
+ * `ensureGaqlLimit` is a CLAMP — it leaves an existing LIMIT alone whenever that LIMIT is
+ * at or below the ceiling. That is right for a ceiling and wrong for a probe: asking for
+ * exactly as many rows as will be displayed makes `rows.length > cap` unreachable, so
+ * "exactly cap rows exist" and "at least cap rows exist" become indistinguishable and
+ * truncation is reported as `false` — not measured false, STRUCTURALLY false. A caller
+ * writing its own `... LIMIT 100` therefore switched the probe off: on an account holding
+ * 5000 negative keywords the tool answered "100 satır, kesildi:false" and the agent read
+ * that as the account HAVING 100 of them.
+ *
+ * So the effective cap is the SMALLER of the two limits — the query's own LIMIT still
+ * binds, it is never raised behind the caller's back — and the probe is that cap + 1. The
+ * ceiling still holds, because the result can never exceed `goster`. A degenerate
+ * `LIMIT 0` therefore still shows nothing: the single row fetched is the probe, and a probe
+ * row is never displayed, only counted.
+ *
+ * `goster` is validated rather than clamped: an invalid ceiling throws instead of silently
+ * becoming some other number (this repository does not silently correct values). The refusal
+ * says exactly what this gate checks — an integer of at least 1 — and no more. There is no
+ * upper bound HERE; the 1000-row ceiling lives in the caller's schema (tools/read.ts, zod
+ * `.max(1000)`), and a message announcing a limit this function never applies would describe
+ * a gate that does not exist.
+ */
+export function gaqlDoymaProbu(query: string, goster: number): { sorgu: string; tavan: number } {
+  if (!Number.isInteger(goster) || goster < 1) {
+    throw new Error(`Geçersiz satır tavanı: ${goster} — 1 veya daha büyük tam sayı olmalı.`);
+  }
+  const { body, maskedBody, tail } = gaqlBolumleri(query);
+  const m = /\bLIMIT\s+(\d+)$/i.exec(maskedBody);
+  const yazili = m ? Number(m[1]) : undefined;
+  const tavan = yazili === undefined ? goster : Math.min(yazili, goster);
+  // The written LIMIT is taken OFF and the probe is imposed through `ensureGaqlLimit`, so
+  // a LIMIT still only ever gets written into a query in one place.
+  const govde = m ? body.slice(0, m.index).trimEnd() : body;
+  return { sorgu: ensureGaqlLimit(`${govde}${tail}`, tavan + 1), tavan };
 }
 
 /** Budget clamp: returns a refusal message for an over-ceiling or invalid request, null if allowed. */
