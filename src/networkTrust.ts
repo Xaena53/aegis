@@ -16,11 +16,18 @@
  *   - Feature unconfigured (no AEGIS_NAC_TOKEN): pass-through, evidence line says so.
  *   - Configured but incomplete (token without approver phone): refuse with a config error.
  *   - Network API unreachable or throws: refuse. If the trust anchor cannot answer,
- *     the spend does not happen.
+ *     the spend does not happen. CAREFUL: with AEGIS_STEPUP on this refusal is no longer
+ *     unconditional — "ag-yanitsiz" is in KADEME_UYGUN, so a silent link can be escalated
+ *     instead of refused when a link that could genuinely contradict it came back clean
+ *     (see KADEME_UYGUN and YANITSIZ_KEFIL_ESLEMESI).
  *
- * Risk tiers widen the lookback window rather than change the decision logic:
- * "medium" (budget increases) checks the last 24h; "high" (go-live, changes to a
- * serving campaign) checks the configured window, 72h by default.
+ * Risk tiers do TWO things, and only the first one used to be written here. (1) They narrow
+ * the look-back window: "medium" (budget increases) checks the last 24h, "high" (go-live,
+ * changes to a serving campaign) checks the configured window, 72h by default. (2) They
+ * decide WHICH LINKS RUN AT ALL: on "medium" only SIM Swap runs, on "high" all six. That
+ * second half is the decision logic itself, not a window, and its single source is
+ * RISK_HALKA_ESLEMESI (see halkaKosarMi) — every layer is gated by it, so a new link must
+ * pass through that gate too or it silently starts running on budget increases.
  *
  * ── Link 2 of the trust chain: Number Verification (SIMULATION ONLY) ──────────
  *
@@ -45,8 +52,15 @@
  * simulated channel below runs — and only where the code says so.
  *
  * Chain order is fixed and one-directional: SIM Swap first, Number Verification
- * second. A swapped SIM already refuses the action, so the second link never gets
- * the chance to soften that verdict; it can only add another reason to refuse.
+ * second. WITH AEGIS_STEPUP OFF (the default) a swapped SIM already refuses the action, so
+ * the second link never gets the chance to soften that verdict; it can only add another
+ * reason to refuse. WITH AEGIS_STEPUP ON that is no longer true and must not be read as an
+ * invariant: a reason in KADEME_UYGUN — a swapped SIM among them — is held PENDING, the
+ * remaining links DO run, and if a link that can genuinely contradict the signal comes back
+ * clean over a real channel AND actually observed something, the refusal becomes an
+ * ESCALATION (see agDogrula, KEFIL_ESLEMESI and HalkaSonuc.gozlemsiz). What stays
+ * unconditional is the other direction: a later link can always add another reason to
+ * refuse, and a second degraded signal cancels the escalation.
  * The second link runs ONLY on the "high" tier (go-live and changes to a serving
  * campaign) — the demo narrative is "go-live gets the full chain".
  *
@@ -190,9 +204,19 @@ export interface ErisilebilirlikKanali {
  * `yurtDisinda` is CAMARA's roaming boolean and `ulkeler` is the ISO-2 list mapped from the
  * MCC. Both fields are optional because they are optional in the SDK's own type; a field
  * that cannot be read fails closed (the same reasoning as in ErisilebilirlikKanali).
+ *
+ * THREE STATES, NOT TWO — and the third one is why `ulkelerOkunamadi` exists. `ulkeler`
+ * being absent used to carry two incompatible meanings at once: "the network reported no
+ * country" (nothing to compare against) and "the network reported something this adapter
+ * could not read" (a string instead of a list, an object, null). The decision layer saw the
+ * same `undefined` for both and, together with `roaming:false`, returned CLEAN — so a body
+ * meaning {NL} passed merely because its type was malformed, while the well-typed ["NL"] was
+ * refused. `ulkelerOkunamadi` separates the two: it is set ONLY when the field arrived and
+ * could not be read, and the layer turns it into a fail-closed "ag-yanitsiz" refusal, the
+ * same treatment `yurtDisinda` already had.
  */
 export interface KonumKanali {
-  ulkeDurumu(): Promise<{ yurtDisinda?: boolean; ulkeler?: string[] }>;
+  ulkeDurumu(): Promise<{ yurtDisinda?: boolean; ulkeler?: string[]; ulkelerOkunamadi?: boolean }>;
 }
 
 /**
@@ -361,8 +385,17 @@ export interface AgIz {
    *
    * "yukseltildi": a link produced a degraded signal, and instead of refusing it the chain
    * ESCALATED — because the remaining links came back clean over a real channel, the action
-   * was bound to a stronger human verification that names the degraded signal explicitly,
-   * and to a lowered ceiling.
+   * was bound to a stronger human verification that names the degraded signal explicitly.
+   *
+   * WHAT THE ESCALATION IS PAID FOR WITH, stated exactly: a prompt whose header names the
+   * degraded signal, a changed question ("despite the degraded network signal?"), a REFUSAL
+   * on a client that cannot show a prompt, and a refusal whenever no link capable of
+   * contradicting the signal came back clean. These three comments used to promise a LOWERED
+   * SPENDING CEILING as well; NOTHING in this codebase lowers a ceiling on an escalation —
+   * `KademeKarari` carries no ceiling, `OnaySonucu` does not carry the escalation to the
+   * caller at all, and budgetGuardFor/onaySonrasiKelepce run with the tenant's unchanged
+   * `maxDailyBudget`. Promising a compensating control that does not exist makes the gate
+   * read stronger than it is, so the promise is gone rather than the wording softened.
    *
    * For an auditor the distinction is critical: "passed clean" and "passed by escalation
    * despite a degraded signal" are not the same thing, and a single 'gecti' label would
@@ -454,6 +487,12 @@ export const KADEME_UYGUN: ReadonlySet<RetNedeni> = new Set<RetNedeni>([
  * so it appears in none of the rows below. `nv` is absent for the same reason: it is
  * simulation-only anyway.
  *
+ * A ROW HERE IS NECESSARY, NOT SUFFICIENT. The link named in the row also has to have
+ * OBSERVED something on this run: the location link comes back clean when the network
+ * reports no country at all, and a link that measured nothing contradicts nothing (see
+ * HalkaSonuc.gozlemsiz). The table says which links COULD disprove the signal; whether one
+ * of them actually did is decided per run, in agDogrula.
+ *
  * For any reason NOT in the table the set is empty (fail closed: no link can vouch for an
  * unrecognised degraded signal, so no escalation is granted). Every reason in KADEME_UYGUN
  * must have a row here; test/kademeliDogrulama.test.ts checks the two lists against each
@@ -471,10 +510,131 @@ export const KEFIL_ESLEMESI: Readonly<Record<string, readonly string[]>> = Objec
   // The location is unexpected: with the SIM and device unchanged, travel is a plausible
   // explanation — provided there is no forwarding.
   "konum-beklenmedik": Object.freeze(["simSwap", "devSwap", "callFwd"]),
-  // A check could not give a readable answer: a clean response from the identity links is
-  // meaningful.
+  /**
+   * A check could not give a readable answer: a clean response from the identity links is
+   * meaningful.
+   *
+   * THIS ROW IS NOT ENOUGH ON ITS OWN, and the chain does not use it: "ag-yanitsiz" is the
+   * only reason that does not say WHICH link produced it, so a single row here would let
+   * links vouch for a silence they cannot see into. The link-aware set is
+   * YANITSIZ_KEFIL_ESLEMESI below, and the escalation reads that one for this reason. The row
+   * stays because it is this reason's declaration of "some link CAN vouch for a silence" —
+   * and because test/kademeliDogrulama.test.ts requires a row for every KADEME_UYGUN reason.
+   */
   "ag-yanitsiz": Object.freeze(["simSwap", "devSwap", "loc", "callFwd"]),
 });
+
+/**
+ * WHICH LINK CAN VOUCH FOR WHICH SILENT LINK — "ag-yanitsiz" broken down by the link that
+ * fell silent.
+ *
+ * WHY IT IS NEEDED (measured): "ag-yanitsiz" is a single reason code shared by all six links,
+ * and KEFIL_ESLEMESI's single row counted simSwap+devSwap+loc+callFwd as vouchers no matter
+ * WHICH link had gone quiet. So with the call-forwarding link answering 501 — which the SDK
+ * documentation explicitly allows, and which this file's own catch comment treats as a
+ * refusal — the run measured as: `engel: none, kademe: {neden:"ag-yanitsiz",
+ * dogrulayan:["simSwap","loc","devSwap"]}`. Not one of those three links can see whether
+ * unconditional forwarding is active; they were vouching for a question none of them can
+ * ask. That produced an inverted incentive: forwarding KNOWN to be active is never
+ * escalatable (`cagri-yonlendirme-acik` is deliberately outside KADEME_UYGUN, because the
+ * escalation would travel down the very channel the attacker holds), while forwarding whose
+ * state is UNKNOWN was escalated freely — the unknown treated more leniently than the known,
+ * the exact inverse of this file's fail-closed contract.
+ *
+ * The rule is the same one KEFIL_ESLEMESI states: a link that cannot disprove the signal
+ * cannot vouch for it. A silent link's signal is "we do not know the answer to ITS question",
+ * so its vouchers are the links that can answer a question contradicting it — never the link
+ * itself, and never `reach`/`nv` (liveness and simulation, see KEFIL_ESLEMESI).
+ *
+ * `callFwd` maps to the EMPTY set: unconditional call forwarding is invisible to every other
+ * link in the chain, so no clean answer anywhere corroborates its silence and the chain
+ * refuses (fail closed). An unknown link id is likewise an empty set.
+ *
+ * IT IS DERIVED, NOT COPIED — and that is the point. This table used to be a second hand-
+ * written copy of the same doctrine, row for row identical to KEFIL_ESLEMESI's row for the
+ * reason each link produces when it DETECTS (simSwap<->sim-degisti, devSwap<->cihaz-degisti,
+ * loc<->konum-beklenmedik, reach<->cihaz-erisilemez), with NOTHING holding the two in step.
+ * One doctrine written twice drifts in one direction only: update one table, forget the
+ * other, and the voucher set silently WIDENS — exactly the class of hole this table was
+ * added to close. So the rows are now computed from KEFIL_ESLEMESI through
+ * HALKA_SAPTAMA_NEDENI: a link's silence means "ITS question has no answer", and the links
+ * that can answer a contradicting question are precisely the vouchers for that link's
+ * detection.
+ */
+
+/**
+ * WHICH REFUSAL REASON EACH LINK PRODUCES WHEN IT REALLY DETECTS SOMETHING.
+ *
+ * This is the join between the two voucher tables, and it is the ONLY place the pairing is
+ * written down. `nv` and `callFwd` are here too even though their reasons are deliberately
+ * outside KADEME_UYGUN: the mapping states what the link would say, and the eligibility rule
+ * below decides what that means for an escalation.
+ */
+export const HALKA_SAPTAMA_NEDENI: Readonly<Record<string, RetNedeni>> = Object.freeze({
+  simSwap: "sim-degisti",
+  nv: "nv-uyusmadi",
+  reach: "cihaz-erisilemez",
+  loc: "konum-beklenmedik",
+  devSwap: "cihaz-degisti",
+  callFwd: "cagri-yonlendirme-acik",
+});
+
+/**
+ * THE UNKNOWN IS NEVER TREATED MORE LENIENTLY THAN THE KNOWN.
+ *
+ * If a link's DETECTED signal cannot be escalated at all (its reason is outside
+ * KADEME_UYGUN), then that link falling SILENT cannot be escalated either: the empty set.
+ * That is the rule the call-forwarding hole taught — forwarding known to be active refused
+ * outright while forwarding of unknown state escalated freely — expressed once, for every
+ * link, instead of remembered per row.
+ *
+ * A link never vouches for its own silence, and a link with no row here gets the empty set:
+ * an unrecognised link's silence has no vouchers (fail closed).
+ */
+function yanitsizKefilleriTuret(): Readonly<Record<string, readonly string[]>> {
+  const tablo: Record<string, readonly string[]> = {};
+  for (const [halka, neden] of Object.entries(HALKA_SAPTAMA_NEDENI)) {
+    const kefiller = KADEME_UYGUN.has(neden) ? KEFIL_ESLEMESI[neden] ?? [] : [];
+    tablo[halka] = Object.freeze(kefiller.filter((id) => id !== halka));
+  }
+  return Object.freeze(tablo);
+}
+
+export const YANITSIZ_KEFIL_ESLEMESI: Readonly<Record<string, readonly string[]>> =
+  yanitsizKefilleriTuret();
+
+/** The links' names in human language — used only in the text shown to the approver. */
+const HALKA_ADI: Readonly<Record<string, string>> = Object.freeze({
+  simSwap: "SIM Swap",
+  nv: "numara doğrulaması",
+  reach: "cihaz erişilebilirlik",
+  loc: "konum",
+  devSwap: "cihaz değişimi",
+  callFwd: "çağrı yönlendirme",
+});
+
+/**
+ * THE SENTENCE THE APPROVER READS about the degraded signal — derived from the REASON, not
+ * from the link.
+ *
+ * WHY (measured): the escalation record used to carry a sentence fixed per LINK, but one link
+ * produces two different reasons. With SIM Swap answering unreadably the trace correctly said
+ * `retNedeni:"ag-yanitsiz"` while the approval prompt's header said "⚠ AĞ SİNYALİ BOZUK —
+ * onaylayıcının SIM kartı yakın zamanda değişmiş." NO SIM change had been observed; the query
+ * simply could not be answered. The same slip was measured on three more links: an unreadable
+ * reachability answer became "the device is unreachable", an unreadable location answer became
+ * "the line is outside the expected country", an unreadable device-swap answer became "the
+ * device changed recently". The human was consenting to an event that never happened, and the
+ * audit log said something else — the repo's own rule (test/bozukYanit.test.ts: "an unknown
+ * cannot be turned into an accusation") held at trace level and leaked at prompt level.
+ *
+ * So the detection sentence is used ONLY for a reason that really is a detection; for
+ * "ag-yanitsiz" the text names the silent link and says exactly what happened.
+ */
+function kademeAciklamasi(halkaId: string, neden: RetNedeni, saptamaMetni: string): string {
+  if (neden !== "ag-yanitsiz") return saptamaMetni;
+  return `${HALKA_ADI[halkaId] ?? halkaId} kontrolünden okunabilir yanıt alınamadı`;
+}
 
 /**
  * THE REASONS NEVER ELIGIBLE FOR STEP-UP — and any reason absent from the table is already
@@ -503,8 +663,11 @@ export interface AgKarar {
   iz: AgIz;
   /**
    * Filled in when the decision survived through step-up verification; it is NEVER present
-   * TOGETHER with `engel`. Seeing it, the approval layer shows a different prompt and lowers
-   * the ceiling — so an escalation is not a silent "passed".
+   * TOGETHER with `engel`. Seeing it, the approval layer shows a DIFFERENT prompt — one whose
+   * header names the degraded signal and whose question asks for consent to that signal — and
+   * refuses outright on a client that cannot show a prompt. So an escalation is not a silent
+   * "passed". It does NOT lower any spending ceiling: nothing downstream reads this field for
+   * a ceiling (see AgIz.kademe).
    */
   kademe?: KademeKarari;
 }
@@ -546,6 +709,23 @@ interface HalkaSonuc {
   /** Only the windowed link (5) fills this in; the chain assembly writes it to
    * devSwapPencereSaat. */
   pencereSaat?: number;
+  /**
+   * THE LINK CAME BACK CLEAN WITHOUT OBSERVING ANYTHING — it passes, but it vouches for
+   * NOTHING.
+   *
+   * "Clean" and "checked" are not the same thing. The location link returns clean when the
+   * network says "not roaming" and reports NO country at all: there is nothing to compare
+   * against, so nothing is refused — but neither has the line been placed in the expected
+   * country. Under the vouching rule (see KEFIL_ESLEMESI) such a link cannot carry an
+   * escalation: a link that observed nothing can contradict nothing, and a signal it could
+   * never have contradicted is a signal it cannot vouch for.
+   *
+   * MEASURED, which is why the flag exists: with step-up on, a REAL `swapped:true` plus a
+   * `{roaming:false, countryName:[]}` body came out as `GECTI | kademe=sim-degisti
+   * kefil=[loc]` — a detected SIM change carried through the gate by a link that had not
+   * even verified which country the line was in.
+   */
+  gozlemsiz?: boolean;
 }
 
 /** The subset of AegisConfig this module reads (kept narrow for testability). */
@@ -558,9 +738,10 @@ export interface AgAyar {
    *
    * When it is on, a degraded signal arising from an ordinary human situation — a changed
    * SIM or device, travel, a phone that is off, a silent network — does not end in a flat
-   * refusal: if all the remaining links come back clean over a real channel, the action is
-   * bound to a stronger human verification that names the degraded signal, and to a lowered
-   * ceiling.
+   * refusal: if all the remaining links come back clean over a real channel AND at least one
+   * of them both OBSERVED something and can genuinely contradict the degraded signal, the
+   * action is bound to a stronger human verification that names that signal. No spending ceiling is lowered anywhere in
+   * return; the compensating control is the prompt itself (see AgIz.kademe).
    *
    * The off default exists so the gate's current behaviour does not change underneath
    * anyone: an escalation is a LOOSENING, and a loosening has to be chosen explicitly by the
@@ -1052,11 +1233,29 @@ async function konumKanaliGetir(ayar: AgAyar): Promise<KonumKanali> {
         { device: { phoneNumber } },
         { timeoutInSeconds: 10, maxRetries: 1 }
       );
+      /**
+       * "THE FIELD IS NOT THERE" AND "THE FIELD CANNOT BE READ" ARE SEPARATED HERE.
+       *
+       * `Array.isArray(...) ? ... : undefined` collapsed both into `undefined`, and the
+       * decision layer reads `undefined` as "the network reported no country" — so with
+       * `roaming:false` a body of {roaming:false, countryName:"NL"} (a string instead of a
+       * list) PASSED, evidence line and all, while the well-typed
+       * {roaming:false, countryName:["NL"]} was refused. Same meaning, opposite verdicts,
+       * decided by the body's TYPE — the very "unknown equals clean" pattern links 1, 3, 5
+       * and 6 already closed with `typeof x === "boolean" ? x : undefined`.
+       *
+       * Readable means: a list, every element a string. A list of strings that happen to be
+       * empty or blank stays READABLE on purpose — the comparison below refuses it anyway
+       * (see konumKatmani), and re-routing it here would change a documented behaviour.
+       */
+      const okunabilir =
+        Array.isArray(res.countryName) && res.countryName.every((u) => typeof u === "string");
       return {
         yurtDisinda: typeof res.roaming === "boolean" ? res.roaming : undefined,
         // The raw list GOES NO FURTHER THAN HERE: the decision logic uses it only for the
         // comparison and writes it into no text and no trace (see the file header, Link 4).
-        ulkeler: Array.isArray(res.countryName) ? res.countryName : undefined,
+        ulkeler: okunabilir ? (res.countryName as string[]) : undefined,
+        ulkelerOkunamadi: res.countryName !== undefined && !okunabilir,
       };
     },
   };
@@ -1186,6 +1385,155 @@ function ulkeNormalize(ham: string | undefined): string | undefined {
  */
 export function maskele(phone: string): string {
   return phone.length <= 6 ? "***" : phone.slice(0, 4) + "*".repeat(phone.length - 6) + phone.slice(-2);
+}
+
+/**
+ * What may sit BETWEEN two digits of the same number without breaking it apart: whitespace,
+ * the usual separators, and a percent-escape (`%20`, `%2B`). The run is BOUNDED rather than
+ * `*` so the pattern stays linear on adversarial input — no real formatting puts four
+ * separators between two digits.
+ *
+ * "*" is deliberately NOT in the set: maskele()'s own output contains digits ("+905*******33")
+ * and a separator class that swallowed "*" could let a second pass re-match across a mask that
+ * was already applied.
+ */
+const NUMARA_AYIRICI = "(?:[\\s()+.\\-/]|%[0-9A-Fa-f]{2}){0,4}";
+
+/** Escapes the regex metacharacters of a literal fragment. */
+function desenKac(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * THE FLOOR under a secret before it is used as a literal search key. It is a guard, not a
+ * policy: `split("")` on a blank or stub configured value shreds the whole line, and a value
+ * this short cannot be a full phone number or a usable token anyway. MEASURED before it
+ * existed, with AEGIS_APPROVER_PHONE="9": `Status 429. Body: rate limited, retry after 90 s`
+ * came out as `Status 42***. Body: rate limited, retry after ***0 s` — what the operator lost
+ * was the HTTP status code, not the "phone-shaped fragment" the comment had promised. Nothing
+ * is loosened by it: rule 3 below still masks any full E.164 that appears in the text.
+ * src/config.ts only trims AEGIS_APPROVER_PHONE, so a short value really can reach here.
+ */
+const GIZLI_ASGARI_UZUNLUK = 8;
+
+/**
+ * The cap on ONE operator line's detail. An upstream body is not a length the operator chose:
+ * measured, a 5000-character message printed as 5047 characters of terminal.
+ */
+const OPERATOR_AYRINTI_TAVANI = 300;
+
+/**
+ * REMOVES THE APPROVER'S NUMBER FROM RAW UPSTREAM TEXT — whatever FORMAT the upstream chose.
+ *
+ * WHY IT EXISTS (measured, not hypothetical): the five catch branches used to redact with
+ * `String(e.message).split(approverPhone).join(maskeli)`, which only ever matched the
+ * byte-for-byte E.164 spelling. CAMARA carries the number in a path/query parameter and the
+ * NaC SDK builds `error.message` out of the raw response body, so a 400 arrives spelled
+ * `invalid phoneNumber %2B905551112233 (905551112233)` — percent-encoded and bare. Neither
+ * form matched, and the full number went to stderr on ALL FIVE links, that is into the MCP log
+ * file, `docker logs` and the demo terminal, while the comments there promised the number was
+ * "redacted even there".
+ *
+ * So the match is built from the number's DIGITS, not from its spelling: the digit sequence
+ * with any separator tolerated between digits, plus an optional "+"/"%2B" head. That covers
+ * "+90 555 111 22 33", "%2B90...", "0090..." and the bare run alike. The literal spelling is
+ * still replaced first, so the previous guarantee is kept, never weakened.
+ *
+ * OVER-REDACTION IS THE SAFE DIRECTION here and is chosen deliberately: the operator can lose
+ * a phone-shaped fragment of a diagnostic line, never a secret. That promise only holds above
+ * GIZLI_ASGARI_UZUNLUK, which is why the caller checks it — under that floor the digits of a
+ * stub value match everywhere and what is lost is no longer phone-shaped. A number with no
+ * digits at all falls back to the literal replacement: an empty digit pattern would match the
+ * empty string everywhere.
+ */
+function numarayiMaskele(approverPhone: string, metin: string): string {
+  const maskeli = maskele(approverPhone);
+  const literalTemiz = metin.split(approverPhone).join(maskeli);
+  const rakamlar = approverPhone.replace(/\D/g, "");
+  if (rakamlar.length === 0) return literalTemiz;
+  const desen = `(?:%2[Bb]|\\+)?${rakamlar.split("").map(desenKac).join(NUMARA_AYIRICI)}`;
+  return literalTemiz.replace(new RegExp(desen, "g"), maskeli);
+}
+
+/**
+ * THE ONE CLEANER FOR EVERY LINE THAT REACHES THE OPERATOR'S TERMINAL — used by this module's
+ * five catch branches AND by src/approval.ts (hataOzeti).
+ *
+ * WHY IT IS SHARED: both files write the same kind of line — a cleaned detail from an upstream
+ * exception — and each had grown only HALF of the answer, so the two halves drifted the way
+ * duplicated doctrine always does. MEASURED, in both directions:
+ *   - from here, with a NaC token configured, `nac_tok_TEST_ONLY_ORNEK_GERCEK_JETON_DEGIL`
+ *     reached stderr verbatim; so did an ESC[2J ESC[1;1H sequence followed by a forged
+ *     "onaylandi" line, which CLEARS the operator's screen and prints the forgery at the top
+ *     of it; and a 5000-character body printed whole, at 5047 characters.
+ *   - from approval.ts, five of six spellings of the approver's number reached stderr
+ *     untouched (`905551112233`, `%2B905551112233`, `+90 555 111 22 33`, `0090 555 111 22 33`,
+ *     `%2B90%20555%20111%2022%2033`), because only the literal E.164 form was masked.
+ * The contract names them in one breath — "raw upstream text, TOKENS, the full phone number
+ * and PII never reach the agent, the log or the terminal" — so they get one function.
+ *
+ * THE ORDER IS THE DEFENCE:
+ *  1. Control bytes are neutralised FIRST. They are chosen by whoever wrote the upstream text,
+ *     and JS does not count NUL, TAB or an ESC sequence as `\s`: `Bearer<NUL>sk-live-...`
+ *     matches no mask at all, and a control-stripping pass running AFTERWARDS would turn that
+ *     NUL into a space and rejoin the pieces into a perfectly readable token. Runs collapse to
+ *     a SPACE rather than being deleted, so nothing is glued onto a secret and hidden from the
+ *     mask a second way — and no refusal can repaint or clear the operator's terminal.
+ *  2. Secrets this server HOLDS are redacted BY VALUE: the approver's number in ANY spelling
+ *     (numarayiMaskele) and the NaC token. By value rather than by shape, so one incident
+ *     reads the SAME in both logs.
+ *  3. Shape rules cover what only the upstream body knows: prefixed credentials, bare provider
+ *     tokens, JWTs, full E.164 numbers and long opaque secret-shaped runs. A bare token is
+ *     worth exactly as much to an attacker as a prefixed one, so "no recognised prefix" cannot
+ *     mean "print it".
+ *  4. The cap comes LAST, and that is load-bearing: cut a 36-character opaque run at 19 and no
+ *     shape rule recognises a secret any more. Measured on the approval side with the cap
+ *     moved first — 19 characters of a 36-character token reached stderr.
+ *
+ * NOTHING FROM HERE GOES TO THE AGENT. It goes to stderr, which on a stdio MCP server is the
+ * operator's log and terminal — the contract covers that line exactly as it covers the
+ * agent's.
+ */
+export function operatorMetniTemizle(
+  metin: string,
+  sirlar?: { approverPhone?: string; nacToken?: string }
+): string {
+  // 1. Control bytes FIRST: whole ANSI/CSI sequences, then any lone control byte (ESC
+  //    included) — each to a space, then collapse. Every rule below can now trust its
+  //    separators.
+  let temiz = metin
+    .replace(/\u001B\[[0-9;?]*[ -\/]*[@-~]/g, " ")
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // 2. Secrets known BY VALUE (the floor is GIZLI_ASGARI_UZUNLUK — see its comment).
+  const numara = sirlar?.approverPhone;
+  if (typeof numara === "string" && numara.length >= GIZLI_ASGARI_UZUNLUK) {
+    temiz = numarayiMaskele(numara, temiz);
+  }
+  const jeton = sirlar?.nacToken;
+  if (typeof jeton === "string" && jeton.length >= GIZLI_ASGARI_UZUNLUK) {
+    temiz = temiz.split(jeton).join("***");
+  }
+
+  // 3. Shape rules, for the secrets only the upstream body knows.
+  temiz = temiz
+    .replace(/(bearer\s+|access_token=|api[_-]?key=|token=)\S+/gi, "$1***")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?/g, "***")
+    .replace(/\b(?:sk|pk|rk|ghp|gho|ghs|ghu|xox[a-z])[-_][A-Za-z0-9._-]{6,}/gi, "***")
+    .replace(/\bya29\.[A-Za-z0-9._-]{6,}/g, "***")
+    // Full E.164, however the upstream chose to punctuate it. A space is deliberately NOT a
+    // separator here: a space-greedy run would swallow the words after the number as well.
+    .replace(/\+\d[\d().-]{5,}\d/g, "***")
+    // Long opaque runs carrying BOTH letters and digits: something of that shape is either a
+    // secret or a request id, and an unreadable request id costs less than a leaked secret.
+    .replace(/[A-Za-z0-9_-]{32,}/g, (parca) =>
+      /[A-Za-z]/.test(parca) && /\d/.test(parca) ? "***" : parca
+    );
+
+  // 4. The cap comes LAST (see the docblock).
+  return temiz.slice(0, OPERATOR_AYRINTI_TAVANI);
 }
 
 /**
@@ -1494,9 +1842,9 @@ async function erisilebilirlikKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halka
       retNedeni: "ag-yanitsiz",
     };
   } catch (e: any) {
-    // Upstream text NEVER enters the refusal message; the detail goes to stderr with the
-    // number masked.
-    const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
+    // Upstream text NEVER enters the refusal message; the detail goes to stderr cleaned —
+    // number, token, control bytes and length all handled by operatorMetniTemizle.
+    const detay = operatorMetniTemizle(String(e?.message ?? e), ayar);
     console.error(`[aegis] cihaz erişilebilirlik hatası (${maskeli}): ${detay}`);
     return {
       engel:
@@ -1644,6 +1992,31 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
       };
     }
     /**
+     * THE COUNTRY FIELD ARRIVED AND COULD NOT BE READ — the same fail-closed treatment the
+     * roaming flag just got, for the same reason.
+     *
+     * Without this branch an unreadable list became `undefined`, `undefined` was read as "the
+     * network reported no country", and with `roaming:false` the link returned CLEAN — writing
+     * an evidence line ("the network reported no country contradicting the expected one") that
+     * asserts something the code never checked. Measured: {roaming:false,countryName:"NL"}
+     * PASSED while {roaming:false,countryName:["NL"]} was REFUSED, and under step-up that
+     * unreadable body even VOUCHED for a genuinely detected SIM change. "Unknown" is not
+     * "clean" here either, so it takes the code every unanswerable check takes.
+     */
+    if (durum.ulkelerOkunamadi === true) {
+      return {
+        engel:
+          "Reddedildi: ağ doğrulaması tamamlanamadı — konum kontrolünden okunabilir yanıt alınamadı " +
+          "(ağ bir ülke bilgisi döndürdü ama beklenen biçimde değildi, dolayısıyla beklenen ülkeyle " +
+          "karşılaştırılamadı). Güvenlik gereği cevaplanamayan kontrolde harcama artışı uygulanmaz; " +
+          "daha sonra tekrar dene.",
+        kanit: [],
+        halka: "gercek",
+        maskeliNumara: maskeli,
+        retNedeni: "ag-yanitsiz",
+      };
+    }
+    /**
      * THE COUNTRY COMPARISON HAPPENS BEFORE THE ROAMING FLAG, AND INDEPENDENTLY OF IT.
      *
      * Previously the flag split the gate in two and only one half was protected: the
@@ -1669,6 +2042,12 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
        * is no contradiction to compare against. The link's scope deliberately ends here —
        * sub-country geography, a city or a radius, is not what this gate promises today
        * (see the file header, Link 4).
+       *
+       * IT PASSES, BUT IT VOUCHES FOR NOTHING (`gozlemsiz`). No country was observed, so
+       * this link has NOT placed the line in the expected country; it merely found nothing
+       * that contradicts it. Letting it corroborate another link's degraded signal would
+       * hand an escalation to a check that measured nothing at all — see HalkaSonuc.gozlemsiz
+       * for the measurement that forced this flag.
        */
       return {
         kanit: [
@@ -1677,6 +2056,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
         ],
         halka: "gercek",
         maskeliNumara: maskeli,
+        gozlemsiz: true,
       };
     }
     if (durum.yurtDisinda === true && !ulkeler.length) {
@@ -1744,7 +2124,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
       maskeliNumara: maskeli,
     };
   } catch (e: any) {
-    const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
+    const detay = operatorMetniTemizle(String(e?.message ?? e), ayar);
     console.error(`[aegis] konum doğrulaması hatası (${maskeli}): ${detay}`);
     return {
       engel:
@@ -1908,9 +2288,9 @@ async function cihazDegisimKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSon
       pencereSaat: pencere,
     };
   } catch (e: any) {
-    // Upstream text NEVER enters the refusal message; the detail goes to stderr with the
-    // number masked.
-    const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
+    // Upstream text NEVER enters the refusal message; the detail goes to stderr cleaned —
+    // number, token, control bytes and length all handled by operatorMetniTemizle.
+    const detay = operatorMetniTemizle(String(e?.message ?? e), ayar);
     console.error(`[aegis] cihaz değişimi hatası (${maskeli}): ${detay}`);
     return {
       engel:
@@ -2067,7 +2447,7 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
      * (AEGIS_CALLFWD_CHECK) rather than passed over quietly — "I got no answer" and "there is
      * no forwarding" are not the same thing.
      */
-    const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
+    const detay = operatorMetniTemizle(String(e?.message ?? e), ayar);
     console.error(`[aegis] çağrı yönlendirme hatası (${maskeli}): ${detay}`);
     return {
       engel:
@@ -2090,9 +2470,20 @@ async function cagriYonlendirmeKatmani(ayar: AgAyar, risk: AgRisk): Promise<Halk
  * The chain runs in a FIXED, ONE-DIRECTIONAL order:
  *   SIM Swap → Number Verification → Device Reachability → Location
  *   → Device Swap → Call Forwarding
- * The last five run ONLY on the "high" tier. A link's refusal is FINAL: the chain returns
- * at that point, and the later links neither run nor can soften the verdict — a later link
- * can only add another reason to refuse.
+ * The last five run ONLY on the "high" tier (RISK_HALKA_ESLEMESI).
+ *
+ * WITH AEGIS_STEPUP OFF (the default) a link's refusal is FINAL: the chain returns at that
+ * point, and the later links neither run nor can soften the verdict — a later link can only
+ * add another reason to refuse.
+ *
+ * WITH AEGIS_STEPUP ON that is NOT an invariant, and reading it as one is how the file used to
+ * mislead: a refusal whose reason is in KADEME_UYGUN — "sim-degisti" and "ag-yanitsiz" among
+ * them — is held PENDING instead of returned, the later links DO run, and if a link that can
+ * genuinely contradict the signal comes back clean over a real channel the refusal becomes an
+ * ESCALATION (measured: a real `swapped:true` returns no `engel`, with `iz.kademe:
+ * "yukseltildi"`). What holds in BOTH modes: a reason outside KADEME_UYGUN still refuses
+ * immediately, a SECOND degraded signal cancels the pending escalation, and a later link can
+ * always add another reason to refuse.
  */
 export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   /**
@@ -2121,8 +2512,16 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    */
   const kademeAcik = ayar.stepUp === true;
 
-  /** When an escalation is held pending: the record of the first degraded signal. */
-  let bekleyen: { engel: string; neden: RetNedeni; aciklama: string } | undefined;
+  /**
+   * When an escalation is held pending: the record of the first degraded signal.
+   *
+   * `halkaId` is part of the record because the reason alone is not enough to pick the
+   * vouchers: "ag-yanitsiz" is produced by all six links and says nothing about WHICH one
+   * fell silent, so without it the chain let links vouch for a silence they cannot see into
+   * (see YANITSIZ_KEFIL_ESLEMESI). It is also what makes the human-facing `aciklama` name
+   * the right link.
+   */
+  let bekleyen: { engel: string; neden: RetNedeni; aciklama: string; halkaId: string } | undefined;
   /**
    * EVERY link that came back clean over a REAL channel — regardless of its position.
    *
@@ -2133,6 +2532,17 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    * arrived before or after it.
    */
   const temizGercek: string[] = [];
+
+  /**
+   * THE CLEAN-BUT-BLIND LINKS — they ran, they came back clean over a real channel, and they
+   * OBSERVED NOTHING (see HalkaSonuc.gozlemsiz).
+   *
+   * They stay in `temizGercek`, because they really did run and really did come back clean:
+   * removing them would make the refusal below report "no real link ran at all", which is a
+   * different — and untrue — operator situation. What they are excluded from is the VOUCHER
+   * set: a link that observed nothing can contradict nothing.
+   */
+  const gozlemsizler: string[] = [];
 
   /**
    * EVERY SIGNAL THAT CAME BACK DEGRADED — whichever one makes the decision.
@@ -2158,10 +2568,13 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    * `gercekMi` is a separate parameter on purpose: a SIMULATED link cannot corroborate a
    * degraded REAL signal. Otherwise, in demo mode a single environment value would make a
    * genuine SIM change look "verified" — which would be the easiest way past the gate.
+   *
+   * `aciklama` is the link's DETECTION sentence, and it is used only when the link really did
+   * detect something — see kademeAciklamasi.
    */
   const kat = (
     id: string,
-    sonuc: { engel?: string; kanit: string[]; retNedeni?: RetNedeni },
+    sonuc: { engel?: string; kanit: string[]; retNedeni?: RetNedeni; gozlemsiz?: boolean },
     gercekMi: boolean,
     aciklama: string
   ): "devam" | "dur" => {
@@ -2172,11 +2585,21 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
       bozukKaydet(neden);
       const yukseltilebilir = kademeAcik && !bekleyen && neden !== undefined && KADEME_UYGUN.has(neden);
       if (!yukseltilebilir) return "dur";
-      bekleyen = { engel: sonuc.engel, neden: neden!, aciklama };
+      bekleyen = {
+        engel: sonuc.engel,
+        neden: neden!,
+        aciklama: kademeAciklamasi(id, neden!, aciklama),
+        halkaId: id,
+      };
       return "devam";
     }
     kanit = [...kanit, ...sonuc.kanit];
-    if (gercekMi) temizGercek.push(id);
+    if (gercekMi) {
+      temizGercek.push(id);
+      // Clean, real — and it measured nothing. It counts as "a real link ran", never as a
+      // voucher.
+      if (sonuc.gozlemsiz === true) gozlemsizler.push(id);
+    }
     return "devam";
   };
 
@@ -2192,7 +2615,8 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
     bekleyen = {
       engel: simSwap.engel,
       neden,
-      aciklama: "onaylayıcının SIM kartı yakın zamanda değişmiş",
+      aciklama: kademeAciklamasi("simSwap", neden, "onaylayıcının SIM kartı yakın zamanda değişmiş"),
+      halkaId: "simSwap",
     };
     kanit = [];
   } else if (simSwap.iz.simSwap === "gercek") {
@@ -2267,11 +2691,28 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    * DISPROVING the degraded signal (see KEFIL_ESLEMESI). Before this filter the condition was
    * "at least one real link came back clean", which allowed the reachability link to vouch on
    * its own for a genuine SIM change.
+   *
+   * "ag-yanitsiz" IS PICKED FROM A DIFFERENT TABLE, because it is the one reason that does not
+   * name its own link: which link fell silent decides who can corroborate it, and for the
+   * call-forwarding link the answer is NOBODY (see YANITSIZ_KEFIL_ESLEMESI). Reading the
+   * single KEFIL_ESLEMESI row here let three links that cannot see forwarding vouch for a
+   * silent forwarding check, so a permanently 501-answering link escalated every high-risk
+   * approval.
    */
   // Narrowing is not preserved inside the closure, so the degraded signal is captured in a
   // constant.
-  const kefilKumesi = KEFIL_ESLEMESI[bekleyen.neden] ?? [];
-  const kefiller = temizGercek.filter((id) => kefilKumesi.includes(id));
+  const kefilKumesi =
+    bekleyen.neden === "ag-yanitsiz"
+      ? YANITSIZ_KEFIL_ESLEMESI[bekleyen.halkaId] ?? []
+      : KEFIL_ESLEMESI[bekleyen.neden] ?? [];
+  /**
+   * AND THE VOUCHER MUST HAVE OBSERVED SOMETHING. Being in the right table is not enough
+   * either: the location link comes back clean when the network reports NO country, and such
+   * a link has verified nothing it could contradict the degraded signal with (see
+   * HalkaSonuc.gozlemsiz). "Nothing observed" is not evidence, exactly as "unknown" is not
+   * "clean" everywhere else in this file.
+   */
+  const kefiller = temizGercek.filter((id) => kefilKumesi.includes(id) && !gozlemsizler.includes(id));
 
   if (!kefiller.length) {
     /**
@@ -2282,7 +2723,8 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
      */
     const aciklayici = temizGercek.length
       ? " (kademeli doğrulama açık, ama temiz dönen ağ halkalarının hiçbiri bu sinyale kefil " +
-        "olabilecek türden değil — canlılık sinyali kimlik sinyalini doğrulayamaz)"
+        "olabilecek türden değil — bir sinyali ÇÜRÜTEMEYEN halka ona kefil de olamaz; hiçbir " +
+        "şey GÖZLEMEDEN temiz dönen halka da kefil sayılmaz)"
       : " (kademeli doğrulama açık, ama sinyali doğrulayacak GERÇEK bir ağ halkası koşmadı)";
     return {
       engel: bekleyen.engel + aciklayici,
@@ -2373,10 +2815,15 @@ async function simSwapKatmani(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
      * error.message from the full server response body, and CAMARA 4xx bodies echo
      * the offending phoneNumber verbatim — inlining it would hand the agent (and an
      * attacker holding a stolen session) the exact secret maskele() protects, plus an
-     * unsanitized channel for upstream text. Details go to stderr for the operator,
-     * with the approver number redacted even there.
+     * unsanitized channel for upstream text. Details go to stderr for the operator, and
+     * everything the contract protects is redacted even there — the approver number
+     * FORMAT-INDEPENDENTLY, the NaC token by value, ANSI escapes and control bytes
+     * neutralised, the line capped (operatorMetniTemizle). A CAMARA body spells the number
+     * percent-encoded or without its "+" as readily as in E.164, and the literal substitution
+     * that used to stand here matched none of those; test/agSizintiStderr.test.ts holds all
+     * five links to every part of that.
      */
-    const detay = String(e?.message ?? e).split(ayar.approverPhone).join(maskeli);
+    const detay = operatorMetniTemizle(String(e?.message ?? e), ayar);
     console.error(`[aegis] ağ doğrulaması hatası (${maskeli}): ${detay}`);
     return {
       engel:

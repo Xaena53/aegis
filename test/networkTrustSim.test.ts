@@ -78,7 +78,7 @@ test("sim: nacToken VE simülasyon birlikte → çelişkili yapılandırma SERT 
    * kalıntısı, gerçek token'lı bir kurulumun ağ doğrulamasını sessizce tiyatroya
    * çeviremez — iki dünya aynı anda istenirse cevap RET'tir.
    */
-  const k = await agDogrula({ ...SIM_AYAR, nacToken: "gercek-token", nacSimulate: "temiz" }, "high");
+  const k = await agDogrula({ ...SIM_AYAR, nacToken: "TEST-ONLY-gercek-token", nacSimulate: "temiz" }, "high");
   assert.ok(k.engel, "çelişkili yapılandırma fail-open olamaz");
   assert.match(k.engel!, /SİMÜLASYON/);
   assert.match(k.engel!, /çelişkili yapılandırma/);
@@ -106,7 +106,7 @@ test("sim: iz 'simulasyon' der — simüle karar gerçek sorgu gibi izlenemez", 
 });
 
 test("sim: yapılandırma hatalarında iz 'calismadi' + sabit kod, pencere/numara YAZILMAZ", async () => {
-  const celiski = await agDogrula({ ...SIM_AYAR, nacToken: "gercek-token", nacSimulate: "temiz" }, "high");
+  const celiski = await agDogrula({ ...SIM_AYAR, nacToken: "TEST-ONLY-gercek-token", nacSimulate: "temiz" }, "high");
   assert.deepEqual(celiski.iz, { simSwap: "calismadi", retNedeni: "yapilandirma-celiskili", retNedenleri: ["yapilandirma-celiskili"] });
 
   const tanimsiz = await agDogrula({ ...SIM_AYAR, nacSimulate: "belki" }, "high");

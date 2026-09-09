@@ -34,7 +34,13 @@
  * the agent's own `confirm=true` does not stand in for that prompt.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { agDogrula, type AgAyar, type AgRisk, type KademeKarari } from "./networkTrust.js";
+import {
+  agDogrula,
+  operatorMetniTemizle,
+  type AgAyar,
+  type AgRisk,
+  type KademeKarari,
+} from "./networkTrust.js";
 import { agKararKaydiOlustur, kararYaz } from "./kararGunlugu.js";
 
 export type OnayKanali = "insan" | "ajan" | "ag";
@@ -134,6 +140,13 @@ export async function onayAl(
   let kademe: KademeKarari | undefined;
 
   /**
+   * The step-up action text for the HUMAN PROMPT ONLY — it carries the extra sentence that
+   * says the action was not refused but bound to the human's approval, which is only true
+   * where a prompt is shown. Undefined when there is no escalation.
+   */
+  let kademeIstemEylemi: string | undefined;
+
+  /**
    * Network check runs FIRST — before the weak (confirm) and strong (elicitation)
    * branches alike. A compromised approver must be refused on both paths; gating only
    * the elicitation branch would let a stolen session fall back to confirm=true.
@@ -195,12 +208,25 @@ export async function onayAl(
      */
     if (ag.kademe) {
       kademe = ag.kademe;
+      /**
+       * THE HEADER HAS TWO HALVES AND THEY GO TO DIFFERENT PLACES.
+       *
+       * Naming the degraded signal is true on BOTH channels, so it lives in `eylem`.
+       * "…therefore the action was NOT refused, it was bound to your approval" is true
+       * ONLY where a prompt actually gets shown. It used to sit in `eylem` too, and on a
+       * client without elicitation the weak-channel block below prefixed that same text
+       * with "Reddedildi:" — one message saying it was refused and, two lines later, that
+       * it was not. The decision was right; the sentence was in the wrong channel. It now
+       * belongs to the human prompt alone (`kademeIstemEylemi`).
+       */
+      const uyari =
+        `⚠ AĞ SİNYALİ BOZUK — ${ag.kademe.aciklama}.\n` +
+        `Bu, tek başına saldırı kanıtı değil; olağan bir durum da olabilir.`;
+      kademeIstemEylemi =
+        `${uyari} Bu yüzden işlem reddedilmedi, ONAYINA bağlandı.\n\n${ozet.eylem}`;
       ozet = {
         ...ozet,
-        eylem:
-          `⚠ AĞ SİNYALİ BOZUK — ${ag.kademe.aciklama}.\n` +
-          `Bu, tek başına saldırı kanıtı değil; olağan bir durum da olabilir. Bu yüzden ` +
-          `işlem reddedilmedi, ONAYINA bağlandı.\n\n${ozet.eylem}`,
+        eylem: `${uyari}\n\n${ozet.eylem}`,
         soru: `Bozuk ağ sinyaline RAĞMEN onaylıyor musun?`,
       };
     }
@@ -212,8 +238,14 @@ export async function onayAl(
      *
      * Step-up is not a LOOSENING but a TRADE: the gate stops meeting a degraded signal with
      * a flat refusal, and in return demands a STRONGER consent from the human — a prompt
-     * that names the degraded signal, a changed question, a lowered ceiling. Being able to
-     * actually show that prompt is the precondition for the escalation.
+     * that names the degraded signal, a changed question, and a REFUSAL wherever that prompt
+     * cannot be shown. Being able to actually show the prompt is the precondition for the
+     * escalation. NO SPENDING CEILING IS LOWERED: this sentence used to promise one as the
+     * fourth half of the trade (three sibling comments in networkTrust.ts promised the same
+     * and were corrected), but nothing in this codebase lowers a ceiling on an escalation —
+     * KademeKarari carries no ceiling, OnaySonucu never carries the escalation back to the
+     * caller, and onaySonrasiKelepce re-reads the tenant's UNCHANGED maxDailyBudget. Promising
+     * an absent compensating control makes the gate read stronger than it is.
      *
      * On a client without elicitation there IS no prompt to show. All that remains is the
      * agent's claim of `confirm=true`, and that is the side of the trade we receive, not the
@@ -263,7 +295,13 @@ export async function onayAl(
    * deciding; the party being withheld from is the agent.
    */
   const insanIcinSatirlar = [...ozet.satirlar, ...(ozet.insanSatirlari ?? [])];
-  const metin = `${ozet.eylem}\n\n${insanIcinSatirlar.map((s) => `• ${s}`).join("\n")}`;
+  /**
+   * This is the one channel where a prompt is really shown, so it is the one channel that
+   * may say the escalation was bound to the human's approval (see the step-up block above).
+   */
+  const metin = `${kademeIstemEylemi ?? ozet.eylem}\n\n${insanIcinSatirlar
+    .map((s) => `• ${s}`)
+    .join("\n")}`;
   try {
     const cevap = await server.server.elicitInput(
       {
@@ -300,13 +338,66 @@ export async function onayAl(
       mesaj: `İşlem yapılmadı: ${neden}. Kullanıcının kararına saygı göster; aynı işlemi tekrar denemeden önce ona danış.`,
     };
   } catch (e: any) {
-    // Fail closed: if consent cannot be obtained, the operation does NOT run
+    /**
+     * Fail closed: if consent cannot be obtained, the operation does NOT run.
+     *
+     * THE UPSTREAM ERROR IS NEVER INLINED INTO THE REFUSAL — the same rule networkTrust.ts
+     * applies to the CAMARA side and meta/client.ts applies with hataTemizle(). This message
+     * used to interpolate `e.message` verbatim: an exception text the client (not this
+     * server) produced, with no sanitising, no cap and no masking. ANSI escape sequences
+     * reached the host terminal, anything token-shaped in the body reached the agent's
+     * context and from there transcripts, and a multi-megabyte body was copied whole. The
+     * agent now gets a fixed sentence; the operator gets a cleaned, bounded detail on
+     * stderr, which is the same split used everywhere else in this repo.
+     *
+     * `agAyar` is handed over so the secrets THIS server holds — the approver number, the
+     * NaC token — are redacted by value and not left to a shape rule to notice, exactly as
+     * networkTrust.ts redacts the number in its own stderr line.
+     */
+    console.error(`[aegis] onay istemi başarısız: ${hataOzeti(e, ozet.agAyar)}`);
     return {
       onaylandi: false,
       kanal: "insan",
-      mesaj: `İşlem yapılmadı: kullanıcı onayı alınamadı (${e?.message ?? e}). Güvenlik gereği onaysız işlem uygulanmaz.`,
+      mesaj:
+        "İşlem yapılmadı: kullanıcı onayı alınamadı — istemciyle onay alışverişi " +
+        "tamamlanamadı. Güvenlik gereği onaysız işlem uygulanmaz. Ayrıntı sunucu " +
+        "günlüğüne yazıldı; sorun sürerse operatör oraya bakmalı.",
     };
   }
+}
+
+/**
+ * Turns an exception into a line safe to put on the operator's terminal.
+ *
+ * THE WORK ITSELF IS SHARED WITH networkTrust.ts (operatorMetniTemizle) — one cleaner, two
+ * callers. It used to live here in full while networkTrust.ts kept a second, narrower copy,
+ * and the two drifted the way duplicated doctrine always does. Measured on this side: only
+ * the byte-for-byte E.164 spelling of the approver's number was masked, so `905551112233`,
+ * `%2B905551112233`, `+90 555 111 22 33`, `0090 555 111 22 33` and
+ * `%2B90%20555%20111%2022%2033` — five of six spellings a CAMARA 4xx body really produces —
+ * all reached stderr in full. Measured on the other side: the token, ANSI escapes and an
+ * unbounded body reached stderr in full. Each file had half the rule; there is now one
+ * function and both call it.
+ *
+ * THE ORDER IS THE DEFENCE, and it is kept in the shared cleaner: control bytes are
+ * neutralised BEFORE the credential mask, never after. The mask keys off `Bearer `, `token=`
+ * and friends, and JS does not count NUL, TAB or an ESC sequence as `\s`:
+ * `Bearer<NUL>sk-live-...` matched no pattern at all, and the control-stripping pass that
+ * used to come afterwards then turned that NUL into a space and rejoined the pieces into a
+ * perfectly readable token on stderr. One byte, chosen by whoever wrote the upstream error
+ * text, disarmed the mask — and the next line re-armed the leak.
+ *
+ * `agAyar` is handed over so the secrets THIS server holds — the approver number, the NaC
+ * token — are redacted BY VALUE and not left to a shape rule to notice, exactly as
+ * networkTrust.ts redacts them in its own stderr lines; one incident then reads the SAME in
+ * both logs.
+ *
+ * NOTHING FROM HERE GOES TO THE AGENT. It goes to stderr, which on a stdio MCP server is the
+ * operator's log and terminal — the contract's "never to the agent, the log OR the terminal"
+ * covers this line exactly as it covers the agent's.
+ */
+function hataOzeti(e: unknown, ayar?: AgAyar): string {
+  return operatorMetniTemizle(e instanceof Error ? e.message : String(e), ayar);
 }
 
 /**

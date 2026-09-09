@@ -131,7 +131,7 @@ test("reach: gerçek kanal — erişilebilir GEÇER, erişilemez SERT REDDEDER (
       return true;
     },
   });
-  const gecti = await agDogrula({ ...TEMEL, nacToken: "gercek-token", reachCheck: true }, "high");
+  const gecti = await agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token", reachCheck: true }, "high");
   assert.equal(gecti.engel, undefined);
   assert.equal(cagriSayisi, 1, "gerçek sorgu gerçekten yapılmalı");
   assert.equal(gecti.kanit.length, 2);
@@ -141,7 +141,7 @@ test("reach: gerçek kanal — erişilebilir GEÇER, erişilemez SERT REDDEDER (
   assert.equal(gecti.iz.reach, "gercek");
 
   __setErisimKanalForTests({ cihazErisilebilirMi: async () => false });
-  const ret = await agDogrula({ ...TEMEL, nacToken: "gercek-token", reachCheck: true }, "high");
+  const ret = await agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token", reachCheck: true }, "high");
   assert.ok(ret.engel);
   assert.match(ret.engel!, /ERİŞİLEMİYOR/);
   assert.doesNotMatch(ret.engel!, /SİMÜLASYON/, "gerçek ret simülasyon diye etiketlenemez");
@@ -152,7 +152,7 @@ test("reach: gerçek kanal — erişilebilir GEÇER, erişilemez SERT REDDEDER (
 
 test("reach: okunamayan yanıt ve fırlatma KAPALI ARIZA — upstream metin ajana YANKILANMAZ", async () => {
   simSwapTemiz();
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", reachCheck: true };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", reachCheck: true };
 
   // (1) Yanıt geldi ama alan okunamadı: "erişilebilir" varsaymak sessiz gevşeme olurdu.
   __setErisimKanalForTests({ cihazErisilebilirMi: async () => undefined });
@@ -195,7 +195,7 @@ test("reach: gerçek kanal OPT-IN — AEGIS_REACH_CHECK kapalıyken SORGU YOK, i
       return false; // açık olsaydı REDDEDERDİ; kapalıyken kararı hiç etkilememeli
     },
   });
-  const k = await agDogrula({ ...TEMEL, nacToken: "gercek-token" }, "high");
+  const k = await agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token" }, "high");
   assert.equal(cagriSayisi, 0, "anahtar kapalıyken CAMARA'ya hiç sorulmamalı");
   assert.equal(k.engel, undefined, "istenmemiş bir halka harcamayı reddedemez");
   assert.equal(k.iz.reach, "kapali", "sessiz kalmak 'sordum ve geçti' ile karışırdı");
@@ -203,7 +203,7 @@ test("reach: gerçek kanal OPT-IN — AEGIS_REACH_CHECK kapalıyken SORGU YOK, i
   assert.match(k.kanit[0], /SIM değişimi yok/, "tek kanıt 1. halkanınki olmalı");
 
   // Kontrol: tek fark anahtar olduğunda aynı kanal gerçekten reddediyor.
-  const acik = await agDogrula({ ...TEMEL, nacToken: "gercek-token", reachCheck: true }, "high");
+  const acik = await agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token", reachCheck: true }, "high");
   assert.match(acik.engel!, /ERİŞİLEMİYOR/);
   assert.equal(cagriSayisi, 1);
 });
@@ -211,7 +211,7 @@ test("reach: gerçek kanal OPT-IN — AEGIS_REACH_CHECK kapalıyken SORGU YOK, i
 test("reach: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapalıyken demo serbesttir", async () => {
   simSwapTemiz();
   const celiski = await agDogrula(
-    { ...TEMEL, nacToken: "gercek-token", reachCheck: true, reachSimulate: "erisilebilir" },
+    { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", reachCheck: true, reachSimulate: "erisilebilir" },
     "high"
   );
   assert.ok(celiski.engel, "belirsizlikte gevşek kanal SEÇİLMEZ");
@@ -223,7 +223,7 @@ test("reach: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapalı
   // Anahtar kapalıyken sorgulanacak gerçek kanal yoktur: simülasyon hiçbir gerçek
   // doğrulamayı tiyatroya çevirmez, dolayısıyla çelişki de yoktur.
   const demo = await agDogrula(
-    { ...TEMEL, nacToken: "gercek-token", reachSimulate: "anormal" },
+    { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", reachSimulate: "anormal" },
     "high"
   );
   assert.match(demo.engel!, /CİHAZ ERİŞİLEBİLİRLİĞİ ANORMAL/, "karar simüle halkanın olmalı");
@@ -241,7 +241,7 @@ test("loc: AEGIS_EXPECTED_COUNTRY yoksa halka KOŞMAZ — beklenen ülke UYDURUL
       return { yurtDisinda: true, ulkeler: ["NL"] };
     },
   });
-  const k = await agDogrula({ ...TEMEL, nacToken: "gercek-token" }, "high");
+  const k = await agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token" }, "high");
   assert.equal(cagriSayisi, 0, "beklenti yokken karşılaştırılacak bir şey de yok: sorgu YAPILMAZ");
   assert.equal(k.engel, undefined, "beklentisi olmayan halka harcamayı reddedemez");
   assert.equal(k.iz.loc, "kapali", "koşmayan halka izde 'kapali' der, sessiz kalmaz");
@@ -250,7 +250,7 @@ test("loc: AEGIS_EXPECTED_COUNTRY yoksa halka KOŞMAZ — beklenen ülke UYDURUL
 
   // Kontrol: tek fark beklenti olduğunda halka gerçekten koşuyor ve reddediyor.
   const beklentili = await agDogrula(
-    { ...TEMEL, nacToken: "gercek-token", expectedCountry: "TR" },
+    { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", expectedCountry: "TR" },
     "high"
   );
   assert.equal(cagriSayisi, 1);
@@ -276,7 +276,7 @@ test("loc: geçersiz ülke kodu KAPALI ARIZA — ham değer ret metnine yankıla
 test("loc: NAC token + AEGIS_LOC_SIMULATE birlikte tanımlıysa çelişki RET", async () => {
   simSwapTemiz();
   const k = await agDogrula(
-    { ...TEMEL, nacToken: "gercek-token", locSimulate: "beklenen", expectedCountry: "TR" },
+    { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", locSimulate: "beklenen", expectedCountry: "TR" },
     "high"
   );
   assert.ok(k.engel);
@@ -327,7 +327,7 @@ test("loc: 'beklenen' kanıt yazar, 'beklenmedik' SERT REDDEDER — ikisi de Sİ
 
 test("loc: gerçek kanal — roaming yokken ve beklenen ülkede roaming'de GEÇER", async () => {
   simSwapTemiz();
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", expectedCountry: "TR" };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", expectedCountry: "TR" };
 
   __setKonumKanalForTests({ ulkeDurumu: async () => ({ yurtDisinda: false }) });
   const evde = await agDogrula(AYAR, "high");
@@ -350,7 +350,7 @@ test("KRİTİK loc: beklenmedik ülke REDDEDER ve GÖZLENEN ülke ASLA yankılan
   simSwapTemiz();
   __setKonumKanalForTests({ ulkeDurumu: async () => ({ yurtDisinda: true, ulkeler: ["NL", "BE"] }) });
   const k = await agDogrula(
-    { ...TEMEL, nacToken: "gercek-token", expectedCountry: "TR" },
+    { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", expectedCountry: "TR" },
     "high"
   );
   assert.ok(k.engel, "beklenmedik coğrafya fail-open olamaz");
@@ -369,7 +369,7 @@ test("KRİTİK loc: beklenmedik ülke REDDEDER ve GÖZLENEN ülke ASLA yankılan
 
 test("KRİTİK loc: ÇELİŞKİLİ küme (beklenen ülke + başka ülke) fail-open OLAMAZ", async () => {
   simSwapTemiz();
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", expectedCountry: "TR" };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", expectedCountry: "TR" };
 
   // Ağ hattı aynı anda iki ülkede bildiriyor ve küme beklenen ülkeyi İÇERİYOR.
   // "İçeriyor" ölçütü bunu temiz sayardı; doğru ölçüt "YALNIZCA beklenen ülkede mi".
@@ -403,7 +403,7 @@ test("KRİTİK loc: ÇELİŞKİLİ küme (beklenen ülke + başka ülke) fail-op
 
 test("loc: okunamayan roaming alanı ve boş ülke listesi KAPALI ARIZAYA gider", async () => {
   simSwapTemiz();
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", expectedCountry: "TR" };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", expectedCountry: "TR" };
 
   // roaming alanı tipte zorunlu ama çalışma zamanı garantisi değil: okunamazsa karar yok.
   __setKonumKanalForTests({ ulkeDurumu: async () => ({}) });
@@ -535,7 +535,7 @@ test("iz: DÖRT halka AYRI alanlarda durur — tek alana ezilmez, pencere yalnı
   const k = await agDogrula(
     {
       ...TEMEL,
-      nacToken: "gercek-token",
+      nacToken: "TEST-ONLY-gercek-token",
       nvSimulate: "dogrulandi",
       reachCheck: true,
       expectedCountry: "TR",
@@ -751,7 +751,7 @@ test("devSwap: gerçek kanal — değişmemiş GEÇER, değişmiş SERT REDDEDER
       return false;
     },
   });
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", devSwapCheck: true };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", devSwapCheck: true };
 
   const gecti = await agDogrula(AYAR, "high");
   assert.equal(gecti.engel, undefined);
@@ -774,7 +774,7 @@ test("devSwap: gerçek kanal — değişmemiş GEÇER, değişmiş SERT REDDEDER
 
 test("KRİTİK devSwap: okunamayan yanıt 'değişmedi' SAYILMAZ; fırlatma da kapalı arıza", async () => {
   simSwapTemiz();
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", devSwapCheck: true };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", devSwapCheck: true };
 
   // Tipte `swapped` zorunlu boolean; yine de okunamayan gövdeyi temiz saymak sessiz
   // gevşeme olurdu — halkanın tek işi olan reti yutardı.
@@ -811,7 +811,7 @@ test("KRİTİK devSwap: okunamayan yanıt 'değişmedi' SAYILMAZ; fırlatma da k
 test("devSwap: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapalıyken demo serbesttir", async () => {
   simSwapTemiz();
   const celiski = await agDogrula(
-    { ...TEMEL, nacToken: "gercek-token", devSwapCheck: true, devSwapSimulate: "temiz" },
+    { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", devSwapCheck: true, devSwapSimulate: "temiz" },
     "high"
   );
   assert.ok(celiski.engel, "belirsizlikte gevşek kanal SEÇİLMEZ");
@@ -821,7 +821,7 @@ test("devSwap: çelişki YALNIZ gerçek kanal AÇIKKEN vardır — anahtar kapal
   assert.equal(celiski.iz.retNedeni, "yapilandirma-celiskili");
 
   const demo = await agDogrula(
-    { ...TEMEL, nacToken: "gercek-token", devSwapSimulate: "degisti" },
+    { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", devSwapSimulate: "degisti" },
     "high"
   );
   assert.match(demo.engel!, /CİHAZ DEĞİŞİMİ SAPTANDI/, "karar simüle halkanın olmalı");
@@ -873,7 +873,7 @@ test("callFwd: gerçek kanal — yönlendirme yoksa GEÇER, açıksa SERT REDDED
       return false;
     },
   });
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", callFwdCheck: true };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", callFwdCheck: true };
 
   const gecti = await agDogrula(AYAR, "high");
   assert.equal(gecti.engel, undefined);
@@ -896,7 +896,7 @@ test("callFwd: gerçek kanal — yönlendirme yoksa GEÇER, açıksa SERT REDDED
 
 test("KRİTİK callFwd: 'active' OKUNAMAZSA temiz SAYILMAZ (tipte opsiyonel) — 501 de kapalı arıza", async () => {
   simSwapTemiz();
-  const AYAR = { ...TEMEL, nacToken: "gercek-token", callFwdCheck: true };
+  const AYAR = { ...TEMEL, nacToken: "TEST-ONLY-gercek-token", callFwdCheck: true };
 
   // CAMARA yanıtında `active` OPSİYONEL: yokluğu "yönlendirme yok" değil "bilinmiyor".
   __setCagriYonlendirmeKanalForTests({ kosulsuzYonlendirmeAcikMi: async () => undefined });
@@ -949,7 +949,7 @@ test("KRİTİK gecikme: token TEK BAŞINA 5. ve 6. halkayı AÇMAZ — sorgu yok
     },
   });
 
-  const k = await agDogrula({ ...TEMEL, nacToken: "gercek-token" }, "high");
+  const k = await agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token" }, "high");
   assert.equal(devSwapCagri + callFwdCagri, 0, "anahtarsız halka CAMARA'ya hiç sormamalı (gecikme)");
   assert.equal(k.engel, undefined, "istenmemiş halkalar harcamayı reddedemez");
   assert.equal(k.iz.devSwap, "kapali", "sessiz kalmak 'sordum ve geçti' ile karışırdı");
@@ -958,7 +958,7 @@ test("KRİTİK gecikme: token TEK BAŞINA 5. ve 6. halkayı AÇMAZ — sorgu yok
   assert.match(k.kanit[0], /SIM değişimi yok/, "tek kanıt 1. halkanınki olmalı");
 
   // Kontrol: tek fark anahtar olduğunda aynı kanallar gerçekten koşuyor ve reddediyor.
-  const acik = await agDogrula({ ...TEMEL, nacToken: "gercek-token", devSwapCheck: true }, "high");
+  const acik = await agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token", devSwapCheck: true }, "high");
   assert.match(acik.engel!, /YENİ BİR CİHAZA taşınmış/);
   assert.equal(devSwapCagri, 1);
 });
@@ -1037,7 +1037,7 @@ test("KRİTİK iz: ALTI halka AYRI alanlarda durur ve İKİ pencere birbirine ka
   const k = await agDogrula(
     {
       ...TEMEL,
-      nacToken: "gercek-token",
+      nacToken: "TEST-ONLY-gercek-token",
       nvSimulate: "dogrulandi",
       reachCheck: true,
       expectedCountry: "TR",
@@ -1144,7 +1144,7 @@ async function konumKarari(
 ) {
   simSwapTemiz();
   __setKonumKanalForTests({ ulkeDurumu: async () => durum });
-  return agDogrula({ ...TEMEL, nacToken: "gercek-token", expectedCountry: beklenen }, "high");
+  return agDogrula({ ...TEMEL, nacToken: "TEST-ONLY-gercek-token", expectedCountry: beklenen }, "high");
 }
 
 /* ── Halka 4: ÇELİŞKİ, roaming bayrağından BAĞIMSIZ olarak reddedilir ──────── */

@@ -42,10 +42,22 @@ function kanallar(opts: {
 }) {
   __setSimSwapKanalForTests({ verifySimSwap: async () => opts.simDegisti ?? false });
   __setErisimKanalForTests({ cihazErisilebilirMi: async () => opts.erisilebilir ?? true });
+  /**
+   * VARSAYILAN ÜLKE LİSTESİ BİLEREK ["TR"]: konum halkası GERÇEKTEN bir ülke gözlemeli.
+   *
+   * Eskiden varsayılan boş listeydi ({roaming:false, countryName:[]}). O gövdede halka
+   * "yurt dışında değil ve çelişen ülke bildirilmedi" diyerek temiz döner ama hattın
+   * beklenen ülkede olduğunu DOĞRULAMIŞ olmaz — hiçbir şey gözlememiştir. Ölçüldü: bu
+   * düzenekte mentörün amiral testini yeşil tutan tek kefil, hiçbir ülke görmemiş konum
+   * halkasıydı; yani saptanmış bir SIM değişimi, hiçbir şey ölçmemiş bir halkanın
+   * kefaletiyle geçiyordu. Kefalet ilkesi bunu yasaklar (bkz. HalkaSonuc.gozlemsiz), o
+   * yüzden düzenek artık ağın hattı gerçekten TR'de gördüğü gövdeyi kullanıyor: yükseltme
+   * hâlâ ölçülüyor, ama onu taşıyan kefil artık gerçek bir gözleme dayanıyor.
+   */
   __setKonumKanalForTests({
     ulkeDurumu: async () => ({
       yurtDisinda: opts.yurtDisinda ?? false,
-      ulkeler: opts.ulkeler ?? [],
+      ulkeler: opts.ulkeler ?? ["TR"],
     }),
   });
 }

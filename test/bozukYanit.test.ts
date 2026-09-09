@@ -49,7 +49,7 @@ const MASKELI = "+905*******33";
 
 /** Zincirin ALTI halkasını da açan yapılandırma: her gerçek kanal gerçekten sorgulanır. */
 const TAM_ZINCIR: AgAyar = {
-  nacToken: "gercek-token",
+  nacToken: "TEST-ONLY-gercek-token",
   approverPhone: TELEFON,
   simSwapWindowHours: 72,
   reachCheck: true,
@@ -60,7 +60,7 @@ const TAM_ZINCIR: AgAyar = {
 
 /** Yalnız 1. halkayı açan yapılandırma (çağıran-katmanı testleri için). */
 const YALNIZ_SIMSWAP: AgAyar = {
-  nacToken: "gercek-token",
+  nacToken: "TEST-ONLY-gercek-token",
   approverPhone: TELEFON,
   simSwapWindowHours: 72,
 };
@@ -329,7 +329,7 @@ const YAYINA_HAZIR: Array<[RegExp, any[]]> = [
 
 test("KRİTİK: string 'true' gövdesi yayına almayı reddeder — yazma yok, istem yok", async () => {
   const { ctx, rec } = sahteContext({ queries: YAYINA_HAZIR });
-  ctx.config.nacToken = "gercek-token";
+  ctx.config.nacToken = "TEST-ONLY-gercek-token";
   ctx.config.approverPhone = TELEFON;
   ctx.config.simSwapWindowHours = 72;
   istemciKur({ simSwap: { swapped: "true" } });

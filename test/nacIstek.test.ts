@@ -62,7 +62,7 @@ function kaydedenIstemci(): any {
 }
 
 const TUM_HALKALAR: AgAyar = {
-  nacToken: "gercek-token",
+  nacToken: "TEST-ONLY-gercek-token",
   approverPhone: TELEFON,
   simSwapWindowHours: 137, // varsayılan OLMAYAN bir değer: taşındığı görülebilsin
   reachCheck: true,

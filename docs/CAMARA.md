@@ -292,12 +292,28 @@ network silent — no longer ends the request: the remaining links are asked any
 every one answers clean **over a real channel**, the action reaches a human prompt that
 names the broken signal instead of a flat refusal. That is a loosening, so it ships off,
 and the audit trail records it as its own outcome (`"karar":"kademeli"`) rather than
-folding it into `gecti`. Three limits are worth knowing before you turn it on: an active
-call-forwarding signal **never** escalates (the escalation would travel over the very
-channel the attacker holds), neither do configuration faults, and a clean link only counts
-as corroboration for a signal it could actually have contradicted. That last one is why
-device reachability vouches for nothing: a swapped SIM sits in a phone that is perfectly
-reachable, so the two never disagree. The pairing lives in `KEFIL_ESLEMESI`. The full list,
+folding it into `gecti`. Four limits are worth knowing before you turn it on.
+
+1. **Call forwarding never escalates — neither when it is active nor when it is silent.**
+   An active forwarding signal is obvious: the escalation would travel over the very
+   channel the attacker holds. A forwarding check that fell *silent* (`ag-yanitsiz`, and
+   the endpoint is documented as one that may answer `501`) is refused too, because no
+   other link in the chain can see forwarding, so nothing anywhere corroborates that
+   silence. The unknown is never treated more leniently than the known.
+2. **Configuration faults never escalate.** Stronger identity verification does not fix a
+   misconfiguration; that is the operator's situation, not the user's.
+3. **A clean link only counts as corroboration for a signal it could actually have
+   contradicted.** This is why device reachability vouches for nothing: a swapped SIM sits
+   in a phone that is perfectly reachable, so the two never disagree.
+4. **A link that came back clean without OBSERVING anything vouches for nothing either.**
+   The location link answers clean when the network says "not roaming" and reports no
+   country at all — nothing is refused, but the line has not been placed in the expected
+   country either. Nothing observed is not evidence, so it carries no escalation.
+
+The pairing lives in **two** tables, and the second is derived from the first so they
+cannot drift apart: `KEFIL_ESLEMESI` maps a *detected* signal to the links that could
+disprove it, and `YANITSIZ_KEFIL_ESLEMESI` maps `ag-yanitsiz` — the one reason that does
+not name its own link — to the vouchers of whichever link fell silent. The full list,
 and the refusal reasons it covers, is in [docs/DEMO.md](DEMO.md) — kept in step with the
 code by a test that reads the reason set out of `KADEME_UYGUN`.
 

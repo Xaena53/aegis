@@ -122,7 +122,7 @@ test("nv: gerçek SIM-Swap kanalıyla birleşir — çelişki kuralı yalnız NA
         return false; // gerçek kanal: SIM temiz
       },
     });
-    const k = await agDogrula({ ...NV_AYAR, nacToken: "gercek-token", nvSimulate: "dogrulandi" }, "high");
+    const k = await agDogrula({ ...NV_AYAR, nacToken: "TEST-ONLY-gercek-token", nvSimulate: "dogrulandi" }, "high");
     assert.equal(k.engel, undefined, "gerçek token + NV simülasyonu çelişki SAYILMAZ");
     assert.deepEqual(pencereler, [72], "gerçek SIM-Swap sorgusu gerçekten yapılmalı");
     assert.equal(k.kanit.length, 2);
@@ -149,7 +149,7 @@ test("iz: SIM-Swap kapalı + NV simülasyonu → iki halka ayrı alanlarda, tek 
 test("iz: GERÇEK SIM-Swap sorgusu + NV simülasyonu → 'gercek' ile 'simulasyon' bir arada durur", async () => {
   try {
     __setSimSwapKanalForTests({ verifySimSwap: async () => false });
-    const k = await agDogrula({ ...NV_AYAR, nacToken: "gercek-token", nvSimulate: "dogrulandi" }, "high");
+    const k = await agDogrula({ ...NV_AYAR, nacToken: "TEST-ONLY-gercek-token", nvSimulate: "dogrulandi" }, "high");
     assert.equal(k.iz.simSwap, "gercek", "gerçek sorgu, simüle halka yüzünden simülasyona indirgenemez");
     assert.equal(k.iz.nv, "simulasyon");
     assert.equal(k.iz.pencereSaat, 72, "pencere yalnız gerçekten sorgulanan katmanındır");
