@@ -6,8 +6,12 @@
  * the plaintext key exists exactly once — on the page shown at registration. Tenants are
  * keyed by Google's stable subject identifier rather than email, which can change or be
  * reassigned.
+ *
+ * The FILE is narrowed to 0600 on POSIX as it is opened (see depoIzinleriniKisitla).
+ * Encryption covers the refresh tokens; it does not cover the e-mails, the Google subjects
+ * or the budget ceilings sitting beside them, and SQLite's own default is 0644.
  */
-import { existsSync } from "node:fs";
+import { existsSync, chmodSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, createCipheriv, createDecipheriv, createHash, scryptSync } from "node:crypto";
 
@@ -189,6 +193,106 @@ export function hashApiKey(plain: string): string {
 }
 
 /**
+ * THE STORE FILE IS OWNER-ONLY — 0600, AND IT IS MEASURED.
+ *
+ * SQLite creates a new database with SQLITE_DEFAULT_FILE_PERMISSIONS, which is 0644, and
+ * that is not a guess: a fresh `new DatabaseSync(...)` was measured at 0644 under umask 022
+ * (systemd's default) AND under umask 000, with the `-wal` and `-shm` side files coming up
+ * the same. Nothing in this process narrowed it, so until this gate existed the store was
+ * born world-readable while `.env` next to it was carefully chmod 600.
+ *
+ * WHAT LEAKS WITHOUT IT: every tenant's e-mail, Google `sub`, budget ceiling and encrypted
+ * refresh token, readable by any other local account on the host — and the deployment guide
+ * assumes exactly such a host, since it creates a separate `aegis` user. For a
+ * passphrase-type master key that copy is the starting point of the offline scrypt attack
+ * this file's own key-derivation comment describes.
+ *
+ * THE SIDE FILES INHERIT: SQLite opens `-wal`/`-shm` with the mode it reads off the main
+ * database file (measured: main file chmodded to 0600 before `PRAGMA journal_mode = WAL`,
+ * side files then born 0600, and again 0600 on the next open). Hardening the main file the
+ * moment it exists therefore covers the files created afterwards; the two names are still
+ * listed here because a crashed earlier run can leave 0644 side files on disk.
+ */
+export const DEPO_DOSYA_MODU = 0o600;
+
+/** The store's own file plus the two WAL side files SQLite keeps beside it. */
+export function depoDosyaYollari(yol: string): readonly string[] {
+  return [yol, `${yol}-wal`, `${yol}-shm`];
+}
+
+/** The filesystem surface the permission gate needs — injectable so it can be tested off-POSIX. */
+export interface DosyaIzinKapisi {
+  platform: string;
+  varMi(yol: string): boolean;
+  moduOku(yol: string): number;
+  moduYaz(yol: string, mod: number): void;
+}
+
+const GERCEK_IZIN_KAPISI: DosyaIzinKapisi = {
+  platform: process.platform,
+  varMi: (yol) => existsSync(yol),
+  moduOku: (yol) => statSync(yol).mode & 0o777,
+  moduYaz: (yol, mod) => chmodSync(yol, mod),
+};
+
+/**
+ * Narrows the store's files to 0600 and then MEASURES the result. Returns the paths it
+ * verified.
+ *
+ * ATTEMPTING IS NOT ACHIEVING. A `chmod` that throws — or one that a filesystem accepts and
+ * ignores — would otherwise leave the file open while the code looked like it had closed it,
+ * which is the worst of both: a false sense of protection. So the mode is read back, and a
+ * file that stays group/other-accessible REFUSES the store outright, naming the file, the
+ * mode actually measured and the command that fixes it. "Unknown" is not "clean": a mode
+ * that cannot be read at all refuses too. Only ENOENT is exempt, and only because a file
+ * that does not exist holds no secret — the `-wal` may legitimately vanish under a
+ * concurrent checkpoint (the runbook's read-only watchdog opens this same database).
+ *
+ * NOT ON WINDOWS. POSIX mode bits do not exist there; Node's chmod only toggles the
+ * read-only attribute, so a 0600 request leaves the file reading back as 0666 and this gate
+ * would refuse a store that NTFS ACLs already govern. It runs where it can be measured.
+ */
+export function depoIzinleriniKisitla(
+  yol: string,
+  kapi: DosyaIzinKapisi = GERCEK_IZIN_KAPISI
+): string[] {
+  if (kapi.platform === "win32") return [];
+  const kisitlanan: string[] = [];
+  for (const hedef of depoDosyaYollari(yol)) {
+    if (!kapi.varMi(hedef)) continue;
+    let yazmaHatasi = "";
+    try {
+      kapi.moduYaz(hedef, DEPO_DOSYA_MODU);
+    } catch (e: any) {
+      if (e?.code === "ENOENT") continue;
+      yazmaHatasi = String(e?.message ?? e);
+    }
+    let mod: number;
+    try {
+      mod = kapi.moduOku(hedef);
+    } catch (e: any) {
+      if (e?.code === "ENOENT") continue;
+      throw new Error(
+        `Depo dosyasının izinleri OKUNAMADI: '${hedef}' (${String(e?.message ?? e)}). ` +
+          "Ölçülemeyen izin, güvenli izin sayılmaz — depo açılmadı."
+      );
+    }
+    if ((mod & 0o077) !== 0) {
+      throw new Error(
+        `Depo dosyası grup/diğer kullanıcılara AÇIK: '${hedef}' (mod 0${mod.toString(8)}). ` +
+          "Bu dosyada tüm kiracıların e-postası, google_sub değeri, bütçe tavanı ve şifreli " +
+          "refresh token'ı duruyor; sunucudaki başka bir yerel hesap onu kopyalayabilir. " +
+          (yazmaHatasi ? `chmod başarısız: ${yazmaHatasi}. ` : "") +
+          `Elle düzeltme: chmod 600 '${yol}' '${yol}-wal' '${yol}-shm' ` +
+          "(dizin için de: chmod 700 üst klasör)."
+      );
+    }
+    kisitlanan.push(hedef);
+  }
+  return kisitlanan;
+}
+
+/**
  * How many unreadable row ids the startup refusal lists at once.
  *
  * The cap exists so a store that is broken WHOLESALE (a rotated key, a foreign restore)
@@ -262,6 +366,10 @@ export class UserStore {
           `Klasör var mı ve yazılabilir mi? AEGIS_DB ile başka bir yol verebilirsin.`
       );
     }
+    // Owner-only BEFORE the WAL files are created, so they are born 0600 by inheritance
+    // rather than narrowed after the fact — see depoIzinleriniKisitla. On Windows this is a
+    // no-op; a file that cannot be narrowed refuses the store instead of opening it.
+    depoIzinleriniKisitla(this.yol);
     // Concurrency: the default busy_timeout=0 makes two simultaneous requests fail hard
     // with SQLITE_BUSY. WAL plus a wait timeout is what keeps them from colliding.
     this.db.exec(`

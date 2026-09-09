@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { enums } from "google-ads-api";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { sahteContext, baglanti, cagir } from "./helpers/harness.js";
+import { buildServer } from "../src/server.js";
+import { __setMetaKanalForTests, type MetaKampanya } from "../src/meta/client.js";
 import { normalizeGaql, ensureGaqlLimit, formatAdsError } from "../src/util.js";
 
 /**
@@ -337,4 +342,126 @@ test("KRİTİK: tek okunamayan alan 500 kampanyalık raporu DÜŞÜRMEZ", async 
   assert.equal(bozuk.gunlukButce, undefined, "okunamayan bütçe 0 ya da NaN diye yazılamaz");
   assert.deepEqual(bozuk.okunamayanAlanlar, ["gunlukButce"]);
   assert.equal(res.structuredContent.kampanyalar[7].gunlukButce, 50, "komşu satır etkilenmemeli");
+});
+
+/* ── THE BRANCH WHERE APPROVAL IS GIVEN: an unreadable old budget is not a number ──
+ *
+ * The "bütçe: mevcut tutar OKUNAMAZSA artış onayı atlanmaz" test above pins the REFUSAL
+ * branch only: `baglanti()` builds a client that does NOT advertise elicitation, so the
+ * flow always comes back with `onaylandi === false` and the "no NaN in front of the user"
+ * invariant is never measured on the sentence written AFTER a human says yes.
+ *
+ * That sentence exists twice. The Google half (src/tools/write.ts, "… bütçesi
+ * güncellendi: ${eskiBilinmiyor ? "OKUNAMADI" : oldBudget} → …") WAS MEASURED and is
+ * guarded: turning the ternary into `${oldBudget}` puts 4 tests of
+ * test/faz3Write.test.ts in the red. The Meta twin (src/tools/meta.ts) came back
+ * UNGUARDED under the same mutation — `${eskiBilinmiyor ? "?" : eski}` → `${eski}` left
+ * all 86 tests of meta.test.ts, metaButceKiyas.test.ts, onarim2ToolsMeta.test.ts,
+ * faz3MetaClient/faz3MetaDogrula, kapiKapsami and promises green while the tool was
+ * telling the user "undefined → 400". The two guards below nail that branch, and they
+ * fail in BOTH directions: an unreadable figure invented, or a measured figure hidden.
+ */
+
+const META_KAMPANYA = "120200000000001";
+
+/** Fake Meta channel plus an elicitation-capable client; collects prompts and calls. */
+async function metaIkizi(mevcutButce: number | undefined): Promise<{
+  istemci: Client;
+  istemler: string[];
+  cagrilar: string[];
+}> {
+  const cagrilar: string[] = [];
+  const istemler: string[] = [];
+  const kampanya: MetaKampanya = {
+    id: META_KAMPANYA,
+    ad: "Meta kampanyası",
+    // The node type has to have been read, or the money path is refused (kampanyaDegilseRet).
+    dugumTuru: "kampanya",
+    durum: "PAUSED",
+    gunlukButce: mevcutButce,
+  };
+
+  __setMetaKanalForTests({
+    async kampanyaOlustur({ ad, gunlukButce }) {
+      return { id: META_KAMPANYA, ad, durum: "PAUSED", gunlukButce };
+    },
+    async kampanyaOku() {
+      return kampanya;
+    },
+    async butceGuncelle(_id, yeni) {
+      cagrilar.push(`butceGuncelle:${yeni}`);
+      kampanya.gunlukButce = yeni;
+    },
+    async durumDegistir(_id, durum) {
+      cagrilar.push(`durumDegistir:${durum}`);
+    },
+  });
+
+  /**
+   * nacToken/approverPhone are absent ON PURPOSE: the network layer takes its "not
+   * configured" branch and the gate lets the call through. What is measured here is not
+   * the gate but the sentence written to the human and to the agent AFTER it; the gate
+   * itself is pinned in the networkTrust and meta tests.
+   */
+  const config = {
+    writeEnabled: true,
+    maxDailyBudget: 500,
+    metaToken: "TEST-ONLY-meta-jetonu",
+    metaAdAccountId: "act_1234567890",
+  };
+
+  const server = buildServer(() => ({ config }) as any);
+  const istemci = new Client(
+    { name: "failclosed-meta", version: "0" },
+    { capabilities: { elicitation: { form: {} } } }
+  );
+  istemci.setRequestHandler(ElicitRequestSchema, async (istek: any) => {
+    istemler.push(String(istek?.params?.message ?? ""));
+    return { action: "accept" as const, content: { onay: true } };
+  });
+
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(a), istemci.connect(b)]);
+  return { istemci, istemler, cagrilar };
+}
+
+test("Meta ikizi: ONAYLANAN bütçe artışında okunamayan eski tutar rakam gibi sunulmaz", async () => {
+  const { istemci, istemler, cagrilar } = await metaIkizi(undefined);
+  try {
+    const r: any = await istemci.callTool({
+      name: "update_meta_campaign_budget",
+      arguments: { campaignId: META_KAMPANYA, dailyBudget: 400 },
+    });
+    const out = String(r.content?.[0]?.text ?? "");
+
+    assert.equal(istemler.length, 1, "okunamayan eski bütçe her hâlükârda insana sorulur");
+    assert.match(istemler[0], /Mevcut bütçe OKUNAMADI/, "insana okunamadığı SÖYLENMELİ");
+    assert.ok(cagrilar.includes("butceGuncelle:400"), "insan onayladıysa yazma gerçekten yapılır");
+    assert.doesNotMatch(out, /NaN|undefined/i, "ölçülemeyen tutar bozuk bir değer olarak yazılamaz");
+    assert.doesNotMatch(out, /— 0 →/, "okunamayan bütçe kesin bir 0 gibi sunulamaz");
+    assert.match(out, /\? → 400/, "eski rakamın yerinde 'ölçülmedi' işareti durmalı");
+  } finally {
+    __setMetaKanalForTests(undefined);
+  }
+});
+
+test("Meta ikizi: OKUNABİLEN eski tutar hâlâ rakamıyla yazılır (gözcü her şeye '?' demiyor)", async () => {
+  // Counter-pole: on its own, the guard above would stay green on code that prints "?" for
+  // everything.
+  const { istemci, istemler, cagrilar } = await metaIkizi(100);
+  try {
+    const r: any = await istemci.callTool({
+      name: "update_meta_campaign_budget",
+      arguments: { campaignId: META_KAMPANYA, dailyBudget: 400 },
+    });
+    const out = String(r.content?.[0]?.text ?? "");
+
+    assert.equal(istemler.length, 1, "artış yine onay ister");
+    assert.match(istemler[0], /Mevcut: 100 → Yeni: 400/, "ölçülmüş rakam insana rakam olarak gider");
+    assert.ok(cagrilar.includes("butceGuncelle:400"));
+    assert.match(out, /100 → 400/, "ölçülmüş eski tutar ajandan da gizlenmez");
+    assert.doesNotMatch(out, /\?/, "ölçülmüş bütçe 'bilinmiyor' diye sunulamaz");
+  } finally {
+    __setMetaKanalForTests(undefined);
+  }
 });

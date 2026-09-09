@@ -22,8 +22,12 @@
  *     (see KADEME_UYGUN and YANITSIZ_KEFIL_ESLEMESI).
  *
  * Risk tiers do TWO things, and only the first one used to be written here. (1) They narrow
- * the look-back window: "medium" (budget increases) checks the last 24h, "high" (go-live,
- * changes to a serving campaign) checks the configured window, 72h by default. (2) They
+ * the look-back window: "medium" (budget increases) checks AT MOST the last 24h — the window
+ * it uses is min(24, configured), so a configured 12h stays 12h on medium and is NOT widened
+ * back to 24 — while "high" (go-live, changes to a serving campaign) checks the configured
+ * window, 72h by default. Reading "medium = 24h" as a floor is how the sentence used to
+ * mislead: a SIM change 18 hours old is invisible to a budget increase when the operator
+ * configured a 12h window (see pencereSec). (2) They
  * decide WHICH LINKS RUN AT ALL: on "medium" only SIM Swap runs, on "high" all six. That
  * second half is the decision logic itself, not a window, and its single source is
  * RISK_HALKA_ESLEMESI (see halkaKosarMi) — every layer is gated by it, so a new link must
@@ -547,8 +551,8 @@ export const KEFIL_ESLEMESI: Readonly<Record<string, readonly string[]>> = Objec
  * itself, and never `reach`/`nv` (liveness and simulation, see KEFIL_ESLEMESI).
  *
  * `callFwd` maps to the EMPTY set: unconditional call forwarding is invisible to every other
- * link in the chain, so no clean answer anywhere corroborates its silence and the chain
- * refuses (fail closed). An unknown link id is likewise an empty set.
+ * link in the chain, so no clean answer anywhere can vouch for the approver against that
+ * silence and the chain refuses (fail closed). An unknown link id is likewise an empty set.
  *
  * IT IS DERIVED, NOT COPIED — and that is the point. This table used to be a second hand-
  * written copy of the same doctrine, row for row identical to KEFIL_ESLEMESI's row for the
@@ -850,8 +854,8 @@ export interface ZincirHalkasi {
   /** The link's OWN field on KararKaydi (kararGunlugu.ts). */
   readonly gunlukAlani: string;
   /**
-   * The AgIz field carrying the link's OWN look-back window — for a link without
-   * halkada (2., 3., 4., 6.) YOKTUR.
+   * The AgIz field carrying the link's OWN look-back window — for a link that HAS no window
+   * (links 2, 3, 4 and 6) it is ABSENT.
    *
    * Windows, like link fields, are NEVER collapsed into one: even though links 1 and 5 are
    * fed by the same setting (AEGIS_SIMSWAP_WINDOW_HOURS), the distinction of "which question
@@ -907,8 +911,7 @@ export interface ZincirHalkasi {
  * So a link's identity is no longer implicit knowledge spread across six files but one
  * record: a new link is added HERE, and test/zincirButunlugu.test.ts verifies every consumer
  * against this registry — a missing connection turns RED in the compiler or the tests rather
- * than staying silent
- * kalamaz.
+ * than staying silent.
  *
  * CAREFUL: the registry is NOT a behaviour switch. The gate logic — agDogrula and the link
  * layers — does not read this array; the order, the opt-in rules and the fail-closed paths
@@ -1002,9 +1005,8 @@ export const ZINCIR_HALKALARI: readonly ZincirHalkasi[] = [
  * registry hygiene: writing them under any one link would make them read as that link's
  * "own" environment, and removing the link would delete a chain-wide setting along with it.
  *
- * `simSwapWindowHours` is here deliberately: links 1 AND 5 share the window, though they are
- * separate in the trace
- * alanlara yazar — bkz. AgIz.devSwapPencereSaat).
+ * `simSwapWindowHours` is here deliberately: links 1 AND 5 share the window, but each writes
+ * it to its OWN field in the trace — see AgIz.devSwapPencereSaat.
  */
 export const ZINCIR_ORTAK_AYARLARI: readonly (keyof AgAyar)[] = [
   "approverPhone",
@@ -1547,7 +1549,10 @@ function pencereNormalize(ham: number | undefined): number {
   return Math.min(2400, Math.round(ham as number));
 }
 
-/** Risk tier → lookback window: "medium" tightens to 24h, "high" uses the configured window. */
+/**
+ * Risk tier → lookback window: "medium" tightens to AT MOST 24h — min(24, configured), never
+ * widened back up to 24 — and "high" uses the configured window.
+ */
 function pencereSec(ayar: AgAyar, risk: AgRisk): number {
   const yapilandirilan = pencereNormalize(ayar.simSwapWindowHours);
   return risk === "medium" ? Math.min(MEDIUM_WINDOW_HOURS, yapilandirilan) : yapilandirilan;
@@ -1555,8 +1560,8 @@ function pencereSec(ayar: AgAyar, risk: AgRisk): number {
 
 /**
  * The SIMULATION channel, so a jury or demo environment runs without a NaC token. The real
- * SDK is NEVER
- * dokunulmaz (import bile edilmez).
+ * SDK is NEVER TOUCHED here — it is not even imported: the only runtime import of
+ * "network-as-code" sits inside nacIstemci, and this channel never calls it.
  *
  * EVERY text it produces — an evidence line, a refusal message, a stderr warning — carries
  * the word "SİMÜLASYON" explicitly and states that no real network query was made; the output
@@ -1564,9 +1569,9 @@ function pencereSec(ayar: AgAyar, risk: AgRisk): number {
  *
  * The fail-closed contract holds unchanged: the approver's number is required in simulation
  * too, so the masking paths match the real flow exactly, and an unrecognised simulation value
- * is REFUSED at decision time. The window calculation — 24h on medium, the configured value
- * on high — goes through the same code as the real flow, so the demo texts show the real
- * layer's behaviour.
+ * is REFUSED at decision time. The window calculation — at most 24h on medium, the configured
+ * value on high — goes through the same code as the real flow (pencereSec), so the demo texts
+ * show the real layer's behaviour.
  */
 function simDogrula(ayar: AgAyar, risk: AgRisk, sim: string): AgKarar {
   if (ayar.nacToken) {
@@ -2045,7 +2050,7 @@ async function konumKatmani(ayar: AgAyar, risk: AgRisk): Promise<HalkaSonuc | un
        *
        * IT PASSES, BUT IT VOUCHES FOR NOTHING (`gozlemsiz`). No country was observed, so
        * this link has NOT placed the line in the expected country; it merely found nothing
-       * that contradicts it. Letting it corroborate another link's degraded signal would
+       * that contradicts it. Letting it vouch against another link's degraded signal would
        * hand an escalation to a check that measured nothing at all — see HalkaSonuc.gozlemsiz
        * for the measurement that forced this flag.
        */
@@ -2503,7 +2508,12 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    *     called; there is no point going to the network for an action that is already refused.
    *   - A reason that can be escalated — a changed SIM or device, travel, a phone that is off,
    *     a silent network — with step-up ON does NOT stop the chain. The remaining links are
-   *     run to look for evidence that corroborates the degraded signal.
+   *     run to look for a link that can VOUCH FOR the approver DESPITE the degraded signal:
+   *     one that comes back CLEAN over a real channel, actually observed something, and is
+   *     CAPABLE OF DISPROVING that signal (see KEFIL_ESLEMESI). NO LINK EVER CORROBORATES the
+   *     degraded signal — nothing in the chain sets out to confirm that the SIM really was
+   *     swapped; the search is for evidence that CONTRADICTS it, and finding none is what
+   *     refuses.
    *
    * One of three things follows, and all three are distinguishable in the trace:
    *   refused             — a vouching link was degraded too, or there was no real voucher
@@ -2526,7 +2536,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    * EVERY link that came back clean over a REAL channel — regardless of its position.
    *
    * The first version counted only the links that ran AFTER the degraded signal, which tied
-   * corroboration to the order of the chain: because the reachability link runs before the
+   * VOUCHING to the order of the chain: because the reachability link runs before the
    * location link, it did not count as a voucher despite being clean and real. But
    * whether a signal came back clean has nothing to do with whether the degraded signal
    * arrived before or after it.
@@ -2565,7 +2575,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
   /**
    * Folds a single link's result into the chain and says whether the flow continues.
    *
-   * `gercekMi` is a separate parameter on purpose: a SIMULATED link cannot corroborate a
+   * `gercekMi` is a separate parameter on purpose: a SIMULATED link cannot VOUCH against a
    * degraded REAL signal. Otherwise, in demo mode a single environment value would make a
    * genuine SIM change look "verified" — which would be the easiest way past the gate.
    *
@@ -2693,7 +2703,7 @@ export async function agDogrula(ayar: AgAyar, risk: AgRisk): Promise<AgKarar> {
    * its own for a genuine SIM change.
    *
    * "ag-yanitsiz" IS PICKED FROM A DIFFERENT TABLE, because it is the one reason that does not
-   * name its own link: which link fell silent decides who can corroborate it, and for the
+   * name its own link: which link fell silent decides who can vouch for it, and for the
    * call-forwarding link the answer is NOBODY (see YANITSIZ_KEFIL_ESLEMESI). Reading the
    * single KEFIL_ESLEMESI row here let three links that cannot see forwarding vouch for a
    * silent forwarding check, so a permanently 501-answering link escalated every high-risk

@@ -32,6 +32,12 @@
  * STEP-UP DOES NOT PASS ON THE WEAK CHANNEL. An escalation rests on being able to ask the
  * human a stronger question; on a client with no prompt to show there is no escalation, and
  * the agent's own `confirm=true` does not stand in for that prompt.
+ *
+ * THE FRAME OF THE PROMPT BELONGS TO THIS FILE. The summary is assembled by the calling tool
+ * out of values read from the ad account — the campaign name above all — so the text is not
+ * this server's. Every caller-supplied field is stripped of line breaks, control bytes and
+ * invisible characters before anything is composed out of it (see istemMetniTemizle), so the
+ * only line structure the human sees is the one written here.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
@@ -123,6 +129,66 @@ function elicitationVar(server: McpServer): boolean {
 }
 
 /**
+ * Is this code point one that can move text off the line the server put it on, or hide it
+ * there? The C0 controls (NUL, TAB, CR, LF and the ESC that starts every ANSI sequence),
+ * DEL and the C1 controls, the Unicode line and paragraph separators, the bidi marks,
+ * overrides and isolates, and the zero-width / word-joiner family.
+ *
+ * Written as a numeric predicate rather than a character class on purpose: a range like
+ * this spelled out inside a regex literal puts the raw bytes it is meant to catch INTO
+ * this source file, where a reviewer cannot see them and a careless editor can eat them.
+ */
+function gorunmezMi(kod: number): boolean {
+  return (
+    kod <= 0x1f ||
+    (kod >= 0x7f && kod <= 0x9f) ||
+    kod === 0x061c ||
+    (kod >= 0x200b && kod <= 0x200f) ||
+    kod === 0x2028 ||
+    kod === 0x2029 ||
+    (kod >= 0x202a && kod <= 0x202e) ||
+    (kod >= 0x2060 && kod <= 0x2064) ||
+    (kod >= 0x2066 && kod <= 0x2069) ||
+    kod === 0xfeff
+  );
+}
+
+/**
+ * NEUTRALISES THE STRUCTURE OF TEXT THIS SERVER DID NOT WRITE, before it is rendered into
+ * the human prompt or into a refusal.
+ *
+ * `eylem` and the summary lines are assembled by the calling tool out of values READ FROM
+ * THE ACCOUNT — above all the campaign name, which is free-form text that an agent chose and
+ * that a prompt-injected page can therefore dictate (analyze_site). The only server-side
+ * check on that name is `z.string().min(1).max(255)`: no control characters, no ANSI, no
+ * quoting.
+ *
+ * Measured before this existed: a campaign name carrying a newline and a "•" produced an
+ * extra, entirely FORGED bullet in the elicitation prompt — a line the human reads as the
+ * gate's own words ("the network check already passed cleanly, this prompt is a formality") —
+ * and an ESC byte in the same name reached a terminal client's screen, where a sequence can
+ * repaint or erase the "⚠ NO GEO TARGET" warning underneath it. The prompt is the ONE
+ * surface on which the human's consent is formed; whoever controls its line structure
+ * controls what that consent is given TO.
+ *
+ * So the frame stays the server's: every one of those characters becomes a single space and
+ * runs of whitespace collapse, which leaves untrusted text able to occupy only the line the
+ * server put it on.
+ *
+ * NOTHING IS TRUNCATED, and this is a RENDERING rule, not a silent correction of a value —
+ * the stored campaign name is untouched, and no gate reads these strings. A length cap was
+ * deliberately not added: it would drop part of what the human is deciding about (the
+ * keyword list of add_keywords is one line and legitimately long), and a gate that hides its
+ * own evidence from the person deciding is worse than one that prints a long line.
+ */
+function istemMetniTemizle(s: string): string {
+  const duz = Array.from(String(s ?? ""), (ch) =>
+    gorunmezMi(ch.codePointAt(0)!) ? " " : ch
+  ).join("");
+  return duz.replace(/\s+/g, " ").trim();
+}
+
+/**
  * Obtains approval for a dangerous (money-spending) operation.
  * @param agentConfirm The confirm flag sent by the agent — honoured ONLY on clients
  *   without elicitation support (backwards compatibility).
@@ -132,6 +198,24 @@ export async function onayAl(
   ozet: OnayOzeti,
   agentConfirm: boolean | undefined
 ): Promise<OnaySonucu> {
+  /**
+   * THE FRAME IS TAKEN BACK FIRST — before a single byte of this summary is composed into
+   * anything (see istemMetniTemizle).
+   *
+   * It has to happen here rather than at the point of rendering, because there are three
+   * renderings, not one: the elicitation prompt, the weak-channel refusal, and the
+   * step-up header that is built OUT OF `eylem` further down. Cleaning at one of them
+   * would leave the other two holding the caller's line breaks — and the step-up header is
+   * precisely the text an injected campaign name would want to forge.
+   */
+  ozet = {
+    ...ozet,
+    eylem: istemMetniTemizle(ozet.eylem),
+    satirlar: ozet.satirlar.map((s) => istemMetniTemizle(s)),
+    insanSatirlari: ozet.insanSatirlari?.map((s) => istemMetniTemizle(s)),
+    soru: ozet.soru === undefined ? undefined : istemMetniTemizle(ozet.soru),
+  };
+
   /**
    * Did step-up verification engage? The weak (confirm) channel MUST see this: an
    * escalation means "we are asking you anyway", and with no prompt to ask there is no
@@ -192,7 +276,16 @@ export async function onayAl(
      * expected country handed anyone trying to get past the gate its dimensions.
      */
     if (ag.kanit.length) {
-      ozet = { ...ozet, insanSatirlari: [...(ozet.insanSatirlari ?? []), ...ag.kanit] };
+      /**
+       * These lines are written by the gate itself, not by a caller — but they still carry
+       * operator-supplied configuration (the expected country) and upstream-derived values,
+       * and they arrive AFTER the sweep at the top of this function. Same rule, same call:
+       * one bullet per line, and the line structure stays the server's.
+       */
+      ozet = {
+        ...ozet,
+        insanSatirlari: [...(ozet.insanSatirlari ?? []), ...ag.kanit.map((s) => istemMetniTemizle(s))],
+      };
     }
 
     /**
