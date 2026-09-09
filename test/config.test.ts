@@ -140,16 +140,44 @@ test("parseNumEnv: geçerli değer aynen geçer (kapı bir duvar değil)", () =>
 
 /* ── bütçe tavanı: paranın son savunması ──────────────────────────────────────── */
 
-test("KRİTİK: geçersiz bütçe tavanı SESSİZCE devre dışı kalamaz, 500'e zorlanır", () => {
+test("KRİTİK: geçersiz bütçe tavanı SESSİZCE devre dışı kalamaz — sunucu hiç açılmaz", () => {
   /**
    * Tavanın NaN'a düşmesi en kötü hâldir: NaN ile yapılan HER karşılaştırma false döner,
    * yani "tavanı aşıyor mu?" sorusu daima "hayır" olur. Kapı yerinde durur, kodda
-   * görünür, hiçbir şeyi engellemez. Bu yüzden geçersiz değer varsayılana ZORLANIR.
+   * görünür, hiçbir şeyi engellemez.
+   *
+   * ESKİDEN geçersiz değer 500'e ZORLANIYORDU. O, sorunun yalnız yarısını kapatıyordu ve
+   * yönü yanlıştı: 500 bir sabit, muhafazakâr bir taban değil. Tavanı DÜŞÜRMEK isteyip
+   * `250,00` yazan (ondalık virgül → NaN) bir operatör sessizce 500 alıyordu — istediğinin
+   * İKİ KATI — ve tek uyarı satırı stderr'e gidiyordu; MCP stdio altında orası operatörün
+   * hiç açmadığı bir istemci günlük dosyası. Yazım hatasıyla YÜKSELTİLEBİLEN bir tavan,
+   * tavan değildir.
+   *
+   * Artık okunamayan tavan fırlatıyor. Bilinmeyen bir tavan, varsayılan bir tavan değildir.
    */
-  for (const bozuk of ["abc", "0", "-100", "", "   ", "NaN"]) {
-    ayarla("AEGIS_MAX_DAILY_BUDGET", bozuk === "" ? "" : bozuk);
+  // Yalnız BOŞLUKTAN ibaret değer bu listede DEĞİL: kod onu "tanımsız" sayıyor ve
+  // varsayılana düşürüyor — aşağıdaki karşı-yön testi tam olarak onu çiviliyor.
+  for (const bozuk of ["abc", "0", "-100", "NaN", "250,00", "250 TL", "₺250"]) {
+    ayarla("AEGIS_MAX_DAILY_BUDGET", bozuk);
+    assert.throws(
+      () => loadConfig(),
+      /AEGIS_MAX_DAILY_BUDGET/,
+      `'${bozuk}' tavanı sessizce kabul edilemez — süreç açılmamalı`
+    );
+  }
+});
+
+test("tavan YOKSA belgelenen varsayılan kalır — seçmemek yazım hatası değildir", () => {
+  /**
+   * Karşı yön. Yukarıdaki sıkılaştırma yalnız VAR AMA OKUNAMAYAN değer içindir. Değişkeni
+   * hiç tanımlamamış (ya da boş bırakmış) bir operatör seçim yapmamıştır, yazım hatası
+   * yapmamıştır; ona 500 vermek belgelenen davranıştır. Bu test, sıkılaştırmanın kurulumu
+   * toptan kırmadığını çiviler.
+   */
+  for (const yok of ["", "   \t  "]) {
+    ayarla("AEGIS_MAX_DAILY_BUDGET", yok);
     const c = loadConfig();
-    assert.equal(c.maxDailyBudget, 500, `'${bozuk}' tavanı devre dışı bırakmamalı`);
+    assert.equal(c.maxDailyBudget, 500, "tanımsız/boş tavan varsayılana düşmeli");
     assert.ok(Number.isFinite(c.maxDailyBudget), "tavan her zaman sonlu bir sayı olmalı");
   }
 });
@@ -323,16 +351,27 @@ test("parseNumEnv uyarısı HAM DEĞERİ yazmaz", () => {
   assert.match(yazilanlar, /AEGIS_SIMSWAP_WINDOW_HOURS/);
 });
 
-test("bütçe tavanı uyarısı HAM DEĞERİ yazmaz", () => {
+test("bütçe tavanı REDDİ HAM DEĞERİ taşımaz", () => {
+  /**
+   * Sızıntı kuralı sözleşme değişince YER değiştirdi, kalkmadı: mesaj artık stderr'e değil
+   * fırlatılan hataya gidiyor, dolayısıyla denetim de orada yapılıyor. Yanlış yuvaya
+   * yapıştırılmış bir jeton ya da telefon numarası, hata metniyle birlikte dışarı çıkamaz.
+   */
   ayarla("AEGIS_MAX_DAILY_BUDGET", SIZINTI_SENTINELI);
   ayarla("GOOGLE_ADS_DEVELOPER_TOKEN", "sahte");
   ayarla("GOOGLE_ADS_CLIENT_ID", "sahte");
   ayarla("GOOGLE_ADS_CLIENT_SECRET", "sahte");
   ayarla("GOOGLE_ADS_REFRESH_TOKEN", "sahte");
-  const { sonuc, yazilanlar } = stderrYakala(() => loadConfig());
-  assert.equal(sonuc.maxDailyBudget, 500, "geçersiz tavan varsayılana zorlanmalı");
-  assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e yazılmamalı");
-  assert.match(yazilanlar, /AEGIS_MAX_DAILY_BUDGET/);
+
+  const { yazilanlar } = stderrYakala(() => {
+    const e = assert.throws(() => loadConfig(), /AEGIS_MAX_DAILY_BUDGET/) as unknown as Error;
+    assert.equal(
+      String(e?.message ?? e).includes(SIZINTI_SENTINELI),
+      false,
+      "ham değer hata metnine yazılmamalı"
+    );
+  });
+  assert.equal(yazilanlar.includes(SIZINTI_SENTINELI), false, "ham değer stderr'e de yazılmamalı");
 });
 
 test("her nac bayrağı uyarıda KENDİ değişken adıyla anılır (ad kaybolmaz)", () => {

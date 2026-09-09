@@ -339,20 +339,37 @@ export function parseNumEnv(name: string, raw: string | undefined, varsayilan: n
 }
 
 /**
- * The cap is validated: NaN, a negative value or zero must not disable the guard
- * SILENTLY, so it falls back to the default (500) and warns on stderr.
+ * THE CAP IS REFUSED WHEN IT CANNOT BE READ — IT IS NOT REPAIRED.
+ *
+ * A present-but-invalid value used to fall back to a fixed 500 with an stderr warning. That
+ * closed the "the guard must not go SILENTLY missing" half of the problem and got the
+ * DIRECTION wrong: 500 is a constant, not a conservative floor. An operator LOWERING the
+ * ceiling who mistypes it — `250,00` with a decimal comma, `250 TL`, `₺250`, all of which
+ * are `Number(...) === NaN` — was silently handed 500, TWICE what they asked for, and the
+ * one warning line goes to stderr, which under MCP stdio lands in a client log file the
+ * operator never opens. A cap that can be raised by a typo is not a cap.
+ *
+ * So an unreadable cap throws, and the server does not start. This is the pattern already
+ * standing in this function (missing credentials throw) and in the hosted half of the very
+ * same setting (store.ts `updateSettings`: "maxDailyBudget 0'dan büyük bir sayı olmalı.").
+ * Fail-closed: an unknown ceiling is not a default ceiling.
+ *
+ * An ABSENT or empty variable is a different case and keeps the documented default: that is
+ * an operator who did not choose, not an operator who mistyped.
  */
 function parseBudgetCap(raw: string | undefined): number {
   const DEFAULT = 500;
   if (!raw?.trim()) return DEFAULT;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    // Same reasoning as parseBool: the raw value never reaches the log.
-    console.error(
-      `[aegis] Uyarı: AEGIS_MAX_DAILY_BUDGET geçersiz (beklenen: 0'dan büyük bir sayı) — ` +
-        `bütçe tavanı ${DEFAULT} olarak zorlandı. Değer sır ihtimaline karşı gösterilmiyor.`
+    // Same reasoning as parseBool: the raw value never reaches the message either — a token
+    // or a phone number pasted into the wrong slot must not travel out with the error.
+    throw new Error(
+      `AEGIS_MAX_DAILY_BUDGET geçersiz (beklenen: 0'dan büyük bir sayı; ondalık ayırıcı ` +
+        `NOKTA, para birimi/binlik ayracı yazılmaz — örn. 250 ya da 250.5). ` +
+        `Düzeltilmeden sunucu açılmaz: geçersiz bir tavan varsayılana çekilseydi, ` +
+        `niyetinden YÜKSEK bir tavanla koşabilirdin. Değer sır ihtimaline karşı gösterilmiyor.`
     );
-    return DEFAULT;
   }
   return n;
 }
