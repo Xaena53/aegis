@@ -359,8 +359,21 @@ test("BULGU5: agDogrula yorumu kefalet yönünü doğru anlatır; 'corroborate' 
     "kefil olabilmenin koşulu (o sinyali çürütebilmek) cümlede geçmeli"
   );
   // Tek meşru kullanım, bilerek büyük harfli olumsuz cümle: "NO LINK EVER CORROBORATES".
+  //
+  // ÖLÇÜLDÜ (faz 4): eski ayıklama `duz.replace(/CORROBORATES/g, "")` ÇOK GENİŞTİ —
+  // dosyadaki HER büyük harfli geçişi siliyordu. Kefalet yönünü TERS anlatan yeni bir
+  // yorum eklendiğinde ("every remaining link CORROBORATES the degraded signal") o sözcük
+  // de ayıklanıyor, gözcü YEŞİL kalıyordu. Ayıklama artık TAM İFADEYE bağlı ve ifadenin
+  // BİR KEZ geçtiği ayrıca doğrulanıyor: ifadeyi çoğaltarak da delinemez.
+  const MESRU_IFADE = "NO LINK EVER CORROBORATES";
+  const parcalar = duz.split(MESRU_IFADE);
+  assert.equal(
+    parcalar.length,
+    2,
+    `meşru olumsuz cümle ("${MESRU_IFADE}") yorumlarda TAM OLARAK bir kez geçmeli`
+  );
   assert.ok(
-    !/corroborat/i.test(duz.replace(/CORROBORATES/g, "")),
+    !/corroborat/i.test(parcalar.join(" ")),
     "hiçbir halka bozuk sinyali TEYİT etmez; 'corroborate' sözlüğü bu dosyada ters okunur"
   );
 });
