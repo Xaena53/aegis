@@ -165,9 +165,16 @@ async function fetchPage(url: string): Promise<{ finalUrl: string; html: string;
 
       // Match on the media type alone: testing the whole header lets a crafted parameter
       // such as "application/octet-stream; note=xml" slip past the check.
+      //
+      // FAIL-CLOSED, and the EMPTY string is the case that matters. `mediaType` is empty
+      // both when the header is ABSENT and when the header carries only parameters
+      // (`; charset=utf-8` gives split(";")[0] === ""). Guarding the test with `mediaType &&`
+      // short-circuited the whole gate in both of those cases, so any body (PDF, zip, raw
+      // binary) was decoded and written into the <site-verisi> block merely by OMITTING a
+      // header. An unreadable type is not a clean one: no type, no analysis.
       const contentType = res.headers.get("content-type");
       const mediaType = (contentType ?? "").split(";")[0].trim().toLowerCase();
-      if (mediaType && !/^(text\/html|application\/xhtml\+xml|text\/plain|(application|text)\/xml)$/.test(mediaType)) {
+      if (!mediaType || !/^(text\/html|application\/xhtml\+xml|text\/plain|(application|text)\/xml)$/.test(mediaType)) {
         throw new Error(`HTML değil (${guvenliMedyaTipi(mediaType)}) — bu araç yalnız web sayfası analiz eder.`);
       }
 

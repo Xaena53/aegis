@@ -6,7 +6,9 @@
  * itself and mis-handles multi-line input. String literals are preserved during that
  * normalisation because collapsing whitespace inside them changes what a query matches.
  *
- * Every export here is directly unit-tested in test/util.test.ts.
+ * Every export here is covered by a direct unit test under test/ — the bulk in
+ * test/util.test.ts, the round-3 additions in test/faz3Util.test.ts, which also keeps
+ * that sentence honest by walking this file's exports.
  */
 import { errors as adsErrors } from "google-ads-api";
 
@@ -345,7 +347,60 @@ function resolveErrorCodeName(key: string, value: unknown): string {
   return typeof name === "string" ? name : String(value);
 }
 
-/** Reduces a Google Ads API error to one readable line: code name, message and a hint. */
+/**
+ * The ceiling on upstream error text.
+ *
+ * Larger than the 400 characters a terminal summary gets (scripts/brain/uygulama.mjs,
+ * gorunurOzet) on purpose: this string is the agent's ONLY account of a failed call, and
+ * Google returns one entry per failed operation, so a 400-character cut would hide which
+ * field a mutate refused. The cap is here to stop a runaway or hostile upstream from
+ * flooding the agent's context, not to summarise.
+ */
+const HATA_METNI_TAVANI = 1000;
+
+/**
+ * UPSTREAM TEXT MADE SAFE TO PRINT: ANSI removed, control bytes removed, length capped, and
+ * the cut ANNOUNCED.
+ *
+ * Text the remote side controls reaches an operator's terminal and the agent's context
+ * verbatim. An escape sequence in it is not decoration: "ESC [ 2 J" clears the screen and
+ * "ESC [ 3 1 m" colours a line, so an upstream message can wipe the gate's real verdict off
+ * the screen and paint a fake "BAŞARILI" in its place — on a demo recording, the only record
+ * of what the gate said. Whitespace collapsing does not help: ESC (0x1b) is not `\s`, so
+ * every one of those sequences survives a `/\s+/` pass. They have to be removed by name.
+ *
+ * The cap is NOT a silent trim. The tail is replaced by a visible marker that says how much
+ * was dropped, because a truncated error that looks complete is exactly how a reader
+ * concludes the upstream said less than it did.
+ */
+export function metinTemizle(ham: unknown, tavan: number = HATA_METNI_TAVANI): string {
+  // CSI ("ESC ["), OSC ("ESC ]" up to BEL or ST) and the single-character Fe escapes.
+  const ansisiz = String(ham ?? "").replace(
+    /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[@-Z\\-_])/g,
+    " "
+  );
+  // Whatever else can move a cursor, ring a bell or forge a log line becomes a space. Written
+  // as a code-point test rather than a character class so this file carries no raw control
+  // byte of its own (see test/kaynakHijyeni.test.ts).
+  let temiz = "";
+  for (const ch of ansisiz) {
+    const kod = ch.codePointAt(0)!;
+    temiz += kod <= 0x1f || (kod >= 0x7f && kod <= 0x9f) ? " " : ch;
+  }
+  temiz = temiz.replace(/ {2,}/g, " ").trim();
+  if (temiz.length <= tavan) return temiz;
+  return `${temiz.slice(0, tavan)}… [${temiz.length - tavan} karakter kırpıldı]`;
+}
+
+/**
+ * Reduces a Google Ads API error to one readable line: code name, message and a hint.
+ *
+ * The upstream half is scrubbed and capped BEFORE it is framed as a sentence; everything
+ * added after that point — the prefix and the hint — is text this repository wrote. Hint
+ * matching runs on the scrubbed, capped text on purpose: a hint that explains a passage the
+ * reader cannot see is worse than no hint, and the code name leads every list entry, so the
+ * keywords the hints match on sit at the front rather than past the cap.
+ */
 export function formatAdsError(err: unknown): string {
   const e = err as any;
   const fromList = e?.errors
@@ -362,7 +417,7 @@ export function formatAdsError(err: unknown): string {
     })
     .filter(Boolean)
     .join("; ");
-  const base = `Google Ads API hatası: ${fromList || e?.message || String(err)}`;
+  const base = `Google Ads API hatası: ${metinTemizle(fromList || e?.message || String(err))}`;
   const hint = ERROR_HINTS.find(([re]) => re.test(base))?.[1];
   return hint ? `${base}\n${hint()}` : base;
 }

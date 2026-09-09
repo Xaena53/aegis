@@ -277,10 +277,18 @@ test("KRİTİK: uydurma parametre içerik tipi kapısını atlatamaz", async () 
   assert.match(out, /application\/octet-stream/, "reddedilen tip adıyla söylenmeli");
 });
 
-test("içerik tipi HİÇ yoksa sayfa işlenir (eski sunucular kilitlenmesin)", async () => {
+test("içerik tipi HİÇ yoksa sayfa İŞLENMEZ (bilinmeyen tip temiz sayılamaz)", async () => {
+  /**
+   * This test used to assert the OPPOSITE ("do not lock out old servers"). That
+   * concession punched a hole straight through the fail-closed contract: when the media
+   * type is the empty string the gate short-circuited, so ANY body was treated as HTML
+   * just because the server omitted a header. The wider proof (missing header, empty
+   * type with parameters, whitespace-only) lives in test/faz3Site.test.ts.
+   */
   sayfaVer("<html><title>Başlıksız sunucu</title></html>", { tip: null });
   const out = await analiz(URL_GENEL);
-  assert.match(out, /Başlıksız sunucu/);
+  assert.match(out, /HTML değil/, "başlıksız yanıt reddedilmeli");
+  assert.doesNotMatch(out, /Başlıksız sunucu/, "gövde hiç işlenmemeli");
 });
 
 test("HTTP 404 yanıtı içerik gibi işlenmez", async () => {

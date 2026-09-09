@@ -148,8 +148,182 @@ const limiter = new RateLimiter({
   perDay: parseNumEnv("AEGIS_RATE_PER_DAY", process.env.AEGIS_RATE_PER_DAY, 2000),
 });
 
+/**
+ * SLIDING WINDOWS FOR THE TWO SURFACES `limiter` DOES NOT REACH.
+ *
+ * RateLimiter is charged in exactly one place (the /mcp handler, per authenticated user).
+ * Two paths therefore had no ceiling of any kind, and both do work before anyone has proved
+ * anything: the unauthenticated OAuth surface, and a /mcp request that is refused before it
+ * runs. They are counted here because both ceilings are about THIS process rather than
+ * about the shared Google quota.
+ */
+interface Pencere {
+  start: number;
+  count: number;
+}
+const PENCERE_MS = 60_000;
+
+/**
+ * THE UNAUTHENTICATED OAUTH SURFACE.
+ *
+ * /connect and /oauth/callback take no credential — that is what they are for — and a
+ * callback carrying a signed, fresh state turns into a real outbound POST to Google's token
+ * endpoint. Nothing charged that: one caller could fetch a state from /connect and replay it
+ * for the whole OAUTH_STATE_TTL_MS window, minting one upstream TLS request per inbound
+ * request. What breaks first is not this process but the deployment's standing at Google —
+ * and with it the ONLY road a new tenant has, since /connect is how anyone signs up.
+ *
+ * THE BUCKET IS THE SOCKET ADDRESS, NEVER X-Forwarded-For. That header is written by the
+ * client, so honouring it would let one caller rotate through unlimited buckets, and a
+ * ceiling anyone may raise is not a ceiling. Behind a reverse proxy every caller shares the
+ * proxy's bucket; the limit is deliberately generous for that reason, and an operator who
+ * wants per-client accounting has to do it in the proxy — the only layer that knows the
+ * real address.
+ */
+const OAUTH_DK_TAVANI = 60;
+const OAUTH_KOVA_TAVANI = 10_000;
+const oauthPencereleri = new Map<string, Pencere>();
+
+/**
+ * REQUESTS REFUSED BEFORE THEY RAN, COUNTED SEPARATELY.
+ *
+ * `limiter` deliberately does not charge a refused request — otherwise a client over the
+ * limit keeps extending its own penalty (rateLimit.ts). But an oversized batch, and a body
+ * that will not parse, are refused only AFTER the body has been read and parsed, so on those
+ * paths the cost was paid and nothing was counted at all: a valid API key could hold the
+ * event loop with megabyte bodies for ever while its own quota never moved. The quota still
+ * does not move. This counter is what bounds the repetition, and it is consulted BEFORE the
+ * next body is read — a counter checked after the read cannot bound the cost that feeds it.
+ */
+const KOTU_ISTEK_DK_TAVANI = 20;
+const KOTU_ISTEK_KOVA_TAVANI = 10_000;
+const kotuIstekPencereleri = new Map<number, Pencere>();
+
+/** The window in force for this key, restarted once the old one has run out. */
+function pencereTazele<K>(pencereler: Map<K, Pencere>, anahtar: K, kovaTavani: number): Pencere {
+  const now = Date.now();
+  let p = pencereler.get(anahtar);
+  if (!p || now - p.start >= PENCERE_MS) {
+    p = { start: now, count: 0 };
+    // Memory ceiling: these maps are fed by unauthenticated callers, so they are bounded
+    // (sweep drops expired windows as well).
+    lruYerAc(pencereler, kovaTavani);
+    pencereler.set(anahtar, p);
+  }
+  return p;
+}
+
+function kalanBekleme(p: Pencere): number {
+  return Math.max(1, Math.ceil((p.start + PENCERE_MS - Date.now()) / 1000));
+}
+
+/**
+ * The bucket a request is counted in. An address that cannot be read is NOT "no address":
+ * all such requests share ONE bucket, so an unreadable socket buys no allowance (fail
+ * closed).
+ */
+function istemciKovasi(req: http.IncomingMessage): string {
+  return req.socket?.remoteAddress ?? "adres-okunamadi";
+}
+
+/**
+ * Counts one request against the OAuth surface. Returns the seconds to wait when the
+ * ceiling has been reached — and then does NOT count it, so being refused cannot extend the
+ * caller's own penalty.
+ */
+function oauthKotasi(req: http.IncomingMessage): number | undefined {
+  const p = pencereTazele(oauthPencereleri, istemciKovasi(req), OAUTH_KOVA_TAVANI);
+  if (p.count >= OAUTH_DK_TAVANI) return kalanBekleme(p);
+  p.count++;
+  return undefined;
+}
+
+/**
+ * STATES ALREADY SPENT. Deleting the state cookie only makes a BROWSER's state single-use;
+ * a caller that replays the header itself keeps a signed, fresh state usable for the whole
+ * OAUTH_STATE_TTL_MS window, and every replay is one more real POST to Google's token
+ * endpoint. A state is a CSRF token, and a CSRF token that can be spent twice is not one.
+ *
+ * The map is bounded, and the eviction cannot be turned into a replay: filling
+ * HARCANAN_STATE_TAVANI entries through the only door that mints them (/connect, metered at
+ * OAUTH_DK_TAVANI per minute) takes far longer than the ten minutes after which the state
+ * fails verifyState anyway.
+ */
+const harcananState = new Map<string, number>();
+const HARCANAN_STATE_TAVANI = 10_000;
+
+function stateHarcandiMi(state: string): boolean {
+  const bitis = harcananState.get(state);
+  if (bitis === undefined) return false;
+  // An expired entry is dropped rather than trusted: the state itself is already dead to
+  // verifyState by then, so keeping it would only cost memory.
+  if (Date.now() >= bitis) {
+    harcananState.delete(state);
+    return false;
+  }
+  return true;
+}
+
+function stateHarca(state: string): void {
+  lruYerAc(harcananState, HARCANAN_STATE_TAVANI);
+  harcananState.set(state, Date.now() + OAUTH_STATE_TTL_MS);
+}
+
+/** Records a /mcp request that was refused before it ran. */
+function kotuIstekKaydet(userId: number): void {
+  pencereTazele(kotuIstekPencereleri, userId, KOTU_ISTEK_KOVA_TAVANI).count++;
+}
+
+/** Seconds to wait when this user's refused-request ceiling has already been reached. */
+function kotuIstekCezasi(userId: number): number | undefined {
+  const p = kotuIstekPencereleri.get(userId);
+  if (!p || Date.now() - p.start >= PENCERE_MS) return undefined;
+  return p.count >= KOTU_ISTEK_DK_TAVANI ? kalanBekleme(p) : undefined;
+}
+
+/**
+ * SECRET HYGIENE FOR THE LOG: the message, capped — never the error OBJECT.
+ *
+ * Node prints an object argument with util.inspect, which dumps the stack AND the error's
+ * own enumerable properties. That is not a theoretical leak on these paths: a failing
+ * google-auth-library token refresh throws a GaxiosError whose `config.data` is
+ * `refresh_token=…&client_secret=…`, and an HTML error page from a proxy in front of
+ * Google's token endpoint throws a SyntaxError whose message carries a prefix of the raw
+ * upstream body. Everywhere else this repository already limits both (networkTrust.ts logs
+ * `e?.message`, meta/client.ts caps upstream text at 300 characters); these entry points
+ * were the exception — and they are precisely the ones that catch errors whose shape nobody
+ * predicted.
+ */
+function gunlukHatasi(e: unknown): string {
+  return String((e as { message?: unknown } | null | undefined)?.message ?? e)
+    .replace(/\s+/g, " ")
+    .slice(0, 300);
+}
+
 // In hosted mode an error hint must say "reconnect", never "edit your .env"
 setRuntimeMode("hosted", `${PUBLIC_URL}/connect`);
+
+/**
+ * META CREDENTIALS ARE NOT CARRIED IN HOSTED MODE — and the operator is told so, out loud.
+ *
+ * config.ts reads AEGIS_META_TOKEN / AEGIS_META_AD_ACCOUNT_ID, but that config object
+ * belongs to the single-tenant stdio entry point. The hosted context is assembled per TENANT
+ * in contextFor() below and deliberately does not include them: one operator token handed to
+ * every tenant would let tenant A spend tenant B's Meta budget, which is the one boundary
+ * this server exists to hold. The drop used to be SILENT — both fields are optional on
+ * AegisConfig so nothing failed to compile, and docker-compose hands the whole .env to the
+ * container — so an operator who had genuinely set the variables was told by the Meta tools
+ * that they were "not defined", with nothing anywhere to break that loop.
+ */
+if (process.env.AEGIS_META_TOKEN?.trim() || process.env.AEGIS_META_AD_ACCOUNT_ID?.trim()) {
+  console.error(
+    "[aegis-http] UYARI: AEGIS_META_TOKEN / AEGIS_META_AD_ACCOUNT_ID tanımlı ama HOSTED MODDA " +
+      "KULLANILMIYOR — Meta araçları bu modda kapalıdır. Tek operatör jetonunu tüm kiracılara " +
+      "açmak kiracı izolasyonunu kırardı; Meta tarafı yalnız tek kiracılı stdio modunda " +
+      "(npm start) çalışır. Meta araçlarının 'AEGIS_META_TOKEN tanımlı değil' yanıtı bu modda " +
+      "değişkeni doldurmadığın anlamına GELMEZ."
+  );
+}
 
 /**
  * Host/Origin allow list for DNS rebinding protection, as the MCP spec requires.
@@ -229,6 +403,12 @@ function contextFor(user: StoredUser): AdsContext {
       loginCustomerId: user.loginCustomerId,
       writeEnabled: user.writeEnabled,
       maxDailyBudget: user.maxDailyBudget,
+      // NO metaToken / metaAdAccountId, deliberately: those are the OPERATOR's credentials
+      // and this object is one TENANT's. Handing the operator's Meta token to every tenant
+      // would let tenant A spend tenant B's Meta budget. Meta tools are therefore inert in
+      // hosted mode, and the startup warning above says so to the operator's face — if this
+      // ever changes, the credentials must arrive PER TENANT (store + kiraciAnahtarDilimi)
+      // and that warning has to go with them.
       ...nac,
     });
     /**
@@ -278,6 +458,12 @@ function sweep(): void {
       }
     }
   }
+  // Expired windows are dropped here as well as when they are next touched: a bucket that
+  // is never asked about again must not stay resident (both maps are fed by callers who
+  // never authenticate).
+  for (const [k, p] of oauthPencereleri) if (now - p.start >= PENCERE_MS) oauthPencereleri.delete(k);
+  for (const [k, p] of kotuIstekPencereleri) if (now - p.start >= PENCERE_MS) kotuIstekPencereleri.delete(k);
+  for (const [k, bitis] of harcananState) if (now >= bitis) harcananState.delete(k);
   limiter.sweep();
 }
 
@@ -294,7 +480,14 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
   res.end(payload);
 }
 
-function html(res: http.ServerResponse, status: number, body: string, extraHeaders: Record<string, string> = {}) {
+function html(
+  res: http.ServerResponse,
+  status: number,
+  body: string,
+  // string[] is required, not cosmetic: /oauth/callback answers with TWO Set-Cookie headers
+  // (it deletes the state cookie in the same response that opens the human session).
+  extraHeaders: Record<string, string | string[]> = {}
+) {
   res.writeHead(status, {
     "Content-Type": "text/html; charset=utf-8",
     // These pages can carry an API key: keep them out of caches and proxies, and out of the referrer
@@ -454,19 +647,39 @@ function handleConnect(res: http.ServerResponse) {
 async function handleCallback(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const state = url.searchParams.get("state") ?? "";
   const cookieState = readCookie(req, "aegis_state");
-  // The state must be signed and fresh AND match what this browser has in its cookie
-  if (!verifyState(state) || cookieState !== state) {
+  /**
+   * THE STATE IS SPENT HERE, WHATEVER THE OUTCOME.
+   *
+   * It used to survive its own callback: signed and fresh is all verifyState asks, so one
+   * state plus its cookie could drive an unbounded number of callbacks — each one a real
+   * POST to Google's token endpoint — for the full OAUTH_STATE_TTL_MS. Deleting the cookie
+   * on EVERY exit (refusal included) makes a browser's state single-use, which is what a
+   * CSRF token is for; the ceiling for a caller that ignores Set-Cookie and replays the
+   * header itself is oauthKotasi() in the router.
+   */
+  const secure = PUBLIC_URL.startsWith("https://") ? "; Secure" : "";
+  const stateSil = `aegis_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`;
+  // The state must be signed and fresh, match what this browser has in its cookie, AND not
+  // have been spent already
+  if (!verifyState(state) || cookieState !== state || stateHarcandiMi(state)) {
     return html(
       res,
       403,
       page(
         "Geçersiz istek",
         "<h1>Geçersiz ya da süresi dolmuş bağlantı isteği</h1><p>Bu bağlantı bu tarayıcıda başlatılmamış ya da süresi dolmuş. <a href='/connect'>Baştan başla</a>.</p>"
-      )
+      ),
+      { "Set-Cookie": stateSil }
     );
   }
+  /**
+   * SPENT AT THE MOMENT IT IS ACCEPTED, not after the exchange succeeds. Marking it later
+   * would leave every failing path (a cancelled authorisation, a refused token exchange, an
+   * upstream timeout) replayable — and those are exactly the paths a caller can force.
+   */
+  stateHarca(state);
   const code = url.searchParams.get("code");
-  if (!code) return html(res, 400, page("Hata", "<h1>Yetkilendirme iptal edildi</h1>"));
+  if (!code) return html(res, 400, page("Hata", "<h1>Yetkilendirme iptal edildi</h1>"), { "Set-Cookie": stateSil });
 
   const { id, secret } = oauthClient();
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -479,13 +692,23 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
       redirect_uri: `${PUBLIC_URL}/oauth/callback`,
       grant_type: "authorization_code",
     }),
+    /**
+     * A DEADLINE, BECAUSE THIS CALL IS REACHED WITHOUT A CREDENTIAL.
+     *
+     * Without one, a hung upstream connection holds the handler (and its socket) until
+     * undici's own 300-second header timeout — long after requestTimeout has given up on the
+     * inbound side. Under repetition that is how the event loop fills. On timeout the fetch
+     * rejects and the router answers 500 without ever leaking why to the caller.
+     */
+    signal: AbortSignal.timeout(10_000),
   });
   const tokens: any = await tokenRes.json();
   if (!tokens.refresh_token) {
     return html(
       res,
       400,
-      page("Hata", `<h1>Token alınamadı</h1><p>${esc(String(tokens.error_description ?? tokens.error ?? "bilinmeyen hata"))}</p>`)
+      page("Hata", `<h1>Token alınamadı</h1><p>${esc(String(tokens.error_description ?? tokens.error ?? "bilinmeyen hata"))}</p>`),
+      { "Set-Cookie": stateSil }
     );
   }
 
@@ -513,7 +736,8 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
         `<h1>Kimlik doğrulanamadı</h1><p>Google hesabının kimliği alınamadı (id_token yok).
          İzin ekranında e-posta/kimlik iznini onayladığından emin olup
          <a href="/connect">yeniden dene</a>.</p>`
-      )
+      ),
+      { "Set-Cookie": stateSil }
     );
   }
 
@@ -536,8 +760,9 @@ async function handleCallback(req: http.IncomingMessage, res: http.ServerRespons
        <p>Yazma iznini ve günlük bütçe tavanını <a href="/settings">ayarlar sayfasından</a> yönetebilirsin.
        Claude bu değerleri okuyabilir ama <strong>değiştiremez</strong>.</p>`
     ),
-    // The human session: the settings page is guarded by this cookie, NOT by the API key
-    { "Set-Cookie": oturumCerezi(userId) }
+    // The human session: the settings page is guarded by this cookie, NOT by the API key.
+    // The state cookie is spent in the same breath — see stateSil above.
+    { "Set-Cookie": [stateSil, oturumCerezi(userId)] }
   );
 }
 
@@ -695,6 +920,58 @@ function mcpMesajAdedi(body: unknown): number {
   return Array.isArray(body) ? Math.max(1, body.length) : 1;
 }
 
+/**
+ * WHAT A MESSAGE COSTS UPSTREAM — the multiplier a message count cannot see.
+ *
+ * rateLimit.ts states what the counter is for: "what is counted is the OPERATION, not the
+ * HTTP request", because every hosted tenant spends the SAME Google developer token, whose
+ * quota is enforced per token (15,000 operations/day on Basic Access). One JSON-RPC message
+ * was still worth exactly one token — and three message shapes break that equivalence,
+ * because they harvest the whole account tree: `list_accounts` (tools/read.ts) and
+ * `AdsContext.tumHesaplar` (behind aegis://accounts, and behind every completion) issue one
+ * listAccessibleCustomers, then one `customer` query per parent account (adsClient.ts caps
+ * that at 30), then one `customer_client` query per manager among them — 61 upstream
+ * operations at the ceiling, for a single token. A tenant staying politely under
+ * 2,000 messages a day could therefore spend ~87,000 operations of a 15,000/day quota shared
+ * with everyone else, and the tenants who met RESOURCE_EXHAUSTED were the ones who had done
+ * nothing. The counter has to see the multiplier, or it is not measuring what it protects.
+ *
+ * THE PRICE IS THE WORST CASE AND IT IS CHARGED PER MESSAGE. The context's 60-second account
+ * cache often absorbs a repeat harvest, but whether it will is decided inside the context,
+ * per settings key, and is invisible here — and a DEGRADED harvest falls back to a
+ * ten-second cool-down, so "it was surely cached" is exactly the assumption that produced
+ * the gap. Over-charging an absorbed harvest costs a client one Retry-After; under-charging
+ * it is what emptied the shared quota. An operator who needs more headroom raises
+ * AEGIS_RATE_PER_MINUTE / AEGIS_RATE_PER_DAY, which is what those settings are for.
+ */
+const HASAT_ISLEM_BEDELI = 61;
+
+/** Tool calls that harvest the whole account tree (tools/read.ts · list_accounts). */
+const HASAT_ARACLARI = new Set(["list_accounts"]);
+
+/** Resources whose read harvests the account tree (resources.ts · aegis://accounts). */
+const HASAT_KAYNAKLARI = new Set(["aegis://accounts"]);
+
+function mesajIslemBedeli(mesaj: unknown): number {
+  if (!mesaj || typeof mesaj !== "object") return 1;
+  const { method, params } = mesaj as { method?: unknown; params?: { name?: unknown; uri?: unknown } };
+  // Completion is the worst of the three: a client sends one per keystroke and every one of
+  // them reaches tumHesaplar (prompts.ts · hesapArg, resources.ts · reklamHesaplari).
+  if (method === "completion/complete") return HASAT_ISLEM_BEDELI;
+  if (method === "tools/call" && HASAT_ARACLARI.has(String(params?.name ?? ""))) return HASAT_ISLEM_BEDELI;
+  if (method === "resources/read" && HASAT_KAYNAKLARI.has(String(params?.uri ?? ""))) return HASAT_ISLEM_BEDELI;
+  return 1;
+}
+
+/** How many upstream OPERATIONS this body can cost — the number charged to the limiter. */
+function mcpIslemAdedi(body: unknown): number {
+  if (!Array.isArray(body)) return mesajIslemBedeli(body);
+  let toplam = 0;
+  for (const m of body) toplam += mesajIslemBedeli(m);
+  // An empty array is still a request: charging 0 tokens would open a "free request" door.
+  return Math.max(1, toplam);
+}
+
 async function readBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -716,6 +993,29 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   const user = store.findByApiKey(key);
   if (!user) return json(res, 401, { error: "invalid_api_key" });
 
+  /**
+   * THE REFUSED-REQUEST CEILING IS READ HERE — BEFORE THE BODY.
+   *
+   * This is the whole point of its position. The two refusals it counts (an oversized batch,
+   * an unparseable body) can only be DETECTED after up to four megabytes have been read off
+   * the socket and handed to JSON.parse, so a ceiling checked down there would be paid for by
+   * the very cost it is meant to bound. Above the read, a caller that keeps sending refused
+   * bodies stops being able to make this process read them at all.
+   */
+  const ceza = kotuIstekCezasi(user.id);
+  if (ceza !== undefined) {
+    res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(ceza) });
+    return res.end(
+      JSON.stringify({
+        error: "too_many_bad_requests",
+        message:
+          `Dakikada ${KOTU_ISTEK_DK_TAVANI} reddedilen istek sınırı aşıldı; istek gövdesi artık ` +
+          `okunmadan reddediliyor. İsteklerini düzelt ve ${ceza} sn sonra tekrar dene.`,
+        retryAfterSec: ceza,
+      })
+    );
+  }
+
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const session = sessionId ? sessions.get(sessionId) : undefined;
 
@@ -733,6 +1033,9 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
   try {
     body = await readBody(req);
   } catch (e: any) {
+    // The body was read (or half-read) and parsed for nothing: count it, or a client can
+    // repeat the cost for ever at no price. The user's own quota is deliberately untouched.
+    kotuIstekKaydet(user.id);
     return json(res, 400, { error: "bad_request", message: e?.message });
   }
 
@@ -742,8 +1045,9 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
    * The check used to run BEFORE the body and once per request; since a JSON-RPC body may be
    * an array, one POST meant 1 token for N tool calls. Each call spends its own network gate
    * (a CAMARA query), its own audit-log line and its own upstream quota, so what the limit
-   * measured had come apart from what it was protecting. Tokens are now charged per MESSAGE,
-   * and a batch above the ceiling is not run at all.
+   * measured had come apart from what it was protecting. Tokens are now charged per upstream
+   * OPERATION — a message that harvests the account tree costs what that harvest can cost
+   * (mcpIslemAdedi) — and a batch above the message ceiling is not run at all.
    *
    * The order is deliberate: measuring requires reading the body, but the measurement happens
    * before the body is HANDED to the transport — so on a refused batch no message is
@@ -751,6 +1055,10 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
    */
   const mesajAdedi = mcpMesajAdedi(body);
   if (mesajAdedi > MAX_MCP_TOPLU_MESAJ) {
+    // Refused before it ran, so the user's quota stays untouched (test/http.test.ts pins
+    // that) — but the request is counted as a refusal, which is what stops the path from
+    // being free to repeat.
+    kotuIstekKaydet(user.id);
     res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": "1" });
     return res.end(
       JSON.stringify({
@@ -759,8 +1067,10 @@ async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse) {
       })
     );
   }
-  // Per-user limit that protects both the shared Google Ads quota and this server
-  const rl = limiter.check(user.id, mesajAdedi);
+  // Per-user limit that protects both the shared Google Ads quota and this server. What is
+  // charged is the number of upstream OPERATIONS the body can cost, not the number of
+  // messages it contains — see mcpIslemAdedi.
+  const rl = limiter.check(user.id, mcpIslemAdedi(body));
   if (!rl.allowed) {
     res.writeHead(429, {
       "Content-Type": "application/json; charset=utf-8",
@@ -833,6 +1143,26 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", PUBLIC_URL);
     if (url.pathname === "/health") return json(res, 200, { ok: true, sessions: sessions.size });
+    /**
+     * The only two endpoints that work without a credential are metered together, before
+     * either of them does anything: /connect mints the state that /oauth/callback spends,
+     * so metering the callback alone would just move the cost one request upstream.
+     */
+    if (url.pathname === "/connect" || url.pathname === "/oauth/callback") {
+      const bekle = oauthKotasi(req);
+      if (bekle !== undefined) {
+        return html(
+          res,
+          429,
+          page(
+            "Çok fazla istek",
+            `<h1>Çok fazla istek</h1><p>Bu adresten dakikada en fazla ${OAUTH_DK_TAVANI} bağlanma isteği
+             karşılanır. ${bekle} saniye sonra <a href="/connect">tekrar dene</a>.</p>`
+          ),
+          { "Retry-After": String(bekle) }
+        );
+      }
+    }
     if (url.pathname === "/connect" && req.method === "GET") return handleConnect(res);
     // `await` is mandatory here: a rejection from an async function that is returned without
     // being awaited never reaches this try/catch. It escapes to the top level and kills the
@@ -849,8 +1179,9 @@ const server = http.createServer(async (req, res) => {
       return html(res, 200, page("Aegis", `<h1>Aegis</h1><p>Google Ads MCP sunucusu. <a href="/connect">Hesabını bağla</a>.</p>`));
     json(res, 404, { error: "not_found" });
   } catch (e: any) {
-    // Details go to the server log only; never leak internal error text to the client
-    console.error("[aegis-http] hata:", e);
+    // Details go to the server log only; never leak internal error text to the client — and
+    // the log gets the MESSAGE, capped, never the error object (see gunlukHatasi).
+    console.error("[aegis-http] hata:", gunlukHatasi(e));
     if (!res.headersSent) json(res, 500, { error: "internal" });
   }
 });
@@ -861,8 +1192,8 @@ const server = http.createServer(async (req, res) => {
  * with it and all clients start getting `404 session_not_found`. Log the error and stay
  * up. Both entry points need this — stdio mode installs the same handlers in index.ts.
  */
-process.on("unhandledRejection", (e) => console.error("[aegis-http] unhandledRejection:", e));
-process.on("uncaughtException", (e) => console.error("[aegis-http] uncaughtException:", e));
+process.on("unhandledRejection", (e) => console.error("[aegis-http] unhandledRejection:", gunlukHatasi(e)));
+process.on("uncaughtException", (e) => console.error("[aegis-http] uncaughtException:", gunlukHatasi(e)));
 
 // Slow-client (slowloris) defense: upper bounds for headers and bodies
 server.headersTimeout = 20_000;

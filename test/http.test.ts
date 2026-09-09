@@ -1,7 +1,8 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { rmSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -78,15 +79,50 @@ before(async () => {
   );
 });
 
-after(() => {
-  sunucu?.kill();
-  for (const ek of ["", "-wal", "-shm"]) {
+/** The store file plus the two WAL side files SQLite keeps beside it. */
+const DB_EKLERI = ["", "-wal", "-shm"] as const;
+
+/**
+ * Kills the child and waits for it to be REALLY gone BEFORE deleting the store.
+ *
+ * MEASURED on Windows: `kill()` returns while the child still holds the SQLite handles,
+ * so an `rmSync` fired straight after it fails with EPERM on the .db, the -wal and the
+ * -shm alike — `force: true` suppresses ENOENT, never a lock. This hook used to swallow
+ * that EPERM, so EVERY run left a three-file store behind in the OS temp directory (690+
+ * stale files counted there), and those files carry encrypted refresh tokens and API-key
+ * hashes. Waiting for the exit event first makes the delete succeed; a delete that still
+ * fails now THROWS rather than being hidden, because a surviving store is precisely what
+ * this hook exists to prevent.
+ */
+async function surecKapatVeSil(surec: ChildProcess | undefined, dbYolu: string) {
+  if (surec && surec.exitCode === null && surec.signalCode === null) {
+    const cikti = once(surec, "exit");
+    surec.kill();
+    /**
+     * A child that refuses to die must not hang the suite; the delete below then fails
+     * loudly, which is the honest outcome.
+     *
+     * The timer is BOTH unref'd and cleared. `bekle()` was used here first and cost
+     * 30 s of wall clock on every single run (measured: the file went from 6.3 s to
+     * 36.5 s): the race resolved on the exit event straight away, but the pending
+     * timeout kept the runner's event loop alive to the very end of its budget.
+     */
+    let zamanlayici: ReturnType<typeof setTimeout> | undefined;
+    const sinir = new Promise<void>((coz) => {
+      zamanlayici = setTimeout(coz, 30_000);
+      zamanlayici.unref();
+    });
     try {
-      rmSync(DB + ek, { force: true });
-    } catch {
-      /* file still locked on Windows */
+      await Promise.race([cikti, sinir]);
+    } finally {
+      clearTimeout(zamanlayici);
     }
   }
+  for (const ek of DB_EKLERI) rmSync(dbYolu + ek, { force: true });
+}
+
+after(async () => {
+  await surecKapatVeSil(sunucu, DB);
 });
 
 /** Inserts a user straight into the store, bypassing the OAuth flow. */
@@ -616,4 +652,52 @@ test("ZAYIF ANA ANAHTAR: boşlukla 32'ye tamamlanan anahtar da REDDEDİLİR", as
   const { kod } = await zayifAnahtarlaBaslat(`  ${"k".repeat(30)}  `);
   assert.notEqual(kod, 0, "kırpılmış uzunluk 30 — eşik boşlukla atlatılamamalı");
   assert.notEqual(kod, null, "süreç ayakta kalmamalı");
+});
+
+/**
+ * A child that opens a WAL-mode SQLite store and then just sits there holding it — the
+ * same file shape, and the same lock, as the hosted server this file drives.
+ */
+const KILIT_BETIGI =
+  "import('node:sqlite').then(({ DatabaseSync }) => {" +
+  "  const d = new DatabaseSync(process.argv[1]);" +
+  "  d.exec('PRAGMA journal_mode = WAL; CREATE TABLE t(a); INSERT INTO t VALUES (1);');" +
+  "  setInterval(() => {}, 1000);" +
+  "});";
+
+test("TEMİZLİK KANCASI: süreç ölmeden silinmez, SQLite üçlüsü temp'te BIRAKILMAZ", async () => {
+  /**
+   * THE CLEANUP HOOK'S OWN WATCHMAN.
+   *
+   * `after()` runs once every test in this file is done, so no test here can assert on
+   * its result. What CAN be measured is the helper it delegates to, driven against a
+   * child holding a real store open.
+   *
+   * BOTH assertions are load-bearing, because each catches the regression on a different
+   * platform. Take the `await` off the exit event and: on Windows `rmSync` throws EPERM
+   * while the child still holds the handles (measured — the .db, the -wal and the -shm
+   * all survive), and on POSIX, where an open file unlinks happily, the leftovers check
+   * stays green and only "did the child actually exit" is left to notice. A killed child
+   * whose exit has not been observed reports neither `exitCode` nor `signalCode`.
+   */
+  const db = join(tmpdir(), `aegis-http-temizlik-${process.pid}.db`);
+  const kilitci = spawn(process.execPath, ["-e", KILIT_BETIGI, db], {
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  let gercektenOldu = false;
+  let kalan: string[] = [];
+  try {
+    for (let i = 0; i < 200 && !existsSync(`${db}-wal`); i++) await bekle(25);
+    assert.ok(existsSync(`${db}-wal`), "kilidi tutan çocuk süreç WAL yan dosyasını açmadı");
+
+    await surecKapatVeSil(kilitci, db);
+
+    gercektenOldu = kilitci.exitCode !== null || kilitci.signalCode !== null;
+    kalan = DB_EKLERI.filter((ek) => existsSync(db + ek));
+  } finally {
+    // The watchman must not leak either — not even on the run where it goes red.
+    await surecKapatVeSil(kilitci, db).catch(() => undefined);
+  }
+  assert.ok(gercektenOldu, "silmeden ÖNCE çocuk sürecin GERÇEKTEN çıktığı beklenmeli");
+  assert.deepEqual(kalan, [], "temp dizininde SQLite artığı kalmamalı");
 });
