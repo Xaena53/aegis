@@ -70,7 +70,8 @@ default) and the second chain link may run.
 | 3/A | **Go-live** with a clean signal (`temiz`) — the **high** tier | Same gate, wider window: the evidence line now says **72 h** (or your configured window), not 24. With `AEGIS_NV_SIMULATE` set, the prompt carries a **second** evidence line from the Number Verification link, and the script highlights it as `zincir 2 ▶` ("chain 2"). In `--canli` the campaign really goes `ENABLED` and is put back to `PAUSED` the moment the scene ends — **verified by reading the status back from the account**, not by trusting the tool's reply |
 | 3/B | The same go-live with a **swapped** SIM (`degisti`) | The identical hard refusal, this time on the high tier: zero elicitations while `AEGIS_STEPUP=0` (the default — see 3.3), and the refusal text carries the 72 h window instead of 24. After the refusal the script **reads the campaign status back** and aborts with a security error if it is `ENABLED` |
 
-Three things about act 3 that are worth saying out loud on stage:
+Three things worth saying out loud on stage — the first two about act 3, the third about
+every act that writes:
 
 - **It can honestly skip itself.** Two server-side gates answer *before* the network gate
   on a go-live: the campaign's daily budget must be under the account's safety ceiling
@@ -87,7 +88,11 @@ Three things about act 3 that are worth saying out loud on stage:
   read-back is treated as `ENABLED`, not as "probably fine". If the revert cannot be
   verified, act 3/B is skipped (no further writes while a campaign may be live), a red
   **`ACİL — ELLE MÜDAHALE GEREKİYOR`** ("URGENT — MANUAL INTERVENTION REQUIRED") box is
-  printed at the very end of the run, and the process exits **1**.
+  printed at the very end of the run, and the process exits **1**. The **budget** raises of
+  acts 1 and 2 hang from the same interlock on a second flag: a +1 that cannot be proven
+  returned to its old value prints its own red box and the same exit **1**. Both flags are
+  checked, never just the first one up, and the flag survives a Ctrl+C — the signal handler
+  fires the same lock rather than letting the process die quietly on a standing write.
 
 > **What is still not on stage.** PAUSED-at-creation remains a server-side invariant of
 > `create_search_campaign`, enforced in the test suite; the scripted demo does not create
@@ -174,8 +179,10 @@ The order is one-directional *within a run*: a swapped SIM refuses immediately (
 off, `AEGIS_STEPUP=0`, the default), so no later link gets a chance to soften that
 verdict — a later link can only add another reason to refuse. **That is a default, not an
 invariant.** With step-up on, the same swapped SIM does not end the request: it is carried
-to a human prompt if — and only if — every remaining link vouches for it over a real
-channel. Read the next block before quoting the sentence above as a guarantee.
+to a human prompt only when a remaining link that *could have contradicted* that signal
+answers clean over a real channel, having actually observed something while it did (the
+three voucher conditions are spelled out below). Read the next block before quoting the
+sentence above as a guarantee.
 
 > **Number Verification is SIMULATION ONLY today, and there is no honest way around it.**
 > Real CAMARA Number Verification is a **device-side OIDC flow**: the check is bound to
@@ -220,21 +227,44 @@ the broken signal by name. The reasons that qualify are exactly these five:
 | `konum-beklenmedik` | The approver is travelling |
 | `ag-yanitsiz` | The operator endpoint did not answer in time |
 
-Every other reason still refuses flatly, and two of the exclusions are deliberate rather
-than accidental:
+Every other reason still refuses flatly. Three of the exclusions are deliberate rather than
+accidental — and the third is a case where a reason that *is* in the table above still
+refuses:
 
-- **`cagri-yonlendirme-acik` never escalates.** A step-up reaches a person over a channel
-  — a call, a message — and unconditional forwarding means that channel is exactly what an
-  attacker has taken. Escalating there would hand the stronger check to them.
+- **Call forwarding never escalates while it is active** (`cagri-yonlendirme-acik`). A
+  step-up reaches a person over a channel — a call, a message — and unconditional
+  forwarding means that channel is exactly what an attacker has taken. Escalating there
+  would hand the stronger check to them.
+- **A *silent* forwarding link never escalates either.** `ag-yanitsiz` is in the table
+  above, but it does not say *which* link fell quiet — and that link decides who is allowed
+  to vouch for the silence. No other link in the chain can see forwarding, so a silent
+  forwarding check has an empty set of vouchers and the gate refuses. The unknown is never
+  treated more leniently than the known.
 - **Configuration faults never escalate** (`yapilandirma-celiskili`,
   `beklenen-ulke-gecersiz`, `onaylayici-numarasi-yok`, `simulasyon-degeri-tanimsiz`). They
   are the operator's state, not the user's, and no amount of identity proof fixes a
   contradictory `.env`.
 
-A step-up also needs a *corroborating* real link: with nothing left to vouch for the
-broken signal, it refuses. A simulated link never vouches for a broken real one — otherwise
-one demo variable would be the cheapest way through the gate. And a **second** broken
-signal ends it: one is an ordinary Tuesday, two independent ones are a pattern.
+A step-up also needs a *corroborating* real link, and "corroborating" is narrow. Three
+conditions, all decided per run:
+
+- **The link must be real.** A simulated link never vouches for a broken real one —
+  otherwise one demo variable would be the cheapest way through the gate.
+- **The link must have been able to contradict the signal.** `KEFIL_ESLEMESI` in
+  `src/networkTrust.ts` names, per refusal reason, the links that could have disproved it;
+  for `ag-yanitsiz` the set is read from `YANITSIZ_KEFIL_ESLEMESI`, which is derived from
+  the first table and keyed on the link that fell silent. Device reachability vouches for
+  nothing at all: a swapped SIM sits in a phone that is perfectly reachable, so the two can
+  never disagree.
+- **The link must have observed something.** The location link comes back clean when the
+  network answers "not roaming" and names no country at all: nothing is refused, but the
+  line has not been placed in the expected country either (`HalkaSonuc.gozlemsiz`). Nothing
+  observed is not evidence.
+
+With no link left that meets all three, it refuses — and the refusal says which of the two
+situations it was, "no real link ran at all" or "real links ran and none of them can speak
+to this signal". And a **second** broken signal ends it: one is an ordinary Tuesday, two
+independent ones are a pattern.
 
 In the audit trail this outcome is `"karar":"kademeli"` with `kademeNedeni` and
 `kademeDogrulayan` beside it — never folded into `gecti`, because "nothing was wrong" and
@@ -296,7 +326,7 @@ looks like "empty"):
 | `eylem` | one-line summary of the action (truncated to 160 chars) |
 | `hesapId` | the Google Ads customer ID whose money was at stake |
 | `risk` | `medium` / `high` |
-| `karar` | `gecti` (passed) / `kademeli` (step-up: a signal was broken, the remaining links came back clean over a **real** channel, so the action was escalated instead of refused) / `ret` (refused) / `kapali` — `kapali` means **no link actually queried anything**; a gate that was off is never logged as "passed", and `kademeli` is never folded into `gecti`: the moments the gate softened must stay distinguishable from the moments it was never tested |
+| `karar` | `gecti` (passed) / `kademeli` (step-up: a signal was broken, and a remaining link that *could have contradicted* it came back clean over a **real** channel with something actually observed, so the action was escalated instead of refused) / `ret` (refused) / `kapali` — `kapali` means **no link actually queried anything**; a gate that was off is never logged as "passed", and `kademeli` is never folded into `gecti`: the moments the gate softened must stay distinguishable from the moments it was never tested |
 | `simSwapKanali` | link 1 — `gercek` / `simulasyon` / `kapali` (deliberately disabled) / `calismadi` (config error, never queried) |
 | `nvKanali` | link 2 (Number Verification) — `simulasyon` / `calismadi` only. There is no `gercek`: the type itself has no such value (§3.3). **Absent** when the link did not run |
 | `reachKanali` | link 3 (device reachability) — same four values as `simSwapKanali`; `kapali` means `AEGIS_REACH_CHECK` is off. **Absent** when the link was never configured |
@@ -306,7 +336,7 @@ looks like "empty"):
 | `pencereSaat` | the SIM-swap lookback window actually queried |
 | `devSwapPencereSaat` | link 5's **own** lookback window — never merged into `pencereSaat`, because link 5 can run while the SIM-swap layer is off, and writing its window into link 1's field would show an auditor a query that never happened |
 | `tutar` | the **daily amount at risk**, in the account's own currency and in currency units — never micros (`50`, not `50000000`). For a budget change it is the **new** budget (the ceiling the money would run to); for a go-live, and for writing into a campaign that is already serving (a new ad, new keywords), it is that campaign's current daily budget. **An absent `tutar` does not mean "no money was at stake" — it means the budget could not be read.** `0` is a real measurement ("read as zero") and *is* written; an unreadable budget writes no field at all, because logging `0` would record "I don't know" as "zero spend". There is deliberately **no currency field**: the unit is already the account's context (`hesapId` and that account's own currency), and inventing a `paraBirimi` would record something the gate never measured |
-| `kademeDogrulayan` | only on a `kademeli` decision: the ids of the links that **vouched** for the escalation (`simSwap`, `reach`, …). Absent when there was no escalation — "no step-up happened" and "a step-up happened but we did not record who vouched for it" are different facts |
+| `kademeDogrulayan` | only on a `kademeli` decision: the ids of the links that **vouched** for the escalation (`simSwap`, `devSwap`, …) — never `reach`, which is in no voucher set at all (3.3). Absent when there was no escalation — "no step-up happened" and "a step-up happened but we did not record who vouched for it" are different facts |
 | `retNedenleri` | **every** refusal code the chain produced, in the order they appeared. `retNedeniKisa` is only the one that *decided*, and it is overwritten as the chain runs: without this field a refusal with a detected SIM swap **and** open call forwarding produced a line byte-identical to one with only the forwarding — the SIM swap vanished from the trail. Absent when nothing was broken |
 | `maskeliNumara` | masked approver number, e.g. `+905*******22` |
 | `retNedeniKisa` | fixed refusal code, from the gate's own closed vocabulary — never free or upstream text. The full set: `sim-degisti`, `nv-uyusmadi`, `cihaz-erisilemez`, `konum-beklenmedik`, `cihaz-degisti`, `cagri-yonlendirme-acik`, `beklenen-ulke-gecersiz`, `ag-yanitsiz`, `yapilandirma-celiskili`, `simulasyon-degeri-tanimsiz`, `onaylayici-numarasi-yok`, `ag-ayari-kapiya-ulasmadi` |
@@ -454,7 +484,12 @@ npm run demo -- --musteri <customer-id> [--kampanya <campaign-id>] [--canli]
 - `--kampanya` is optional; without it the script auto-picks a campaign (it prefers a
   PAUSED one with the smallest budget — the least risky candidate). Act 3's live
   rehearsal is most predictable when you name a PAUSED **test** campaign here.
-- The default mode is **DRY** (`kuru`): no write tool is ever called. `--canli`
+- The default mode is **DRY** (`kuru`), and it is narrower than "nothing happens": acts 1
+  and 3/A stop immediately before the write call, but **acts 2 and 3/B really do call the
+  write tool in dry mode too**. What stands between them and a write there is the network
+  gate refusing — and "expected to refuse" is not "verified", so both read the account back
+  after the call, push back whatever they find changed, and shout through the safety
+  interlock when that cannot be proven. `--canli`
   performs a real +1 budget raise and reverts it right after approval, and takes the act
   3 candidate live for a few seconds before putting it back.
 
@@ -590,7 +625,7 @@ outright — no new write is attempted while a campaign may still be live.)
 The run ends with a side-by-side summary table of all three acts — action, simulation
 value, network decision, whether a prompt was shown, and what was written.
 
-### Act 3's safety lock, proven on demand
+### The safety lock, proven on demand
 
 The emergency path is not a claim in a doc; it is a code path you can fire:
 
@@ -599,8 +634,12 @@ node scripts/demo-senaryo.mjs --kendini-sina
 ```
 
 It plays **no** scenario (it needs neither `--musteri` nor a built `dist/`) and calls the
-very same lock function the live rehearsal uses — once with the revert verified (expects
-no box, exit code 0) and once with it unverified (expects the red box, exit code 1). It
+very same lock function the live rehearsals use, in **three** steps: both flags down
+(expects no box, exit code 0), then act 3's go-live flag on its own (expects the red
+go-live box and exit code 1), then the budget raise's flag on its own (expects its own red
+box and exit code 1). The two flags are exercised separately because a budget left raised
+and a campaign left live are two different emergencies with two different manual fixes, and
+the lock checks both rather than the first one that happens to be up. It
 then **exits 1 on purpose**: that non-zero code *is* the proof the flag reaches the exit
 status. An exit code of **2** means the self-test's own expectations failed — the lock is
 broken, and it says so loudly rather than passing quietly.
@@ -616,10 +655,10 @@ scripted demo shows. The **With step-up on** column says what changes at
 | Feature unconfigured (no token, no simulation) | Pass-through, but the evidence line honestly says the gate is off — and the audit log records `"karar":"kapali"`, never "passed" | unchanged — nothing ran, so there is nothing to escalate |
 | Token set, approver phone missing | **Refuse** (config error) | unchanged — `onaylayici-numarasi-yok` is the operator's state |
 | `AEGIS_NV_SIMULATE` set without an approver phone | **Refuse** — the link cannot verify a number it does not have | unchanged — same config-fault rule |
-| CAMARA API unreachable / errors | **Refuse** — if the trust anchor cannot answer, the spend does not happen. Upstream error bodies are never echoed into the refusal (they can contain the phone number); details go to stderr, number redacted even there | **escalatable** (`ag-yanitsiz`): if every *other* link answers clean over a real channel, this becomes a prompt naming the silent network. With no corroborating real link — the usual case when the endpoint is down — it still refuses |
+| CAMARA API unreachable / errors | **Refuse** — if the trust anchor cannot answer, the spend does not happen. Upstream error bodies are never echoed into the refusal (they can contain the phone number); details go to stderr, number redacted even there | **escalatable for some links only** (`ag-yanitsiz`): the reason does not name the link that fell quiet, and that link decides who may vouch for it (`YANITSIZ_KEFIL_ESLEMESI`). A silent **call-forwarding** link never escalates — nothing else in the chain can see forwarding, so its voucher set is empty (the simulation-only NV link is empty for the same reason, and never produces this signal anyway). For the rest it needs at least one clean **real** link that could have contradicted *that* link's own question and that observed something; with none — the usual case when the whole endpoint is down — it still refuses |
 | Invalid `AEGIS_NAC_SIMULATE` or `AEGIS_NV_SIMULATE` value | **Refuse** at decision time (server does not crash at startup); the value itself is never printed | unchanged — `simulasyon-degeri-tanimsiz` is a config fault |
 | `AEGIS_NAC_TOKEN` and `AEGIS_NAC_SIMULATE` both set | **Refuse** — contradictory configuration; ambiguity never selects the weaker channel | unchanged — `yapilandirma-celiskili` is a config fault |
-| SIM swap says `degisti` | **Refuse before any prompt** while step-up is off | **escalatable** (`sim-degisti`) — the case step-up exists for; a genuine SIM replacement reaches a prompt that names it, provided the remaining real links are clean |
+| SIM swap says `degisti` | **Refuse before any prompt** while step-up is off | **escalatable** (`sim-degisti`) — the case step-up exists for; a genuine SIM replacement reaches a prompt that names it, provided one of the links that *could have contradicted* the swap (device swap, location, forwarding — never reachability, 3.3) answered clean over a **real** channel **and observed something**. "Every other real link came back clean" is not enough on its own |
 | Unconditional call forwarding active | **Refuse** | unchanged **on purpose** — escalating would send the stronger check down the channel the attacker holds |
 | SIM swap clean but Number Verification says `uyusmadi` | **Refuse** — the second link can only add reasons to refuse, never overturn a pass | unchanged — `nv-uyusmadi` is a stated *mismatch*, not an unreadable signal |
 | Risk-tagged action reaches the gate without its config (programming error) | **Refuse** — never fail-open by omission (logged as `ag-ayari-kapiya-ulasmadi`) | unchanged — a programming error is never escalated |

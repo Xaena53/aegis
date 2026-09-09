@@ -40,12 +40,46 @@ migration script; the supported path is:
 
 1. Note the current key value — losing it removes even the theoretical recovery route.
 2. Upgrade, then put a fresh `AEGIS_MASTER_KEY=<64 hex characters>` in `.env`.
-3. Have every tenant reconnect through `/connect`, which overwrites their row with a token
-   encrypted under the new key. Until they do, their first request fails.
+3. Expect the service **not to start yet**. The startup gate reads *every* row in `users`
+   and refuses while any one of them is undecryptable, so the rows written under the old key
+   hold the whole process down — and `Restart=on-failure` in `aegis.service` makes that a
+   five-second crash loop, not a stop. There is no `/connect` to reconnect through until
+   those rows are gone, and the code has no in-process way to delete a user.
+4. **Stop the service, then** repair **offline**. Step 3 left a crash loop, not a stopped
+   service, so without an explicit stop nothing about this repair is offline: a fresh process
+   opens this same database every five seconds, reads every row in `users`, and exits. That
+   process is not always a passive reader either — on an install whose schema predates the
+   `google_sub` column, its constructor runs `ALTER TABLE users ADD COLUMN google_sub`
+   *before* it ever reaches the key check. SQLite's `.backup` stays internally consistent
+   even under that load — section 8 relies on exactly that — but which moment it captures is
+   then the restart loop's choice rather than yours, and the `DELETE` lands in a database the
+   next process reopens five seconds later. `systemctl stop` also ends the loop for good
+   (`Restart=on-failure` does not fire after an explicit stop), which is what makes step 5 a
+   real start instead of an order aimed at a unit systemd is already restarting on its own.
+
+   The refusal prints the `sqlite3` commands themselves, with your real path and the exact
+   row ids, plus the whole census (`Açılamayan kayıt: 2/4 — #2, #4`) so that one pass clears
+   every broken row instead of one restart per row. It cannot print the stop: nothing inside
+   the process knows how it is supervised.
+
+   ```bash
+   sudo systemctl stop aegis                # Docker: docker stop aegis
+   sudo apt-get install -y sqlite3
+   journalctl -u aegis -n 40 --no-pager     # read the census and the "Kurtarma" lines
+   DB=/opt/aegis/data/aegis.db
+   sudo -u aegis -H sqlite3 "$DB" ".backup '$DB.kurtarma-yedegi'"
+   sudo -u aegis -H sqlite3 "$DB" "DELETE FROM users WHERE id IN (<only the ids the refusal listed>);"
+   ```
+
+   Back up first, and delete **only** the ids the refusal named — a row that still decrypts
+   must be left alone.
+5. Start the service again (`sudo systemctl start aegis`, or `docker start aegis`), then have
+   every deleted tenant reconnect through `/connect`, which writes their row again under the
+   new key. Their old API key stops working.
 
 Tell your tenants before the restart, not after. Nothing else in this guide changes for an
-upgrade — steps 1 and 4 are one-time setup, and `npm ci && npm run build && systemctl restart
-aegis` is the rest of it.
+upgrade — sections 1 and 4 below are one-time setup, and `npm ci && npm run build &&
+systemctl restart aegis` is the rest of it.
 
 ## Prerequisites
 
@@ -107,6 +141,30 @@ AEGIS_SOURCE_URL=https://github.com/YOUR-ACCOUNT/YOUR-FORK
 PORT=8787
 ```
 
+The network gate — the CAMARA/GSMA Open Gateway check that runs **before** any human
+approval prompt for a spending action — is configured by two more values:
+
+```ini
+AEGIS_NAC_TOKEN=<Nokia Network-as-Code API key>
+AEGIS_APPROVER_PHONE=+90XXXXXXXXXX
+```
+
+> **Without `AEGIS_NAC_TOKEN` the network gate is not degraded — it is OFF.** No CAMARA
+> query is made, no warning is printed, `/health` still answers `{"ok":true}`, and every
+> spend approval goes straight to the human prompt carrying the evidence line
+> `Ağ doğrulaması: kapalı (AEGIS_NAC_TOKEN tanımlı değil)` and the audit trace
+> `simSwap: "kapali"`. A deployment that follows every other step on this page and skips
+> this one runs the product's headline control **zero times**, and nothing about the running
+> service says so. Register at <https://networkascode.nokia.io> (free tier) — or leave it
+> out deliberately, knowing exactly what is switched off.
+
+> **Set both, or neither.** A token with an empty `AEGIS_APPROVER_PHONE` fails closed the
+> other way: spend increases are refused at decision time (`Reddedildi: ağ doğrulaması
+> yapılandırması eksik`) while the server still starts, so you find out at the first
+> approval rather than at boot. A token switches on the SIM-Swap link **only** — the other
+> links (`AEGIS_REACH_CHECK`, `AEGIS_DEVICESWAP_CHECK`, `AEGIS_CALLFWD_CHECK`) and step-up
+> (`AEGIS_STEPUP`) are opt-in and documented in `.env.example` and `docs/CAMARA.md`.
+
 > **Never put a comment on the same line as a value.** This file is also read by systemd
 > (`EnvironmentFile`) and Docker (`--env-file`), and both treat `#` as a comment only at
 > the start of a line. `AEGIS_ALLOWED_HOSTS=example.com   # required` becomes a host
@@ -150,7 +208,10 @@ PORT=8787
 > does not satisfy that.
 
 The server refuses to start on missing or invalid configuration, so a broken deployment
-fails loudly instead of reporting itself healthy.
+fails loudly instead of reporting itself healthy — **with one exception: the network gate.**
+Leave `AEGIS_NAC_TOKEN` out and the process starts, `/health` reports `{"ok":true}`, and no
+CAMARA query is ever made. Absence is a legitimate choice there, so it is not treated as a
+fault; that is exactly why it has to be a decision you took on purpose.
 
 ## 4. Google Cloud OAuth
 

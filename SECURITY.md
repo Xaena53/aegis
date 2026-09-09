@@ -48,6 +48,31 @@ kabul edilir:
 4. Bütçe tavanı ve yazma izni MCP üzerinden **yalnız okunur**; değişiklik yalnız
    insanın tarayıcı oturumundan yapılır (API anahtarı bu kapıyı açmaz).
 5. `analyze_site` çıktısı güvenilmez dış içeriktir ve sınırlandırılmış bir blokta sunulur.
+6. **Ağ güven kapısı, onay isteminden ÖNCE koşar.** Harcamayı artıran her araç, istem
+   gösterilmeden önce GSMA Open Gateway / CAMARA halkalarından geçer (Nokia
+   Network-as-Code; `src/networkTrust.ts`). Kapı reddederse **onay istemi hiç
+   gösterilmez** ve hiçbir yazma yapılmaz. Kontrol, elicitation'lı **ve** `confirm`'lü
+   kanalların ikisinden de önce koşar; çalınmış bir oturum zayıf kanala düşerek kapıyı
+   atlayamaz.
+7. **Kapının her halkasında kapalı arıza — "bilinmiyor" 0 değildir.** Okunamayan yanıt,
+   yanıtsız uçnokta, fırlatan çağrı ve **çelişkili** sinyal redde gider; kapıdaki
+   belirsizlik insana sorulmaz, işlem uygulanmaz. Çelişki, eksik bilgi kadar ciddiye
+   alınır: ağ birden çok ülke bildirirse küme beklenen ülkeyi **içerse bile** reddedilir.
+   Jeton tanımlı ama onaylayıcı numarası boşsa yine reddedilir. Bir halka **bilerek
+   kapalıysa** hiç koşmaz ve bunu ize "kapalı" diye yazar — sessizce "temiz" sayılmaz.
+8. **Kefalet ilkesi.** `AEGIS_STEPUP` açıkken (varsayılan **kapalı**) bozuk bir sinyalin
+   reddi kademeli doğrulamaya çevrilebilir — ama yalnız o sinyali **çürütebilecek**
+   türden bir halka gerçek kanaldan temiz dönmüşse. Sinyali çürütemeyen halka ona kefil
+   olamaz (yalnız canlılık ölçen erişilebilirlik halkası ile simülasyon olan numara
+   doğrulaması hiçbir kefil satırında yer almaz), ve hiçbir şey **gözlememiş** halka da
+   kefil olamaz. Kefil yoksa ret durur. Yükseltme, istemin gerçekten gösterilebildiği
+   kanalla sınırlıdır: elicitation yoksa yükseltme **redde** düşer. Hiçbir harcama tavanı
+   indirilmez.
+9. **Sır hijyeni.** Onaylayıcının numarası hiçbir yere tam yazılmaz; ağdan gelen **ham
+   yanıt** — hata gövdesi, operatörün bildirdiği ülke listesi — ajana dönen metne, insana
+   giden kanıt satırlarına ve karar günlüğüne girmez: yalnız türetilmiş karar ile
+   yapılandırmadan gelen değerler çıkar. Operatör için stderr'e yazılan ayrıntıda numara
+   biçimden bağımsız olarak redakte edilir; NAC jetonu hiçbir çıktıda görünmez.
 
 ## Yamalar
 

@@ -52,8 +52,13 @@ Set these in `.env` (never baked into the image — `.dockerignore` excludes it)
 | `AEGIS_DB` | no | Image default `/data/aegis.db` (persistent volume). Don't point it elsewhere. |
 | `AEGIS_ALLOWED_HOSTS` | behind a proxy | Comma-separated extra Host names (DNS-rebinding protection). |
 | `AEGIS_SOURCE_URL` | if you forked | AGPL §13: must point at the source of the version you actually run. |
-| `AEGIS_NAC_TOKEN` / `AEGIS_APPROVER_PHONE` | optional | Real network-verified approvals (Nokia Network-as-Code / CAMARA SIM Swap). |
+| `AEGIS_NAC_TOKEN` / `AEGIS_APPROVER_PHONE` | optional | Real network-verified approvals over Nokia Network-as-Code. The one token drives the whole trust chain — **6 links, 5 live** — not just SIM Swap: Device Reachability, Device Roaming, Device Swap and Call Forwarding query CAMARA with the same credential. (The sixth, Number Verification, is a device-side OIDC flow no server can call; it exists only as a simulation.) With just these two set, **only SIM Swap runs** — links 3-6 each need their own opt-in below. Full inventory: [`CAMARA.md`](CAMARA.md). |
+| `AEGIS_REACH_CHECK` / `AEGIS_DEVICESWAP_CHECK` / `AEGIS_CALLFWD_CHECK` | optional | Opt-in for the reachability, device-swap and call-forwarding links; off by default, and a value the parser can't read leaves them off rather than on. Each runs only on the high tier and only with `AEGIS_NAC_TOKEN` set. Enabling one costs a CAMARA round trip on every high-tier approval — and an enabled link whose answer is silent or unreadable refuses the spend. |
+| `AEGIS_EXPECTED_COUNTRY` | optional | The roaming link's expectation, ISO 3166-1 alpha-2 (e.g. `TR`). It is also that link's opt-in: without it the link does not run, and a value that isn't two letters is refused at decision time rather than guessed. |
+| `AEGIS_SIMSWAP_WINDOW_HOURS` | no | Look-back window in hours for the SIM-swap and device-swap questions; default **72**. On the medium tier — where budget increases land — 24 h is a **cap, not a floor**: that tier asks for `min(24, this value)`, so lowering this below 24 narrows budget approvals too. Above CAMARA's own 2400 h ceiling the value is clamped to it; below 1 h, or unreadable, it falls back to 72. |
+| `AEGIS_STEPUP` | no | Off by default. On, an inconclusive link escalates to a stronger human verification instead of refusing flat — it changes what every refusal from the chain means, so read the fail-closed matrix in [`DEMO.md`](DEMO.md) before enabling it. |
 | `AEGIS_NAC_SIMULATE` | demo only | `temiz` or `degisti`; simulates SIM-swap without a NaC token. Every output is explicitly labeled "SİMÜLASYON". `AEGIS_APPROVER_PHONE` is still required. |
+| `AEGIS_NV_SIMULATE` / `AEGIS_REACH_SIMULATE` / `AEGIS_LOC_SIMULATE` / `AEGIS_DEVICESWAP_SIMULATE` / `AEGIS_CALLFWD_SIMULATE` | demo only | Simulation channels for links 2-6, same contract as `AEGIS_NAC_SIMULATE`: every line they produce carries "SİMÜLASYON", the approver's number is still required, and an unrecognised value is refused at decision time without echoing it. For a link that has a real channel, setting its simulation while that channel is enabled is a contradiction the gate refuses — the looser channel is never the one picked. |
 
 The server **fails fast**: missing required values stop the container at startup with
 a message listing exactly what's missing — check `docker compose logs aegis`.
@@ -61,9 +66,10 @@ a message listing exactly what's missing — check `docker compose logs aegis`.
 ## Demo mode for judges (no Google/NaC credentials needed to boot)
 
 Uncomment the two `AEGIS_NAC_SIMULATE` lines in `docker-compose.yml` (or export the
-variables) to demo the SIM-swap trust gate without a Network-as-Code token. Google Ads
-credentials are still validated at startup; placeholder values boot the server, but
-real API calls of course require real credentials.
+variables) to demo the trust gate's SIM-swap link without a Network-as-Code token; the
+other simulation variables in the table above bring up the rest of the chain the same way.
+Google Ads credentials are still validated at startup; placeholder values boot the server,
+but real API calls of course require real credentials.
 
 ## Health check
 

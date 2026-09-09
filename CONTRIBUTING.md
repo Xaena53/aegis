@@ -54,6 +54,10 @@ Where to put things:
 | Pure helpers | `test/util.test.ts`, `test/rateLimit.test.ts`, `test/siteExtract.test.ts` |
 | Tool behaviour over MCP | `test/tools.read.test.ts`, `test/tools.write.test.ts` |
 | Approval / elicitation | `test/approval.test.ts` |
+| Network trust gate, link by link | `test/networkTrust.test.ts`, `test/networkTrustHalkalar.test.ts`, `test/networkTrustNv.test.ts`, `test/networkTrustSim.test.ts` |
+| What the gate puts on the wire, and what it makes of the answer | `test/nacIstek.test.ts`, `test/nacIstemci.test.ts`, `test/bozukYanit.test.ts` |
+| Which tools the gate covers, which links a risk tier runs, where step-up stops | `test/kapiKapsami.test.ts`, `test/riskEslemesi.test.ts`, `test/kademeliDogrulama.test.ts` |
+| The chain registry against its downstream consumers | `test/zincirButunlugu.test.ts`, `test/zincirBelgeKademe.test.ts`, `test/camaraBelge.test.ts` |
 | HTTP, auth, sessions | `test/http.test.ts` |
 | Fail-closed regressions | `test/failclosed.test.ts` |
 | Adversarial scenarios | `test/eval.test.ts` |
@@ -62,6 +66,15 @@ Where to put things:
 If you add a promise to the README, the resource `limits` rules, or a tool description,
 add the matching test to `test/promises.test.ts`. Documentation that drifts from
 behaviour is a silent failure — the user trusts what's written.
+
+A new link in the trust chain is not finished when its own layer is green. Declare it in
+`ZINCIR_HALKALARI` (`src/networkTrust.ts`), the chain's single registry, and
+`test/zincirButunlugu.test.ts` will hold every downstream consumer against it: the decision
+log's field, the `contextFor` cache key in `http.ts`, Growth Brain's refusal classifier, the
+environment documentation. That connection went missing four rounds running, and it went
+missing silently every time — the gate itself kept working. If the link ever runs against a
+live endpoint, put the date in its `canliDogrulandi`: the liveness claims in `docs/CAMARA.md`
+and both READMEs are derived from that field, not from the prose around it.
 
 ## Code style
 

@@ -10,8 +10,9 @@ insana sorulmadan ve para hareket etmeden önce.*
 [![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-983-brightgreen.svg)](test/)
-[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-90.26%25-brightgreen.svg)](#test-metrikleri)
+[![Test](https://img.shields.io/badge/test-1200-brightgreen.svg)](test/)
+[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-86.51%25-brightgreen.svg)](#test-metrikleri)
+[![MCP](https://img.shields.io/badge/MCP-ara%C3%A7lar%20%C2%B7%20kaynaklar%20%C2%B7%20prompt%27lar%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇬🇧 [English README](README.md)
 
@@ -31,7 +32,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %90.26 satır kapsamıyla 983 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %86.51 satır kapsamıyla 1200 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz — bekleyen bir iş değil, mimari bir hüküm) · CAMARA çağrılarının arkasında gerçek bir abone şebekesi (hesap Simulator kipinde) |
 
 ## İçindekiler
@@ -105,7 +106,13 @@ tasarımın kendisinden daha önemlidir.
 | 3 | `deviceStatus.retrieveReachabilityStatus` | Hat şu an veri/SMS alabiliyor mu? | **Gerçek yol yazılı, opt-in** (`AEGIS_REACH_CHECK`), yalnız yüksek katman — erişilebilirlik meşru olarak dalgalanır, bu yüzden varsayılan kapalıdır |
 | 4 | `deviceStatus.checkRoaming` | Hat beklenen ülkede mi? | **Gerçek yol yazılı**, yüksek katman, yalnız `AEGIS_EXPECTED_COUNTRY` tanımlıyken — varsayılan ülke uydurulmaz, çünkü uydurulan bir varsayılan sonsuza dek "temiz" cevabı verir |
 | 5 | `deviceSwap.check` | Hat son N saatte yeni bir cihaza mı taşındı? | **Gerçek yol yazılı, opt-in** (`AEGIS_DEVICESWAP_CHECK`), yüksek katman. SIM Swap'ın yapısal ikizi; okunamayan yanıt "değişim yok" sayılmaz, RET olur |
-| 6 | `callForwardingSignal` | Hatta koşulsuz çağrı yönlendirme açık mı? | **Gerçek yol yazılı, opt-in** (`AEGIS_CALLFWD_CHECK`), yüksek katman. OTP ele geçirmenin klasik yolu ve önceki beş halkanın göremediği saldırı: aynı SIM, aynı cihaz, hat erişilebilir, ülke beklenen. Yalnız koşulsuz varyant sorulur — tek boolean, PII yok |
+| 6 | `callForwardingSignal.retrieveUnconditionalCallForwarding` | Hatta koşulsuz çağrı yönlendirme açık mı? | **Gerçek yol yazılı, opt-in** (`AEGIS_CALLFWD_CHECK`), yüksek katman. OTP ele geçirmenin klasik yolu ve önceki beş halkanın göremediği saldırı: aynı SIM, aynı cihaz, hat erişilebilir, ülke beklenen. Yalnız koşulsuz varyant sorulur — tek boolean, PII yok |
+
+2–6. halkalar YALNIZ **yüksek** katmanda koşar ve her biri kendi değişkenini ister: elde bir
+Network-as-Code token'ı (`AEGIS_NAC_TOKEN`) bulunması yalnızca 1. halkayı açar, başka hiçbirini —
+çünkü canlı her halka, her onaya bir CAMARA gidiş-dönüşü daha ekler; yani meşru bir harcamayı
+reddetmenin de bir yolunu daha. Yapılandırılmış ama kapatılmış bir halka denetim izine `kapali`
+düşer; böylece "sormadım" ile "sordum ve geçti" birbirine karışmaz.
 
 > **SIM Swap artık Nokia'nın canlı Network-as-Code uç noktasına karşı koşuyor**
 > (2026-08-28'de doğrulandı): temiz hat `{"swapped":false}` döndürüp geçiyor, SIM'i değişmiş
@@ -180,22 +187,45 @@ inceleyen Nokia mentörümüz Aleksi Puranen'in işaret ettiği nokta tam da buy
 
 Artık bozuk bir sinyal isteği bitirmiyor. `AEGIS_STEPUP` açıkken, olağan bir insan durumunu
 anlatan bir neden — SIM değişti, cihaz değişti, hat yurt dışında, telefon erişilemez, ağ sessiz —
-reddetmek yerine kademeyi yükseltiyor: kalan halkalar yine de soruluyor ve hepsi **gerçek bir
-kanaldan** temiz cevap verirse işlem, bozulan sinyali adıyla söyleyerek başlayan bir insan
-istemine gidiyor. Onay artık sıradan bir harcamaya değil, o belirli bozuk duruma veriliyor.
+reddetmek yerine kademeyi yükselt*ebiliyor*: kalan halkalar yine de soruluyor ve hepsinin temiz
+cevap vermesi gerekiyor. Bu gerekli koşul, yeterli koşul değil. O temiz cevaplardan en az biri
+ayrıca **gerçek bir kanaldan** gelmiş, bozulan sinyali çürütebilecek bir halkadan çıkmış ve o
+halka gerçekten bir şey gözlemiş olmalı. Ancak o zaman işlem, bozulan sinyali adıyla söyleyerek
+başlayan bir insan istemine gidiyor. Onay artık sıradan bir harcamaya değil, o belirli bozuk
+duruma veriliyor.
 
 Asıl ilginç kısım sınırlar; her biri bir eksiklik değil, bilinçli bir çizgi:
 
-- **Çağrı yönlendirme açıkken asla yükseltilmez.** Sonuna kadar götürene dek tersmiş gibi
-  görünen kural bu. Yükseltme bir insana bir kanal üzerinden — çağrı, mesaj — ulaşır; koşulsuz
+- **Çağrı yönlendirme ne AÇIKKEN ne de SESSİZKEN yükseltilir.** Sonuna kadar götürene dek tersmiş
+  gibi görünen kural bu. Yükseltme bir insana bir kanal üzerinden — çağrı, mesaj — ulaşır; koşulsuz
   yönlendirme ise o kanalın tam olarak saldırganın eline geçtiği anlamına gelir. Orada yükseltmek,
-  güçlü doğrulamayı ona teslim etmektir. Her hâlükârda reddeder.
+  güçlü doğrulamayı ona teslim etmektir. Yönlendirme kontrolünün *sessiz* kalması (`ag-yanitsiz`;
+  uç noktanın `501` dönebileceği belgeli) aynanın öteki yüzü olduğu için o da reddedilir:
+  zincirdeki başka hiçbir halka yönlendirmeyi göremez, dolayısıyla bu sessizliğe hiçbir yerde
+  kefil bulunmaz. Bilinmeyene, bilinenden daha yumuşak davranılmaz.
 - **Simüle bir halka, bozuk gerçek bir sinyale kefil olamaz.** Aksi hâlde demo kipinde tek bir
   ortam değişkeni gerçek bir SIM değişimini örterdi; bu da demo kipini kapıdan geçmenin en ucuz
   yolu yapardı.
 - **Doğrulayan gerçek halka yoksa yükseltme de yoktur.** Yükseltme ikinci bir kanıta dayanır;
   kanıt yoksa "sinyal bozuktu ve soracak kimse yoktu, geçsin" demek olurdu — kapının tam
   kapanması gereken anda açılması.
+- **Bir halka ancak ÇÜRÜTEBİLECEĞİ bir sinyale kefil olabilir.** Cihaz erişilebilirliği bir
+  kimlik değil canlılık sinyalidir: değişmiş SIM'i elinde tutan saldırganın telefonu da
+  erişilebilir, yani "cihaz açık" ile "SIM değişti" birbiriyle çelişmez ve biri diğerine kefil
+  olamaz. Kapı tam bunu yapıyordu — gerçek bir SIM değişimi yalnızca erişilebilirliğe dayanarak
+  yükseltilmişti. Hangi halkanın hangi bozuk sinyale kefil olabileceği `src/networkTrust.ts`
+  içinde **iki** görünür tabloda duruyor: `KEFIL_ESLEMESI` *saptanmış* bir sinyali onu
+  çürütebilecek halkalara eşliyor, `YANITSIZ_KEFIL_ESLEMESI` ise *susan* bir halkayı, onun
+  cevapsız kalan sorusuna kefil olabilecek halkalara. İkincisi birincisinden türetiliyor, böylece
+  ikisi birbirinden ayrı düşemiyor; kendi halkasının adını söylemeyen tek neden olan
+  `ag-yanitsiz` de ikinci tablodan okunuyor. Birincisi yükseltilebilir nedenler listesine
+  birebir çivili — kefilsiz bir neden eklenemiyor — ikincisi de türetildiği için aynı denetimi
+  devralıyor.
+- **Hiçbir şey GÖZLEMEDEN temiz dönen halka da kefil sayılmaz.** Ağ "hat yurt dışında değil"
+  deyip hiçbir ülke bildirmediğinde konum halkası temiz döner: beklentiyle çelişen bir şey
+  yoktur, ama hattın beklenen ülkede olduğu da doğrulanmış değildir. Gözlenmemiş olan kanıt
+  değildir — kapının her yerindeki "bilinmeyen, temiz değildir" kuralının aynısı — ve hiçbir
+  yükseltmeyi taşımaz.
 - **İkinci bozuk sinyal işi bitirir.** Biri sıradan bir salı günüdür. İki bağımsız olanı bir
   örüntüdür ve yükseltme yalnız birincisinin hesabını verir.
 - **Yapılandırma hataları yükseltilmez.** Çelişkili kurulum operatörün sorunudur, kullanıcının
@@ -220,8 +250,9 @@ npm run demo  -- --musteri <musteri-id> --canli    # gerçek +1 bütçe artış�
 `npm run demo` **gerçek** sunucu ikilisini gerçek MCP stdio üzerinden sürer — her sahneye
 kendi simülasyon değeri verilmiş ayrı bir sunucu süreci, böylece demo ortasında `.env`
 değiştirilmez: temiz sinyalde bütçe artışı (istem, içinde ağ kanıtı satırıyla belirir),
-aynı artış değişmiş SIM'le (**sert ret, sıfır istem** — betik elicitation sayar ve bir tane
-bile gösterilirse durur) ve yüksek katmanda yayına alma (pencere 72 saate genişler).
+aynı artış değişmiş SIM'le (**sert ret, sıfır istem** — varsayılan `AEGIS_STEPUP=0` altında;
+betik elicitation sayar ve bir tane bile gösterilirse durur) ve yüksek katmanda yayına alma
+(pencere 72 saate genişler; `AEGIS_NV_SIMULATE` tanımlıysa ikinci bir kanıt satırı belirir).
 Perde 3, dürüstçe üretemeyeceği bir kanıtı sahnelemektense kendini atlar; yayına aldığı
 kampanyayı geri alır ve durumu **geri okuyarak** kanıtlar.
 
@@ -428,6 +459,9 @@ Tehdit modeli, bildirim süreci ve projenin kendine koyduğu beş değişmez
 - Belirsizlik hiçbir zaman para harcama lehine çözülmez.
 - Ajan kendi bütçe tavanını yükseltemez, yazma iznini geri açamaz.
 
+Ağ güven kapısı da aynı kurala tabidir: güven çapası cevap veremiyorsa harcama olmaz — ve
+yapmadığı bir canlı sorguyu asla yapmış gibi göstermez ([docs/CAMARA.md](docs/CAMARA.md)).
+
 Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories üzerinden
 özel olarak bildir.
 
@@ -436,26 +470,41 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 983 çevrimdışı test
+npm test           # 1200 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 npm run agtest     # güven zincirinin Nokia NaC platformuna karşı canlı kontrolü
 npm run metatest   # Meta yolunun canlı kontrolü (--write ile duraklatılmış kampanya kurar)
+npm run prova -- --musteri <id>   # sahne öncesi ön-uçuş; hiçbir şey yazmaz
+npm run demo  -- --musteri <id>   # üç perdelik ağ-güveni demosu, varsayılan kuru
 ```
 
 Testler, enjekte edilmiş sahte bir Google Ads context'iyle `InMemoryTransport` üzerinde
 gerçek bir MCP istemci/sunucu çifti çalıştırır; böylece her kapı canlı hesaba
 dokunmadan, protokolün tamamı üzerinden sınanır. Pakette kapalı-arıza regresyonları ve
-kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var.
+kötü sonuca bilinen her yoldan ulaşmayı deneyen saldırgan senaryolar da var. Ağ kapısı da aynı
+biçimde test edilir — enjekte edilmiş sahte bir kanal üzerinden; erişilemeyen API'nin ret
+davranışını sınanabilir kılan da budur, o yeşil testlerin canlı CAMARA teli hakkında hiçbir şey
+söylememesinin sebebi de.
 
 ### Test metrikleri
 
 ```
-983 test · 0 hata          satır %90.26  ·  dal %90.31  ·  fonksiyon %89.98
+1200 test · 0 hata         satır %86.51  ·  dal %89.87  ·  fonksiyon %86.24
 ```
 
 Bu üç rakam, test koşucusunun kendi **all files** satırıdır
 (`node --test --experimental-test-coverage`): tek komutla yeniden üretilebilir, elle
-seçilmemiştir. `scripts/` ve `src/http.ts` de sayıma dahildir. `src/http.ts` %12.50
+seçilmemiştir. `scripts/` ve `src/http.ts` de sayıma dahildir.
+
+**All-files satır rakamı, paket BÜYÜRKEN düştü; sebebi gizlenmek yerine söylenmeye değer.**
+`scripts/demo-senaryo.mjs` — 1.500 satırın üzerinde — hiç testi olmayan bir dosyaydı, dolayısıyla raporda
+HİÇ GÖRÜNMÜYOR ve ortalamaya hiçbir şey katmıyordu. Artık testleri var, paydaya %29 ile girdi
+ve tek başına all-files satır rakamını yaklaşık dört puan aşağı çekti. Güvenlik açısından
+kritik dosyalar aynı turlarda ters yöne gitti: `src/approval.ts` %100, `src/networkTrust.ts`
+%99.18, `src/siteExtract.ts` %99.83, `src/store.ts` %99.64, `src/tools/read.ts` %99.89. Tek
+bir depo geneli ortalama bunu söyleyemez; aşağıdaki alan tablosu tam bu yüzden var.
+
+`src/http.ts` düşük
 görünüyor ve bunun sebebi gizlenmek yerine söylenmeye değer: barındırılan katman uçtan
 uca test EDİLİYOR, ama `test/http.test.ts` onu **ayrı bir sunucu süreci başlatarak**
 sürüyor; dolayısıyla ana sürecin ölçümü o satırların çalıştığını hiç görmüyor. Çok

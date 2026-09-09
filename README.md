@@ -10,8 +10,8 @@ human is prompted, and before any money moves.*
 [![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-983-brightgreen.svg)](test/)
-[![Coverage](https://img.shields.io/badge/line%20coverage-90.26%25-brightgreen.svg)](#test-metrics)
+[![Tests](https://img.shields.io/badge/tests-1200-brightgreen.svg)](test/)
+[![Coverage](https://img.shields.io/badge/line%20coverage-86.51%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -31,7 +31,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 983 automated tests at 90.26% line coverage; Docker deployment |
+| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 1200 automated tests at 86.51% line coverage; Docker deployment |
 | **Not yet** | Number Verification (device-side OIDC, uncallable from a server — an architectural verdict, not a pending task) · a real subscriber network behind the CAMARA calls (the account is in Simulator mode) |
 
 ## Contents
@@ -103,15 +103,16 @@ than the design does.
 | # | CAMARA signal | Question | State in this repo |
 |---|---|---|---|
 | 1 | `simSwap.check` | Was the approver's line taken over recently? | **Real path written** — live SDK channel + simulation channel + test seam. Runs on every risk-tagged action |
-| 2 | `numberVerification.*` | Is the approval coming from the owner's own device? | **Simulation only, permanently for now** — it is a device-side OIDC flow that no back-end can call. Its trace type has no "real" value at all |
+| 2 | `numberVerification.*` | Is the approval coming from the owner's own device? | **Simulation only, permanently for now** (`AEGIS_NV_SIMULATE`) — it is a device-side OIDC flow that no back-end can call. Its trace type has no "real" value at all |
 | 3 | `deviceStatus.retrieveReachabilityStatus` | Can the line receive data/SMS right now? | **Real path written, opt-in** (`AEGIS_REACH_CHECK`), high tier only — reachability legitimately fluctuates, so it stays off by default |
 | 4 | `deviceStatus.checkRoaming` | Is the line in the expected country? | **Real path written**, high tier, and only when `AEGIS_EXPECTED_COUNTRY` is set — no default country is invented, because a default would answer "clean" forever |
 | 5 | `deviceSwap.check` | Was the line moved to a **new device** — the attack SIM Swap cannot see? | **Real path written, opt-in** (`AEGIS_DEVICESWAP_CHECK`), high tier only. Shares the SIM-swap window but is logged under its own field; unlike link 1, an unreadable answer is a refusal, not a "no swap" |
 | 6 | `callForwardingSignal.retrieveUnconditionalCallForwarding` | Is unconditional call forwarding active — the classic OTP/voice intercept? | **Real path written, opt-in** (`AEGIS_CALLFWD_CHECK`), high tier only. One boolean, no PII: which number the line forwards to is never asked for or received |
 
 Links 2–6 run on the **high** tier only, and each needs its own variable: holding a
-Network-as-Code token switches on link 1 and nothing else, because every live link adds
-another CAMARA round trip to every approval — and another way to refuse a legitimate spend.
+Network-as-Code token (`AEGIS_NAC_TOKEN`) switches on link 1 and nothing else, because every
+live link adds another CAMARA round trip to every approval — and another way to refuse a
+legitimate spend.
 A configured-but-disabled link records `kapali` in the audit trail, so "I did not ask" is
 never mistaken for "asked and passed".
 
@@ -189,17 +190,23 @@ way forward — a point made by our Nokia mentor, Aleksi Puranen, reviewing this
 
 So a degraded signal no longer ends the request. With `AEGIS_STEPUP` on, a reason that
 describes an ordinary human situation — SIM changed, device changed, line abroad, phone
-unreachable, network silent — escalates instead of refusing: the remaining links are asked
-anyway, and if every one of them answers clean **on a real channel**, the action proceeds to a
-human prompt that leads with the broken signal by name and asks consent to that specific
-degraded state rather than to a routine spend.
+unreachable, network silent — *may* escalate instead of refusing: the remaining links are asked
+anyway, and every one of them still has to answer clean. That is necessary and it is not
+sufficient. At least one of those clean answers has to come **on a real channel**, from a link
+that could have contradicted the broken signal, and from a link that actually observed
+something. Only then does the action reach a human prompt that leads with the broken signal by
+name and asks consent to that specific degraded state rather than to a routine spend.
 
 The limits are the interesting part, and each is a deliberate line rather than an omission:
 
-- **Call forwarding active never escalates.** This is the one that looks backwards until you
-  follow it through. A step-up is carried to a person over a channel — a call, a message — and
-  unconditional forwarding means that channel is exactly what an attacker has taken. Escalating
-  there hands the stronger check to them. It refuses, always.
+- **Call forwarding never escalates — neither when it is active nor when it is silent.** This is
+  the one that looks backwards until you follow it through. A step-up is carried to a person over
+  a channel — a call, a message — and unconditional forwarding means that channel is exactly what
+  an attacker has taken. Escalating there hands the stronger check to them. A forwarding check
+  that falls *silent* (`ag-yanitsiz`, and the endpoint is documented as one that may answer
+  `501`) is refused for the mirror-image reason: no other link in the chain can see forwarding,
+  so nothing anywhere corroborates that silence. The unknown is never treated more leniently
+  than the known.
 - **A simulated link cannot vouch for a broken real one.** Otherwise a single environment
   variable in demo mode would paper over a genuine SIM swap, which would make demo mode the
   cheapest way through the gate.
@@ -210,8 +217,18 @@ The limits are the interesting part, and each is a deliberate line rather than a
   liveness signal, not an identity one: the attacker holding a swapped SIM has a reachable phone
   too, so "the device is online" does not disagree with "the SIM moved" and cannot stand as its
   corroboration. It was doing exactly that — a real SIM swap escalated on reachability alone.
-  Which links can vouch for which degraded signal is now one visible table in `src/networkTrust.ts`
-  (`KEFIL_ESLEMESI`), pinned against the list of escalatable reasons so neither can drift.
+  Which links can vouch for which degraded signal lives in **two** visible tables in
+  `src/networkTrust.ts`: `KEFIL_ESLEMESI` maps a *detected* signal to the links that could
+  disprove it, and `YANITSIZ_KEFIL_ESLEMESI` maps a *silent* link to the vouchers for the
+  question it went quiet about. The second is derived from the first, so the two cannot drift
+  apart, and `ag-yanitsiz` — the one reason that does not name its own link — is read from it.
+  The first is pinned one-for-one against the list of escalatable reasons, so no reason can
+  arrive without its vouchers, and the second inherits that check by construction.
+- **A link that came back clean without observing anything vouches for nothing.** The location
+  link answers clean when the network says the line is not roaming and names no country at all:
+  nothing contradicts the expectation, but nothing has placed the line in the expected country
+  either. Nothing observed is not evidence — the same rule as "unknown is not clean" everywhere
+  else in the gate — so it carries no escalation.
 - **A second broken signal ends it.** One is an ordinary Tuesday. Two independent ones are a
   pattern, and the escalation only answers for the first.
 - **Configuration faults never escalate.** A contradictory setup is the operator's problem, not
@@ -463,7 +480,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 983 offline tests
+npm test           # 1200 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
 npm run metatest   # live checks of the Meta path (add --write to create a paused campaign)
@@ -481,12 +498,23 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-983 tests · 0 failures        line 90.26%  ·  branch 90.31%  ·  function 89.98%
+1200 tests · 0 failures       line 86.51%  ·  branch 89.87%  ·  function 86.24%
 ```
 
 Those three figures are the test runner's own **all files** row
 (`node --test --experimental-test-coverage`), reproducible in one command and not
-hand-picked. It counts `scripts/` and `src/http.ts` too. `src/http.ts` reads at 12.50%
+hand-picked. It counts `scripts/` and `src/http.ts` too.
+
+**The all-files line figure went DOWN while the suite grew, and the reason is worth stating
+rather than hiding.** `scripts/demo-senaryo.mjs` — over 1,500 lines — had no tests at all, so it
+appeared nowhere in the report and contributed nothing to the average. It now has tests, which
+put it into the denominator at 29%, and that alone moves the all-files line figure by roughly
+four points. The security-critical files moved the other way in the same rounds:
+`src/approval.ts` 100%, `src/networkTrust.ts` 99.18%, `src/siteExtract.ts` 99.83%,
+`src/store.ts` 99.64%, `src/tools/read.ts` 99.89%. A single repository-wide average cannot say
+that, which is why the per-area table below exists.
+
+`src/http.ts` reads low
 for a reason worth stating rather than hiding: the hosted layer *is* tested end to end,
 but `test/http.test.ts` drives it as a **spawned server process**, so the parent's
 instrumentation never sees those lines execute. Multi-tenant isolation, session binding,
