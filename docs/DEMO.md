@@ -266,7 +266,7 @@ situations it was, "no real link ran at all" or "real links ran and none of them
 to this signal". And a **second** broken signal ends it: one is an ordinary Tuesday, two
 independent ones are a pattern.
 
-In the audit trail this outcome is `"karar":"kademeli"` with `kademeNedeni` and
+In the audit trail this outcome is `"karar":"kademeli"` with `retNedeniKisa` and
 `kademeDogrulayan` beside it — never folded into `gecti`, because "nothing was wrong" and
 "something was wrong and we escalated past it" are different levels of trust (3.5).
 

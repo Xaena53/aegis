@@ -24,7 +24,10 @@ whether a human said yes?
   it into the server would make behaviour non-deterministic and untestable.
 - Being a general Google Ads API wrapper. Tools are chosen for a workflow, not for API
   surface coverage.
-- Multi-platform (Meta, TikTok) before the Google surface is genuinely good.
+- Breadth before depth. A second ad platform earns its place only by going *behind* the
+  same approval gate rather than beside it — which is why Meta is in the surface
+  (`tools/meta.ts`, whose two write paths carry Google's own risk tiers into `onayAl`)
+  and TikTok is still out.
 
 ## Layers
 
