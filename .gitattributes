@@ -1,0 +1,30 @@
+# Line endings are LF in the working tree on every platform, not just in the object store.
+#
+# WHY THIS FILE EXISTS. Several tests are source watchers: they read a file in this repository
+# and assert that the code still says what a comment, a README or a runbook claims it says.
+# One of them looks for the literal "\n}\n" to find where a guard function ends. With Git's
+# default `core.autocrlf=true` on Windows, a checkout rewrites the working tree to CRLF, that
+# search stops matching, and the watcher fails on a repository whose code is perfectly fine —
+# a red build that says nothing about the software. It happened here, on a plain
+# stash/pop round trip.
+#
+# The alternative was to make sixteen watchers each normalise line endings before searching.
+# That is the same fix written sixteen times, and the seventeenth watcher would forget. One
+# declaration removes the entire class instead: everyone who clones this repository gets the
+# same bytes the tests were written against.
+#
+# Binary assets are listed explicitly so this normalisation never touches them.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.mp4 binary
+*.woff binary
+*.woff2 binary
+*.db binary
+*.sqlite binary

@@ -20,3 +20,19 @@ coverage/
 # Growth Brain koşu çıktıları: her çalıştırmada yeniden üretilir ve hesaba özel
 # plan/kreatif içerir. Kaynak değil, artefakt — depoya girmez.
 rapor-brain-*.md
+
+# Doğrulama artefaktları: denetim/onarım turlarında bir düzeltmenin gerçekten kilitlendiğini
+# ölçmek için dosyalar geçici olarak bozulup yedekten geri konuyor. O yedekler ve prob
+# betikleri kaynak değil; biri unutulursa depoya sızmasın.
+.tmp*/
+*.bak
+*.orig
+*.rej
+
+# Denetim/onarim ajanlarinin acabildigi calisma dizinleri. Kural ADLA degil DESENLE
+# yaziliyor: her tur yeni bir ad uyduruyor (.audit-tmp, .denetim-tmp, .audit-denetci)
+# ve uc turdur biri unutulup depoya sizdi.
+.audit*/
+.denetim*/
+.onarim*/
+.probe*/
