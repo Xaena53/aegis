@@ -3,8 +3,9 @@
  * HTML extraction and network-safety predicates.
  *
  * All scanning is linear (indexOf, not backtracking regular expressions) so a hostile
- * page cannot stall the process. Case-insensitive matching uses ASCII-only lowering to
- * keep string indices aligned for non-ASCII text.
+ * page cannot stall the process. The HTML scanners fold case with ASCII-only lowering, which
+ * keeps string indices aligned for non-ASCII text; the delimiter search folds further and
+ * also skips what a reader cannot see — see ayracKatla and gorunurSuzgec.
  *
  * Dependency-free and directly unit-tested.
  */
@@ -104,30 +105,123 @@ function cdataSiyir(inner: string): string {
  * the bound is playing the same race one more round; instead, the delimiter's NAME is
  * neutralised — leaving no variant of writing it at all.
  *
- * toLowerCase() is NOT used for the search copy: Turkish 'İ' expands into two code points,
- * the string grows, and the indices lose their alignment with the raw text — the output is
- * sliced out of `metin`, so a fold that changes the length cuts in the wrong place. The fold
- * has to reach further than asciiLower does, though; see ayracKatla.
+ * The search runs over the raw text through TWO derived views, and the split is deliberate:
+ * ayracKatla decides how a character READS (case and look-alike folding), gorunurSuzgec
+ * decides whether it is READ AT ALL (invisible characters dropped). The fold is
+ * LENGTH-PRESERVING, so `harita` carries a hit in the visible view straight back to an index
+ * in `metin`; the output is sliced out of the raw text, so a fold that changed the length
+ * would cut in the wrong place. toLowerCase() does change it — Turkish 'İ' becomes two code
+ * points — which is why the fold is written by hand rather than delegated.
  */
 const AYRAC_ADI = "site-verisi";
 export function ayracTemizle(metin: string): string {
   const lower = ayracKatla(metin);
+  const { gorunur, harita } = gorunurSuzgec(lower);
   let out = "";
-  let i = 0;
+  let i = 0; // read cursor in the RAW text
+  let ara = 0; // search cursor in the visible view
   for (;;) {
-    const s = lower.indexOf(AYRAC_ADI, i);
+    const s = gorunur.indexOf(AYRAC_ADI, ara);
     if (s < 0) {
       out += metin.slice(i);
       break;
     }
-    out += metin.slice(i, s) + "[etiket-temizlendi]";
-    i = s + AYRAC_ADI.length;
+    /**
+     * The replaced span runs from the first matched character to the NEXT VISIBLE one, so the
+     * invisible units that belong to the match travel with it. Ending at "the last matched
+     * unit plus one" instead was MEASURED to cut an astral look-alike in half: `𝘀𝗶𝘁𝗲-𝘃𝗲𝗿𝗶𝘀𝗶`
+     * folds to a letter plus one unit of DOLGU, and the output kept the ORPHANED low
+     * surrogate of the last character.
+     */
+    const bas = harita[s]!;
+    const son = harita[s + AYRAC_ADI.length] ?? lower.length;
+    out += metin.slice(i, bas) + "[etiket-temizlendi]";
+    i = son;
+    ara = s + AYRAC_ADI.length;
   }
   return out;
 }
 
 /**
- * LENGTH-PRESERVING case folding for the DELIMITER SEARCH ONLY.
+ * INVISIBLE characters: combining marks (Mn/Me) and format controls (Cf — the zero-width
+ * space and joiners, the soft hyphen, the bidi overrides, the Unicode TAGS block).
+ *
+ * WHY they are SKIPPED rather than folded: they are not a way of SPELLING a letter, they are
+ * a way of HIDING one, and a reader — the agent included — never sees them. Measured on the
+ * fold-only version of this file: the DECOMPOSED spelling of the Turkish delimiter, `SI` plus
+ * U+0307 (combining dot above), which `"</SİTE-VERİSİ>".normalize("NFC")` proves is the SAME
+ * string as the composed one, came back BYTE FOR BYTE UNCHANGED — through ayracTemizle and
+ * through the whole extractPageFacts → visibleText path an injected page actually travels.
+ * `si` + U+200B + `te-verisi` escaped the same way. So the page could still close the block
+ * from inside it: the fake-frame attack this cleaner exists to stop, one encoding over.
+ */
+const GORUNMEZ = /[\p{Mn}\p{Me}\p{Cf}]/u;
+
+/**
+ * The delimiter search's view of the folded text: the invisible characters removed, plus a
+ * map from every surviving position back to its index in the raw string. ONE linear pass, and
+ * no bound anywhere — a run of a million joiners costs a million steps, not a missed match.
+ */
+function gorunurSuzgec(lower: string): { gorunur: string; harita: number[] } {
+  let gorunur = "";
+  const harita: number[] = [];
+  for (let i = 0; i < lower.length; i++) {
+    const ch = lower[i]!;
+    if (GORUNMEZ.test(ch)) continue;
+    gorunur += ch;
+    harita.push(i);
+  }
+  return { gorunur, harita };
+}
+
+/** Padding for a fold that needs fewer code units than the character it replaces. It is itself invisible, so gorunurSuzgec removes it again before the match. */
+const DOLGU = "\u200b"; // zero-width space
+const MARKALAR = /[\p{Mn}\p{Me}]/gu;
+
+/**
+ * Look-alikes for the characters AYRAC_ADI is made of, written as ESCAPES on purpose: on
+ * screen most of them are indistinguishable from the ASCII letters, so a table of literals
+ * could not be reviewed by eye at all. Only what compatibility decomposition cannot already
+ * reach is listed here.
+ */
+const BENZEYENLER: Record<string, string> = {
+  "\u0131": "i", // dotless small i (Turkish)
+  "\u026a": "i", // small capital I
+  "\u0406": "i", // Cyrillic capital Byelorussian-Ukrainian I
+  "\u0456": "i", // Cyrillic small Byelorussian-Ukrainian i
+  "\u0399": "i", // Greek capital iota
+  "\u03b9": "i", // Greek small iota
+  "\u0405": "s", // Cyrillic capital dze
+  "\u0455": "s", // Cyrillic small dze
+  "\ua731": "s", // small capital S
+  "\u0422": "t", // Cyrillic capital te
+  "\u0442": "t", // Cyrillic small te
+  "\u03a4": "t", // Greek capital tau
+  "\u03c4": "t", // Greek small tau
+  "\u1d1b": "t", // small capital T
+  "\u0415": "e", // Cyrillic capital ie
+  "\u0435": "e", // Cyrillic small ie
+  "\u0395": "e", // Greek capital epsilon
+  "\u03b5": "e", // Greek small epsilon
+  "\u1d07": "e", // small capital E
+  "\u0474": "v", // Cyrillic capital izhitsa
+  "\u0475": "v", // Cyrillic small izhitsa
+  "\u03bd": "v", // Greek small nu
+  "\u028b": "v", // v with hook
+  "\u0433": "r", // Cyrillic small ghe (its italic form reads as an r)
+  "\u0280": "r", // small capital R
+  "\u2010": "-", // hyphen
+  "\u2011": "-", // non-breaking hyphen
+  "\u2012": "-", // figure dash
+  "\u2013": "-", // en dash
+  "\u2014": "-", // em dash
+  "\u2015": "-", // horizontal bar
+  "\u2043": "-", // hyphen bullet
+  "\u2212": "-", // minus sign
+};
+
+/**
+ * LENGTH-PRESERVING case and LOOK-ALIKE folding for the DELIMITER SEARCH ONLY.
  *
  * WHY more than asciiLower: the cleaner is deliberately case-insensitive, but asciiLower
  * folds nothing outside [A-Z], and the product's whole user-facing surface is Turkish — so
@@ -137,10 +231,26 @@ export function ayracTemizle(metin: string): string {
  * spelling escaped in the same way. A page could therefore close the block visually from
  * INSIDE the block — the exact fake-frame attack this cleaner exists to stop.
  *
- * 'İ' (U+0130) and 'ı' (U+0131) are SINGLE UTF-16 code units, so mapping them onto "i" keeps
- * `lower.length === metin.length` and every index still points at the same character in the
- * raw text. That is the invariant toLowerCase() breaks (it yields TWO code points for 'İ'),
- * and the reason the fold is written by hand rather than delegated.
+ * Spelling is not only a question of CASE, though, and a hand-written list of two letters was
+ * measured to be exactly one round behind. Through this same function, before this rule:
+ *   `</SİTE-VERİSİ>` written decomposed (I + U+0307)  → returned unchanged
+ *   `</SІTE-VERІSІ>` with Cyrillic 'І' (U+0406)       → returned unchanged
+ *   `</ｓｉｔｅ-ｖｅｒｉｓｉ>` in fullwidth forms      → returned unchanged
+ * So the rule is stated once and generically: a character folds to the ASCII character it
+ * READS AS. Compatibility decomposition with the combining marks removed does most of the
+ * work — accented Latin, the fullwidth block, the mathematical alphabets, and BOTH spellings
+ * of 'İ' — and BENZEYENLER covers what decomposition cannot reach, the look-alikes borrowed
+ * from other alphabets. That table is limited to the characters AYRAC_ADI is made of
+ * (s, i, t, e, v, r and the hyphen) because EVERY letter of the name has to be foldable for
+ * the name to be found: one letter left out is one escape, and a confusables table for the
+ * rest of Unicode would be maintenance fiction bought with nothing.
+ *
+ * LENGTH IS PRESERVED PER CHARACTER, and that is what lets ayracTemizle carry a hit back onto
+ * the raw text. A fold is applied only when it fits in the code units the character already
+ * occupies; leftover units take DOLGU, which gorunurSuzgec removes again before the match, so
+ * an astral look-alike (`𝘀𝗶𝘁𝗲`) still folds. Anything that would need MORE room than the
+ * original — a ligature decomposing into two letters — is left alone rather than silently
+ * shifting every index after it.
  *
  * NOT folded into asciiLower itself, deliberately. asciiLower also drives findTags /
  * findElements / removeBetween, and there the same fold would be a LOOSENING: measured on a
@@ -150,7 +260,31 @@ export function ayracTemizle(metin: string): string {
  * delimiter's audience is a Turkish-reading agent. Two questions, two folds.
  */
 function ayracKatla(s: string): string {
-  return asciiLower(s).replace(/[İı]/g, "i");
+  let out = "";
+  for (const ch of s) {
+    const kod = ch.codePointAt(0)!;
+    if (kod < 0x80) {
+      // ASCII stays on the cheap path: one comparison per character, no normalisation.
+      out += kod >= 65 && kod <= 90 ? String.fromCharCode(kod + 32) : ch;
+      continue;
+    }
+    if (GORUNMEZ.test(ch)) {
+      /**
+       * An invisible character is rewritten as DOLGU, one unit for every unit it occupied.
+       * That is what keeps the ASTRAL invisibles — the Unicode TAGS block, U+E0000-E007F,
+       * the known channel for hiding text from a reader — invisible to the search as well:
+       * gorunurSuzgec walks code UNITS, and a surrogate half on its own belongs to no
+       * category at all. Measured before this branch: `</site` + U+E0041 + `-verisi>` passed
+       * through uncleaned.
+       */
+      out += DOLGU.repeat(ch.length);
+      continue;
+    }
+    const sade = ch.normalize("NFKD").replace(MARKALAR, "");
+    const hedef = BENZEYENLER[sade] ?? asciiLower(sade);
+    out += hedef.length <= ch.length ? hedef.padEnd(ch.length, DOLGU) : ch;
+  }
+  return out;
 }
 
 /** Attribute value from a tag — closed by the SAME quote that opened it, so a nested ' or " does not split the value. */

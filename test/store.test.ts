@@ -454,12 +454,16 @@ test("AEGIS_DB açıkça verilmişse hiçbir tahmin yapılmaz", () => {
  * gibi tarayıcılar onu "lisans bilinmiyor" diye raporluyordu. Hiçbir kapı bunu ölçmüyordu:
  * kaynakHijyeni.test.ts ham NUL baytını ve HMAC anahtar kaynağını çiviliyor, başlığı değil.
  *
- * ÇİFT YÖNLÜ — bir borç listesi ancak iki yönde de kızarırsa bekçidir:
+ * ÜÇ YÖNLÜ — bir borç listesi ancak her yönde kızarırsa bekçidir:
  *   (1) BORÇ LİSTESİNDE OLMAYAN başlıksız bir dosya kırmızıdır. Bundan sonra src/, test/
- *       ya da scripts/ altına eklenen her .ts/.mts/.mjs başlık taşımak zorunda.
+ *       ya da scripts/ altına eklenen her .ts/.mts/.mjs/.js başlık taşımak zorunda.
  *   (2) BORÇ LİSTESİNDEKİ bir dosya başlığını kazandığında ya da silindiğinde de
  *       kırmızıdır. Kapanmış bir borç listede kalamaz: duran bir kayıt, adını taşıdığı
  *       yola sonradan konan başlıksız bir dosyayı sessizce affeder.
+ *   (3) LİSTENİN KENDİSİ UZADIĞINDA kırmızıdır (SPDX_BORC_TAVANI). (1) tek başına yalnız
+ *       listeye DOKUNMAYAN birini durdurur: tavan yokken başlıksız bir dosya yaratıp yolunu
+ *       bu listeye eklemek gözcüyü susturuyordu. ÖLÇÜLDÜ (faz5): başlıksız `test/zzKacak…ts`
+ *       + aynı anda eklenen liste satırı = 1 pass / 0 fail. Tavanla aynı mutasyon kırmızı.
  *
  * Eşleşme TAM: kırpılmış satır SPDX_SATIRI'na birebir eşit olmalı. "SPDX ekle" diyen bir
  * TODO yorumu ya da bu cümlenin kendisi başlık sayılmaz — geniş bir "içeriyor" testi
@@ -475,7 +479,8 @@ const SPDX_UZANTILARI = new Set([".ts", ".mts", ".mjs", ".js"]);
  * KAPANMAMIŞ BORÇ — başlığı hâlâ olmayan, bilinen dosyalar. Bu liste yalnız KÜÇÜLEBİLİR:
  * bir satır eklemek borcu kapatır, kapanan borç buradan silinmelidir (yukarıdaki 2. yön).
  * Bu turda yalnız kendi dosyam düzeltilebildiği için kalanlar burada adlarıyla duruyor —
- * sessizce görmezden gelinmiyor.
+ * sessizce görmezden gelinmiyor. "Yalnız küçülebilir" artık bir dilek değil, SPDX_BORC_TAVANI
+ * ile ÖLÇÜLÜYOR (aşağıdaki 3. yön).
  */
 const SPDX_BORCLULARI = [
   "scripts/demo-agent.mjs",
@@ -494,6 +499,17 @@ const SPDX_BORCLULARI = [
   "test/tools.write.test.ts",
   "test/util.test.ts",
 ];
+
+/**
+ * BORÇ TAVANI — kaydın CIRCIRI, tek yönlü. Liste bugün tam bu uzunlukta; borç kapandıkça
+ * hem satır hem bu sayı DÜŞER, asla yükselmez. Ölçtüğü şey dar ve tam olarak şudur: başlıksız
+ * bir dosya, yolunu SPDX_BORCLULARI'na ekleyerek TEK SATIRDA ve sessizce susturulamaz —
+ * borcu büyütmek bu sabiti de değiştirmeyi, yani incelemede görünen ikinci bir hamleyi gerekli
+ * kılar. Sabiti bilerek yükselten birini durdurmaz; durdurduğu şey KAZAYLA ve SESSİZCE
+ * büyümedir. (Değeri bu listenin `.length`'inden TÜRETMEK gözcüyü tamamen delerdi: kendi
+ * kendini onaylayan bir tavan hiçbir şeye kefil olamaz.)
+ */
+const SPDX_BORC_TAVANI = 15;
 
 /** Nokta ile başlayan adlar atlanır: `.tmp-*` çalışma dizinleri depo içine yazılır. */
 function spdxDosyalari(dizin: string, toplanan: string[] = []): string[] {
@@ -517,7 +533,16 @@ function spdxGoreli(yol: string): string {
   return yol.slice(SPDX_KOK.length).split("\\").join("/");
 }
 
-test("src+test+scripts altındaki her kaynak SPDX başlığı taşır (borç listesi çift yönlü)", () => {
+test("src+test+scripts altındaki her kaynak SPDX başlığı taşır (borç listesi üç yönlü)", () => {
+  assert.equal(
+    SPDX_BORCLULARI.length,
+    SPDX_BORC_TAVANI,
+    `Borç kaydı ${SPDX_BORCLULARI.length} satır, ilan edilen tavan ${SPDX_BORC_TAVANI}.\n` +
+      `UZADIYSA: başlıksız bir dosya listeye yazılarak susturulamaz — dosyanın ilk satırına ` +
+      `(shebang varsa hemen altına) ${SPDX_SATIRI} ekle, adını buraya değil.\n` +
+      `KISALDIYSA: borç kapanmış, tavanı da ${SPDX_BORCLULARI.length} yap — tavan yalnız düşer.`
+  );
+
   const borc = new Set(SPDX_BORCLULARI);
   const eksikler: string[] = [];
   let sayac = 0;

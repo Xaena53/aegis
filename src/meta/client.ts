@@ -466,7 +466,35 @@ async function graf(
     if (!cevap.ok) {
       throw new Error(`Meta API ${cevap.status}: ${hataTemizle(metin, token)}`);
     }
-    return metin ? JSON.parse(metin) : {};
+    if (!metin) return {};
+    try {
+      return JSON.parse(metin);
+    } catch (e) {
+      /**
+       * A BODY WE COULD NOT PARSE IS NOT A FAILED WRITE EITHER.
+       *
+       * The two catches above cover the transport and the body read; the parse sat OUTSIDE
+       * both of them. So a 200 answered with something that is not JSON — a proxy error
+       * page, a captive portal, a Graph edge answering in a shape we did not expect — threw
+       * a bare SyntaxError, which is not a MetaBelirsizSonuc, and tools/meta.ts summarised
+       * it to the agent as "Meta işlemi başarısız": the one sentence that asserts NOTHING
+       * HAPPENED. That is the opposite of what was observed. Meta answered at all, so the
+       * request certainly arrived and on a write it may already have been APPLIED; the
+       * agent's usual next move after "failed" is a retry, which here means raising the
+       * budget a second time or giving birth to a second campaign.
+       *
+       * A READ IS LEFT ALONE ON PURPOSE. A GET whose body would not parse changed nothing,
+       * so it really did fail: reklamSetiButcesi catches that SyntaxError and masks it into
+       * butceNotu, and the refusal built from it is the correct one. Calling a read
+       * "possibly applied" would be a warning the operator cannot act on.
+       */
+      if (yontem === "POST") {
+        throw yazmaBelirsiz(
+          `yanıt gövdesi JSON olarak ayrıştırılamadı (${hataTemizle(hataMetni(e), token)})`
+        );
+      }
+      throw e;
+    }
   } finally {
     clearTimeout(zamanlayici);
   }
@@ -546,10 +574,15 @@ async function reklamSetiButcesi(
      * THE REASON GOES TO THE AGENT, BUT NOT RAW.
      *
      * This note enters set_meta_campaign_status's refusal text as `butceNotu`, which is a
-     * surface the agent sees directly. `graf` only cleaned HTTP errors; on a 200 with a
-     * non-JSON body, the message of the SyntaxError thrown carries A PREFIX OF THE UPSTREAM
+     * surface the agent sees directly. `graf` used to clean HTTP errors ONLY; on a 200 with
+     * a non-JSON body, the message of the SyntaxError thrown carries A PREFIX OF THE UPSTREAM
      * BODY, and it used to pass through here unmasked and uncapped. hataTemizle removes both
      * access_token and the token itself, and cuts at 300 characters.
+     *
+     * THIS CALL IS A GET, AND THAT IS WHY THE SyntaxError STILL ARRIVES HERE. `graf` now
+     * classifies an unparseable body on a WRITE as an unknown outcome, but a read that came
+     * back unparseable really did fail — so it is still raised as an ordinary error and
+     * turned into the refusal below. The masking is what keeps the upstream body out of it.
      */
     return { not: `reklam setleri okunamadı (${hataTemizle(hataMetni(e), ayar.metaToken)})` };
   }

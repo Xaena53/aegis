@@ -52,6 +52,33 @@ function enumAdi(tablo: Record<string | number, unknown>, ham: unknown): string 
 }
 
 /**
+ * AN IDENTITY IS A VALUE ONLY WHEN IT ACTUALLY ARRIVED — the `String()` counterpart of
+ * `enumAdi` above.
+ *
+ * `String(r.campaign.id)` produced the literal text "undefined" for a row whose id or name
+ * never came back, and the row then printed as `#undefined undefined`. That is the same
+ * breach `enumAdi` was written to close, one field to the left: an unknown wearing the
+ * clothes of a value, on the field an agent quotes back to the user as "your campaign".
+ * Worse, the two fields sit outside `alanlar`, so `okunamayanAlanlar` stayed silent — the
+ * SAME row said "OKUNAMADI" about its status while presenting "undefined" as an id.
+ *
+ * Returning `undefined` is what lets the CALLER decide what an unknown means there: an
+ * unreadable campaign id drops the whole row out of the table, while an unreadable name
+ * only costs the name.
+ *
+ * A number is accepted only when finite (`String(NaN)` is "NaN", another unknown in
+ * disguise), a string only when non-empty, and an id that arrived as a bigint — how a large
+ * int64 id reaches this SDK — is kept. Everything else is an UNKNOWN, and no caller may
+ * turn that `undefined` back into text that reads like a value.
+ */
+function metinOku(ham: unknown): string | undefined {
+  if (typeof ham === "string") return ham.length > 0 ? ham : undefined;
+  if (typeof ham === "number") return Number.isFinite(ham) ? String(ham) : undefined;
+  if (typeof ham === "bigint") return String(ham);
+  return undefined;
+}
+
+/**
  * Dual output: a human-readable summary plus typed structured data.
  *
  * The agent never has to parse numbers out of prose — amounts arrive already divided
@@ -134,8 +161,22 @@ const KAMPANYA_SEMASI = {
   sekliBozukSatir: z.number().optional().describe(BOZUK_SATIR_NOTU),
   kampanyalar: z.array(
     z.object({
-      id: z.string(),
-      ad: z.string(),
+      /**
+       * THE IDENTITY IS A PRECONDITION, NOT A FIELD. `String(r.campaign.id)` wrote the text
+       * "undefined" for a row whose id never arrived, and `okunamayanAlanlar` did not count
+       * it — one object with two standards: honest about its unreadable status, handing the
+       * agent "#undefined" to quote back as a campaign. Both fields stay REQUIRED here on
+       * purpose (loosening them would let an unidentifiable row into the table through the
+       * schema), and the code upholds the promise at the two ends instead: a row whose id
+       * cannot be read never enters the table at all — it is dropped into `sekliBozukSatir`
+       * like any other row that arrived in an unreadable shape — and an unreadable NAME,
+       * which still leaves the campaign addressable by id, is written as the self-declaring
+       * "(AD OKUNAMADI)" and counted in `okunamayanAlanlar`.
+       */
+      id: z.string().describe("Kampanya kimliği — okunamayan satır tabloya HİÇ girmez, sekliBozukSatir'a düşer"),
+      ad: z
+        .string()
+        .describe("Kampanya adı. Okunamadıysa '(AD OKUNAMADI)' yazılır ve okunamayanAlanlar'a eklenir — bu bir ad DEĞİLDİR"),
       /**
        * Status and channel obey the same rule as the money fields: an unreadable enum is
        * NOT written. Writing the text "undefined" (or the enum's number) here dressed an
@@ -158,7 +199,9 @@ const KAMPANYA_SEMASI = {
       okunamayanAlanlar: z
         .array(z.string())
         .optional()
-        .describe("Bu satırda okunamayan alanların adları — varsa kampanya hakkında sayısal sonuç çıkarma"),
+        .describe(
+          "Bu satırda okunamayan alanların adları — o alanlar hakkında sonuç çıkarma; 'ad' listedeyse kampanyanın adı BİLİNMİYOR, yazılan metin ad değildir"
+        ),
     })
   ),
 };
@@ -636,11 +679,25 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
          * dropped — but the DROP IS COUNTED. Silently shrinking the table makes a campaign
          * that is missing from the list look as though it does not exist, which is exactly
          * the error truncation makes and which this tool already announces.
+         *
+         * A ROW WITHOUT A READABLE ID IS DROPPED BY THE SAME RULE. `id: String(r.campaign.id)`
+         * used to sit in the map below and published `id: "undefined"` — an unknown wearing
+         * an identifier's clothes, on the field the agent quotes back to the user as "your
+         * campaign" and hands to the write tools as a target — while `okunamayanAlanlar`,
+         * three lines further down, stayed silent about it. Announcing the gap inside the
+         * row is not enough: a row that identifies no campaign is not a campaign, so it
+         * takes the fail-closed path this list already has, and the count and the "Liste
+         * EKSİKTİR" warning below say the table is short. The name is different in kind: a
+         * campaign whose name cannot be read is still addressable by its id, so that row
+         * stays and only its name is announced as unreadable.
          */
         const gorunenSatirlar = rows.slice(0, TAVAN);
-        const saglamSatirlar = gorunenSatirlar.filter((r: any) => r?.campaign);
-        const sekliBozukSatir = gorunenSatirlar.length - saglamSatirlar.length;
-        const kampanyalar = saglamSatirlar.map((r: any) => {
+        const kimlikliSatirlar = gorunenSatirlar.flatMap((r: any) => {
+          const id = r?.campaign ? metinOku(r.campaign.id) : undefined;
+          return id === undefined ? [] : [{ r, id }];
+        });
+        const sekliBozukSatir = gorunenSatirlar.length - kimlikliSatirlar.length;
+        const kampanyalar = kimlikliSatirlar.map(({ r, id }: { r: any; id: string }) => {
           const m = r.metrics ?? {};
           /**
            * Every money and metric field is read INDIVIDUALLY, and a field that cannot be
@@ -670,7 +727,15 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
            */
           const durum = enumAdi(enums.CampaignStatus as any, r.campaign.status);
           const kanal = enumAdi(enums.AdvertisingChannelType as any, r.campaign.advertising_channel_type);
+          /**
+           * `id` was read by `metinOku` in the filter above and is a string by construction.
+           * The name is read by the SAME rule and counted in the SAME list as the status:
+           * `String(r.campaign.name)` used to write the text "undefined" here without ever
+           * reaching `okunamayanAlanlar`.
+           */
+          const ad = metinOku(r.campaign.name);
           const okunamayanAlanlar = [
+            ...(ad === undefined ? ["ad"] : []),
             ...(durum === undefined ? ["durum"] : []),
             ...(kanal === undefined ? ["kanal"] : []),
             ...Object.entries(alanlar)
@@ -678,8 +743,10 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
               .map(([k]) => k),
           ];
           return {
-            id: String(r.campaign.id),
-            ad: String(r.campaign.name),
+            id,
+            // "(AD OKUNAMADI)" cannot be mistaken for a name the way "undefined" could, and
+            // `okunamayanAlanlar` carries "ad" alongside it.
+            ad: ad ?? "(AD OKUNAMADI)",
             ...(durum === undefined ? {} : { durum }),
             ...(kanal === undefined ? {} : { kanal }),
             ...tanimliAlanlar(alanlar),
@@ -691,10 +758,13 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           (k) =>
             // The unknown is admitted in the human-readable line too: "[undefined]" read as
             // a state, whereas "[OKUNAMADI — ETKİN varsayma]" reads as the absence of one.
+            // The identity cannot be an unknown here: a row whose id could not be read was
+            // dropped upstream, and an unreadable name arrives as "(AD OKUNAMADI)".
             `#${k.id} ${k.ad} [${k.durum ?? "OKUNAMADI — ETKİN varsayma"}] (${k.kanal ?? "OKUNAMADI"})\n` +
             `  günlük bütçe: ${sayiMetni(k.gunlukButce, 2)} | maliyet: ${sayiMetni(k.maliyet, 2)} | tıklama: ${sayiMetni(k.tiklama)} | gösterim: ${sayiMetni(k.gosterim)} | dönüşüm: ${sayiMetni(k.donusum)} | CTR: ${k.ctrYuzde === undefined ? "OKUNAMADI" : `%${k.ctrYuzde.toFixed(2)}`} | ort.TBM: ${sayiMetni(k.ortTbm, 2)}` +
             (k.okunamayanAlanlar
-              ? `\n  ⚠ OKUNAMAYAN ALAN: ${k.okunamayanAlanlar.join(", ")} — bu kampanya için o sayılar BİLİNMİYOR, 0 varsayma`
+              ? `\n  ⚠ OKUNAMAYAN ALAN: ${k.okunamayanAlanlar.join(", ")} — bu kampanya için o alanlar BİLİNMİYOR: ` +
+                `sayıları 0 varsayma, "ad" listedeyse yazılan metni kampanya adı sanma`
               : "")
         );
         // The announced count comes from the FILTERED list: using `rows.length` would count
@@ -818,20 +888,36 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           else totalCost += cost;
           const israfAdayi = !olculemedi && conv === 0 && cost > 0;
           if (israfAdayi) wastedCost += cost!;
-          const stName = (enums.SearchTermTargetingStatus as any)[r.search_term_view?.status] ?? r.search_term_view?.status;
+          /**
+           * THE STATUS IS READ BY THE SAME RULE AS EVERY OTHER ENUM IN THIS FILE, and the
+           * flag is withheld unless it was genuinely read.
+           *
+           * Writing `zatenDislanmis: false` from an unknown is a positive claim on the one
+           * flag that steers a write: the NEXT STEP instruction reads it and sends the
+           * agent to add_campaign_negative_keywords, spending a human approval on a term
+           * that may already be excluded. FAZ 3 tried to stop that with a SHAPE check
+           * (`typeof stName !== "string"` over `enums[...] ?? status`), and it leaked in two
+           * directions, both measured on this SDK:
+           *
+           *   1. `SearchTermTargetingStatus` maps 0 and 1 BACK to the strings "UNSPECIFIED"
+           *      and "UNKNOWN". Those two members are precisely how the Google Ads API says
+           *      "I cannot express this value in this version" — yet both passed the shape
+           *      check and were answered "not excluded".
+           *   2. The `?? status` fallback handed any UNRECOGNISED string straight through:
+           *      a status arriving as "YAYINDA" is a string, so it too was answered "not
+           *      excluded".
+           *
+           * `enumAdi` resolves a name only from a numeric enum member, or from a name this
+           * SDK maps back to a number; everything else is `undefined`. The enum's own two
+           * unknown members are then excluded BY NAME — not by any broad rule, because the
+           * remaining members (ADDED, EXCLUDED, ADDED_EXCLUDED, NONE) are real readings and
+           * must keep producing a real answer.
+           */
+          const stName = enumAdi(enums.SearchTermTargetingStatus as any, r.search_term_view?.status);
+          const dislanmaBilinmiyor = stName === undefined || stName === "UNSPECIFIED" || stName === "UNKNOWN";
           // The real enum name is ADDED_EXCLUDED; there is no 'EXCLUDED_AND_ADDED' value.
           // Match the exact names, otherwise already-excluded terms keep coming back as
           // waste candidates.
-          /**
-           * The reverse enum lookup yields a STRING only for a status this SDK recognises.
-           * Anything else — a missing `status`, or a value outside the enum — leaves a
-           * non-string here, and that is an UNKNOWN, not a "no". Writing
-           * `zatenDislanmis: false` from an unknown is a positive claim on the one flag
-           * that steers a write: the NEXT STEP instruction reads it and sends the agent to
-           * add_campaign_negative_keywords, spending a human approval on a term that may
-           * already be excluded. The flag is withheld and the unknown is announced instead.
-           */
-          const dislanmaBilinmiyor = typeof stName !== "string";
           const dislanma: { zatenDislanmis?: boolean; dislanmaDurumuBilinmiyor?: boolean } = dislanmaBilinmiyor
             ? { dislanmaDurumuBilinmiyor: true }
             : { zatenDislanmis: stName === "EXCLUDED" || stName === "ADDED_EXCLUDED" };

@@ -214,6 +214,15 @@ export function hashApiKey(plain: string): string {
  * side files then born 0600, and again 0600 on the next open). Hardening the main file the
  * moment it exists therefore covers the files created afterwards; the two names are still
  * listed here because a crashed earlier run can leave 0644 side files on disk.
+ *
+ * WHAT THIS GATE CANNOT REACH: a COPY taken from outside the process. `sqlite3 ".backup"`
+ * creates its destination with SQLite's own 0644, minus the caller's umask — measured, a
+ * new file under systemd's default umask 022 comes back 0644 and a new directory 0755. A
+ * backup carries exactly what the live file carries, so a nightly job written without a
+ * umask hands every local account the whole store while this gate keeps the original shut.
+ * Both backup steps in deploy/README.md and the recovery command anahtarCalisiyorMu() prints
+ * therefore run under `umask 077`, and test/faz5Store.test.ts computes that mode back from
+ * DEPO_DOSYA_MODU rather than matching the digits.
  */
 export const DEPO_DOSYA_MODU = 0o600;
 
@@ -434,8 +443,14 @@ export class UserStore {
      *
      * The fix is a refusal rather than a silent rewrite to `undefined`: a caller that has no
      * subject omits the field, and a caller that believes it HAS one but hands over blank
-     * space is contradicting itself. Today the hosted flow cannot reach this (http.ts drops
-     * a falsy `sub` before calling), so this is defence in depth, not a live hole.
+     * space is contradicting itself.
+     *
+     * THIS IS A LIVE GATE, NOT DEFENCE IN DEPTH. The hosted flow drops an ABSENT and an
+     * EMPTY-STRING `sub` on its own, because http.ts weighs that claim for TRUTHINESS twice
+     * — `if (payload.sub)` as it reads the id_token, `if (!subject)` before it calls here.
+     * A WHITESPACE-ONLY `sub` is truthy: measured, "   " passes both tests and ARRIVES at
+     * this call. Nothing on that path trims it, so the refusal below is the only thing
+     * standing between a tenant key that cannot be READ and a row in the store.
      */
     if (input.subject !== undefined && input.subject.trim() === "") {
       throw new Error(
@@ -668,7 +683,8 @@ export class UserStore {
         `  Açılamayan kayıt: ${kirikIdler.length}/${satirlar.length} — ${kirikListesi}\n` +
         `  Veritabanı: ${this.yol}\n` +
         `  Kurtarma — süreç bu hâlde açılmıyor, bu yüzden onarım SÜREÇ DIŞINDA yapılır:\n` +
-        `    1) Önce yedek:  sqlite3 "${this.yol}" ".backup '${this.yol}.kurtarma-yedegi'"\n` +
+        `    1) Önce yedek — kopya CANLI DEPONUN TÜM SIRLARINI taşır, bu yüzden 0600 doğmalı:\n` +
+        `       sh -c "umask 077; sqlite3 '${this.yol}' \\".backup '${this.yol}.kurtarma-yedegi'\\""\n` +
         `    2) Doğru AEGIS_MASTER_KEY'i geri koyup yeniden başlat — satırlar bununla açılıyorsa iş biter.\n` +
         `    3) Anahtar bulunamıyorsa YALNIZ yukarıda adı geçen satırlar silinir:\n` +
         `       sqlite3 "${this.yol}" "DELETE FROM users WHERE id IN (${idListesi});"\n` +

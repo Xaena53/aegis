@@ -7,8 +7,17 @@
  * normalisation because collapsing whitespace inside them changes what a query matches.
  *
  * Every export here is covered by a direct unit test under test/ — the bulk in
- * test/util.test.ts, the round-3 additions in test/faz3Util.test.ts, which also keeps
- * that sentence honest by walking this file's exports.
+ * test/util.test.ts, the round-3 additions in test/faz3Util.test.ts and the round-5
+ * additions in test/faz5Util.test.ts, which together keep that sentence honest by walking
+ * this file's exports.
+ *
+ * WHAT THAT SENTENCE BINDS: every VALUE export. `export const` and `export class` count
+ * exactly as much as `export function`. The round-3 walker matched `^export (?:async )?function`
+ * only, so ISO_NUMERIC — a value export, read at a refusal site in src/tools/write.ts — sat
+ * with no test of its own while the suite stayed green and the sentence above claimed
+ * otherwise. The round-5 walker PARSES this file instead of grepping it, so a new
+ * `export const` is seen the moment it is written. Type-only exports (RuntimeMode,
+ * RetryOptions) carry no runtime behaviour and are checked by the compiler, not by a test.
  */
 import { errors as adsErrors } from "google-ads-api";
 
@@ -359,8 +368,28 @@ function resolveErrorCodeName(key: string, value: unknown): string {
 const HATA_METNI_TAVANI = 1000;
 
 /**
- * UPSTREAM TEXT MADE SAFE TO PRINT: ANSI removed, control bytes removed, length capped, and
- * the cut ANNOUNCED.
+ * Characters that are INVISIBLE, that REORDER what is printed around them, or that OPEN A
+ * NEW LINE without being a C0 control byte.
+ *
+ * Stripping ESC alone leaves the docblock's own threat standing. U+202E (RIGHT-TO-LEFT
+ * OVERRIDE) reverses the render direction of everything after it, so upstream text can
+ * repaint a refusal as an approval with no escape sequence at all; U+2028 and U+2029 are
+ * line separators a terminal honours, which is exactly how a second line that looks like
+ * ours gets forged; and the Unicode TAGS block (U+E0000–U+E007F) is the known channel for
+ * smuggling instructions that a human reader cannot see but an agent reads.
+ *
+ * Written as Unicode property escapes rather than a hand-kept code-point list, because a
+ * hand-kept list is a list that goes stale: `Cf` is every format character (bidi controls,
+ * zero-widths, soft hyphen, the TAGS block), `Zl`/`Zp` are the two separators above, and
+ * `Default_Ignorable_Code_Point` catches the invisible fillers and variation selectors that
+ * are neither. Measured against the whole set this file must NOT touch — Turkish letters,
+ * accented Latin, CJK, currency signs, space and tab all test false.
+ */
+const GORUNMEZ_VEYA_YONLENDIRICI = /[\p{Cf}\p{Zl}\p{Zp}]|\p{Default_Ignorable_Code_Point}/u;
+
+/**
+ * UPSTREAM TEXT MADE SAFE TO PRINT: ANSI removed, control bytes removed, invisible and
+ * direction-reversing characters removed, length capped, and the cut ANNOUNCED.
  *
  * Text the remote side controls reaches an operator's terminal and the agent's context
  * verbatim. An escape sequence in it is not decoration: "ESC [ 2 J" clears the screen and
@@ -369,11 +398,37 @@ const HATA_METNI_TAVANI = 1000;
  * of what the gate said. Whitespace collapsing does not help: ESC (0x1b) is not `\s`, so
  * every one of those sequences survives a `/\s+/` pass. They have to be removed by name.
  *
+ * ESC IS ONLY HALF OF THAT ATTACK. The same fake line can be painted with no escape byte at
+ * all — see GORUNMEZ_VEYA_YONLENDIRICI above. The output of this function is ONE line of
+ * visible characters; that is the contract its callers' tests already state, and it is now
+ * the contract the code keeps.
+ *
  * The cap is NOT a silent trim. The tail is replaced by a visible marker that says how much
  * was dropped, because a truncated error that looks complete is exactly how a reader
- * concludes the upstream said less than it did.
+ * concludes the upstream said less than it did. `tavan` is therefore VALIDATED rather than
+ * clamped: with a negative or fractional ceiling the marker announced a number that was
+ * simply wrong — `metinTemizle("abcdef", -3)` dropped three characters and reported nine,
+ * and `metinTemizle("abc", 0)` erased the whole message and left only the marker. An
+ * announcement that lies is worse than no announcement, so an unusable ceiling throws
+ * instead of quietly becoming some other number (this repository does not silently correct
+ * values). Callers that compute a ceiling — `tavan - onek.length` — get a refusal at the
+ * moment the arithmetic goes negative, not a false report afterwards.
+ *
+ * IT IS NOT A REDACTOR AND IT CANNOT REPLACE `operatorMetniTemizle` (src/networkTrust.ts).
+ * This function removes bytes that can PAINT a terminal; it does not remove SECRETS. A
+ * token, a full E.164 number or a long opaque id passes through it character for character.
+ * The CAMARA side writes to the operator's stderr through `operatorMetniTemizle`, which
+ * masks the NaC token and the approver's number BY VALUE on top of this cleaning. A round-3
+ * handoff note proposed closing networkTrust's catch blocks with
+ * `console.error(... ${metinTemizle(detay)})` to avoid "a second copy"; following it would
+ * have reopened the contract that no token, no full phone number and no PII ever reaches a
+ * log or a terminal. The two functions are not duplicates: this one is the print guard, that
+ * one is the print guard PLUS the redactor.
  */
 export function metinTemizle(ham: unknown, tavan: number = HATA_METNI_TAVANI): string {
+  if (!Number.isInteger(tavan) || tavan < 1) {
+    throw new Error(`Geçersiz metin tavanı: ${tavan} — 1 veya daha büyük tam sayı olmalı.`);
+  }
   // CSI ("ESC ["), OSC ("ESC ]" up to BEL or ST) and the single-character Fe escapes.
   const ansisiz = String(ham ?? "").replace(
     /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[@-Z\\-_])/g,
@@ -381,11 +436,14 @@ export function metinTemizle(ham: unknown, tavan: number = HATA_METNI_TAVANI): s
   );
   // Whatever else can move a cursor, ring a bell or forge a log line becomes a space. Written
   // as a code-point test rather than a character class so this file carries no raw control
-  // byte of its own (see test/kaynakHijyeni.test.ts).
+  // byte of its own (see test/kaynakHijyeni.test.ts). The second test covers the characters
+  // that do the same job without being control bytes at all: invisible, or reordering.
   let temiz = "";
   for (const ch of ansisiz) {
     const kod = ch.codePointAt(0)!;
-    temiz += kod <= 0x1f || (kod >= 0x7f && kod <= 0x9f) ? " " : ch;
+    const zararli =
+      kod <= 0x1f || (kod >= 0x7f && kod <= 0x9f) || GORUNMEZ_VEYA_YONLENDIRICI.test(ch);
+    temiz += zararli ? " " : ch;
   }
   temiz = temiz.replace(/ {2,}/g, " ").trim();
   if (temiz.length <= tavan) return temiz;

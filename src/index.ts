@@ -92,13 +92,30 @@ function operatorOzeti(e: unknown): string {
  * Unexpected errors go to stderr, never stdout — stdout is the MCP JSON-RPC channel. Only the
  * cleaned summary goes out; see operatorOzeti above for what used to go out instead.
  *
- * A rejection nobody awaited does NOT take the process down, and the asymmetry with the handler
- * below is deliberate rather than an oversight: an unawaited side promise — a log write, a
- * fire-and-forget refresh — says nothing about the state of the mutation path, while an
- * exception that escaped every tool wrapper does. Killing the server over the first would be an
- * availability cost bought with no safety.
+ * A REJECTION NOBODY AWAITED CLOSES THE DOOR TOO. The two handlers behave alike; the text that
+ * stood here used to call that asymmetry deliberate ("an unawaited side promise says nothing
+ * about the state of the mutation path") and both halves of the excuse were wrong.
+ *
+ * MEASURED, NOT ARGUED (Node v26.7.0, this entry point): with NO handler installed an unhandled
+ * rejection is FATAL — the process dies with exit 1. A handler that only logs therefore does not
+ * preserve a status quo, it DOWNGRADES Node's own fail-closed default into fail-open, and it was
+ * this file that did the downgrading while calling it a design.
+ *
+ * NOR IS WHAT ARRIVES HERE ONLY A SIDE PROMISE. src/http.ts writes the counter-example itself,
+ * about a mutation path: "a rejection from an async function that is returned without being
+ * awaited never reaches this try/catch. It escapes to the top level." A forgotten `await` on a
+ * tool path lands exactly here, with the mutation half-applied and nothing knowing how far it
+ * got — the same undefined state the block below refuses to keep serving on. FAIL-CLOSED does
+ * not get weaker one event name over.
+ *
+ * The exit is right for THIS entry point and wrong for the hosted one, for the reason spelled
+ * out in the next block; the diagnostic is written before the exit for the reason spelled out
+ * there too.
  */
-process.on("unhandledRejection", (e) => console.error(`[aegis] unhandledRejection: ${operatorOzeti(e)}`));
+process.on("unhandledRejection", (e) => {
+  console.error(`[aegis] unhandledRejection: ${operatorOzeti(e)}`);
+  process.exit(1);
+});
 /**
  * AN UNCAUGHT EXCEPTION CLOSES THE DOOR — it does not become a warning we keep serving after.
  *

@@ -284,10 +284,13 @@ export function registerMetaTools(server: McpServer, getCtx: ContextProvider): v
       title: "Meta kampanya bütçesini değiştir",
       description:
         "Meta kampanyasının günlük bütçesini değiştirir. ARTIŞ insan onayı ve ağ doğrulaması " +
-        "ister (orta risk); azaltma onay istemez. Kampanya düzeyinde bütçesi olmayan " +
-        "(bütçe reklam setlerinde olan) kampanyalarda karşılaştırılacak bir kampanya bütçesi " +
-        "yoktur: orada azaltma kısayolu YOKTUR, her istek onay + ağ doğrulamasından geçer. " +
-        "Tavan üstü değer reddedilir. " +
+        "ister (orta risk); azaltma, okuma düğümü KAMPANYA olarak doğrularsa onay istemez. " +
+        "Kampanya düzeyinde bütçesi olmayan (bütçe reklam setlerinde olan) kampanyalarda " +
+        "karşılaştırılacak bir kampanya bütçesi yoktur: orada azaltma kısayolu YOKTUR, her " +
+        "istek onay + ağ doğrulamasından geçer. Tavan üstü değer reddedilir. Okuma, verilen " +
+        "kimliğin bir KAMPANYA olduğunu gözlemezse (reklam seti/reklam kimliği, ya da düğüm " +
+        "türünü hiç bildirmeyen kanal) istek AZALTMA olsa bile reddedilir: hiçbir şey " +
+        "yazılmaz, insana sorulmaz. " +
         "KULLAN: kullanıcı Meta kampanyasının günlük bütçesini yükseltmek ya da düşürmek " +
         "istediğinde. Google Ads bütçesi için update_campaign_budget kullan.",
       annotations: { readOnlyHint: false, destructiveHint: true },
