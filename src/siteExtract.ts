@@ -390,9 +390,20 @@ export function sniffCharset(contentTypeHeader: string | null, bodyPrefix: strin
  *
  * Expanding is required because the embedded-IPv4 recognitions below cannot be found by
  * character comparison in compressed notation ("::ffff:7f00:1"). `::` may appear at most
- * once; a string containing it twice is not valid IPv6 and counts as unrecognised (fail
- * closed: an unrecognised address is not passed as "public" — the caller sends it to DNS,
- * and if it does not resolve there the request is refused).
+ * once; a string containing it twice is not valid IPv6 and counts as unrecognised.
+ *
+ * `undefined` means UNRECOGNISED, and isPrivateHostname turns that into a REFUSAL on the
+ * spot — it does not hand the address on as "public".
+ *
+ * RETRACTED CLAIM: this comment used to justify returning an unrecognised address as public
+ * by asserting that resolution downstream would catch it — that the caller hands the name on
+ * and a name that fails to resolve is refused there. Measured, that is false for exactly the
+ * addresses at issue. assertPublicHost (tools/site.ts:102-103) computes `net.isIP(cozulecek)`
+ * and RETURNS EARLY for every IP literal — `net.isIP("fec0::1") === 6` — so the resolver step
+ * never runs for one. site.test.ts pins that early return from the other side ("MEŞRU IPv6
+ * sayfası çalışır": the resolver is wired to throw, and the test goes red if it is called at
+ * all). isPrivateHostname is the LAST WORD for an IPv6 literal, so the fail-closed decision
+ * has to be made HERE and nowhere else.
  */
 function hextetleriAc(ham: string): number[] | undefined {
   /**
@@ -465,19 +476,71 @@ function gomuluIPv4(v6: string): string | undefined {
  * nothing in return.
  */
 export function isPrivateHostname(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/\.$/, "");
+  /**
+   * THE BRACKETS COME OFF FIRST, before any comparison below runs.
+   *
+   * `new URL("http://[::]/").hostname` is "[::]" — WITH the brackets (measured in Node; the
+   * same fact is written down at tools/site.ts:94). Stripping them further down, inside the
+   * IPv6 branch, made the `h === "::"` guard on the next line DEAD for every host that
+   * arrived through a URL: "[::]" matched no literal, fell into the IPv6 branch, matched
+   * neither ::1 nor fc00::/7 nor fe80::/10, carried no embedded IPv4, and was returned as
+   * PUBLIC. connect() to the unspecified address lands on loopback, so analyze_site could be
+   * pointed at Aegis' own local HTTP surface and hand its body back to the agent.
+   *
+   * Order matters: the trailing dot goes before the brackets. The other way round, "[::]."
+   * would lose only its opening bracket (`\]$` cannot match with the dot in the way).
+   */
+  const h = hostname.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
   if (h === "0.0.0.0" || h === "::") return true;
 
   // IPv6
   if (h.includes(":")) {
-    const v6 = h.replace(/^\[|\]$/g, "");
+    const v6 = h; // the brackets are already off — see the note at the top of the function
     if (v6 === "::1") return true;
+    /**
+     * The unspecified address in EVERY spelling — "::", "0:0:0:0:0:0:0:0", "::0.0.0.0" —
+     * not only the one the literal comparison above happens to catch. This mirrors the IPv4
+     * side, where 0.0.0.0 is refused twice (as a literal, then again by `a === 0`): one
+     * address must not become a pass because of how it was written.
+     */
+    const hextetler = hextetleriAc(v6);
+    if (hextetler && hextetler.every((x) => x === 0)) return true;
     if (/^f[cd]/i.test(v6)) return true; // fc00::/7 unique-local
     if (/^fe[89ab]/i.test(v6)) return true; // fe80::/10 link-local
     const gomulu = gomuluIPv4(v6);
     if (gomulu) return isPrivateHostname(gomulu); // mapped / 6to4 / NAT64
-    return false;
+
+    /**
+     * FAIL-CLOSED DEFAULT — an ALLOWLIST, not a blocklist.
+     *
+     * This branch used to end in `return false`: anything the handful of patterns above did not
+     * happen to name came back PUBLIC. That is the inverse of the IPv4 branch, which closes
+     * whole classes with one rule (`a >= 224` covers multicast, 240/4 reserved and the
+     * broadcast address) and refuses an out-of-range quad outright. Measured on the old
+     * default, validateAnalyzeUrl returned null (ACCEPTED) for all of these:
+     *   fec0::1     site-local (RFC 3879 deprecated, still routed on plenty of LANs)
+     *   ff02::1 / ff01::1 / ff05::c   multicast — the IPv6 twin of the `a >= 224` rule
+     *   ::7f00:1    IPv4-COMPATIBLE ::127.0.0.1 — connect() lands on loopback, exactly the
+     *               hole `::ffff:7f00:1` was closed for, one spelling over
+     *   100::1      RFC 6666 discard-only
+     *   ::2, ::ffff:0:7f00:1, 0100::1, 5f00::1  reserved / unassigned space
+     * The file's own header says multicast and reserved space "host no legitimate page from
+     * outside either; letting them through widens the gate for nothing in return" — that
+     * sentence had no IPv6 counterpart until here.
+     *
+     * Every globally routable IPv6 address in use is assigned out of 2000::/3 (top three
+     * bits 001), so the allowlist costs no reachable page: 2606:4700::1111, 2a00::/…,
+     * 2404::/… all pass. Everything outside it — including a string that is not valid IPv6
+     * at all, for which hextetleriAc returns undefined — is refused. Unknown is not public.
+     *
+     * The embedded-IPv4 forms are decoded ABOVE this line on purpose: 64:ff9b::808:808 sits
+     * OUTSIDE 2000::/3 as written, yet it goes to 8.8.8.8 — and where an address goes, not
+     * how it is spelled, is what the IPv4 rules decide. Run in the other order, this
+     * allowlist would refuse legitimate NAT64 traffic.
+     */
+    if (!hextetler) return true;
+    return (hextetler[0]! & 0xe000) !== 0x2000;
   }
 
   // IPv4 literal
