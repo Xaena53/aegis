@@ -1,0 +1,50 @@
+# Secret-scanning configuration.
+#
+# The default rule set is kept in full — this file only ADDS an allowlist, it disables
+# nothing. `useDefault = true` is what pulls in gitleaks' own rules; without it this file
+# would REPLACE them and the scan would go quiet for the wrong reason.
+title = "Aegis"
+
+[extend]
+useDefault = true
+
+# ── Fabricated credentials that tests exist to prove get redacted ────────────────
+#
+# Several tests assert that a secret-shaped string never reaches stderr, the agent channel
+# or a report. To be worth anything, the fixture has to LOOK like a credential — that is the
+# whole point of the test — so the scanner sees a high-entropy token next to the word
+# "token" and reports it. It is right to look; it is wrong about these.
+#
+# THE ALLOWLIST IS DELIBERATELY NARROW. It does not exempt `test/` as a directory — a real
+# key pasted into a test file must still fail the build.
+#
+# There are two kinds of fixture and they are allowed for different reasons.
+#
+# 1. VALUE fixtures. These only need to be a distinctive configuration value, so they all
+#    carry an explicit marker: TEST-ONLY- (or TEST_ONLY_ where an underscore reads better).
+#    One rule covers every one of them, today and later. A fixture that FORGETS the marker
+#    is not allowlisted and correctly breaks the build — which is the right default, because
+#    what should happen to a forgotten fixture is exactly what should happen to a real leak.
+#
+#    The marker was not invented here: `TEST-ONLY-token` already existed in the suite. It
+#    became the single convention after gitleaks stopped two pushes in a row, each time over
+#    a different hand-written fixture. Adding one more pattern per round would have grown a
+#    list nobody could vouch for.
+#
+# 2. SHAPE fixtures. A few tests exercise the redaction SHAPE rules — the patterns that catch
+#    a credential nobody configured. Those fixtures cannot carry a marker, because the rule
+#    under test matches on the shape itself. They are listed individually, and each is a
+#    shape no issued credential has: real Stripe live keys use underscores and 24+ mixed-case
+#    characters, and no Anthropic key ends in a Turkish word.
+[allowlist]
+description = "Testlerin bilerek uydurdugu sahte kimlik bilgileri (redaksiyonu kanitlamak icin)"
+regexTarget = "match"
+regexes = [
+  # 1 — value fixtures, by marker
+  '''TEST[-_]ONLY[-_][A-Za-z0-9_-]+''',
+  # 2 — shape fixtures, individually. The trailing word boundary matters: without it each
+  #     pattern matches a PREFIX, so a longer real key that happens to begin the same way
+  #     would be exempted along with the fixture.
+  '''sk-live-[A-Z0-9]{3,12}\b''',
+  '''sk-ant-api03-(?:gizli|kacak-parca)\b''',
+]
