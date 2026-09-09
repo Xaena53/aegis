@@ -104,12 +104,14 @@ function cdataSiyir(inner: string): string {
  * the bound is playing the same race one more round; instead, the delimiter's NAME is
  * neutralised — leaving no variant of writing it at all.
  *
- * asciiLower is used, NOT toLowerCase(): Turkish 'İ' expands into two code points, the string
- * grows, and the indices lose their alignment with the raw text.
+ * toLowerCase() is NOT used for the search copy: Turkish 'İ' expands into two code points,
+ * the string grows, and the indices lose their alignment with the raw text — the output is
+ * sliced out of `metin`, so a fold that changes the length cuts in the wrong place. The fold
+ * has to reach further than asciiLower does, though; see ayracKatla.
  */
 const AYRAC_ADI = "site-verisi";
 export function ayracTemizle(metin: string): string {
-  const lower = asciiLower(metin);
+  const lower = ayracKatla(metin);
   let out = "";
   let i = 0;
   for (;;) {
@@ -122,6 +124,33 @@ export function ayracTemizle(metin: string): string {
     i = s + AYRAC_ADI.length;
   }
   return out;
+}
+
+/**
+ * LENGTH-PRESERVING case folding for the DELIMITER SEARCH ONLY.
+ *
+ * WHY more than asciiLower: the cleaner is deliberately case-insensitive, but asciiLower
+ * folds nothing outside [A-Z], and the product's whole user-facing surface is Turkish — so
+ * the Turkish spelling of the delimiter is the FIRST one an attacker reaches for. Measured
+ * on the old code, the ASCII spelling `</SITE-VERISI>` was neutralised, while the SAME
+ * delimiter spelled with Turkish 'İ' came back BYTE FOR BYTE UNCHANGED; the dotless 'ı'
+ * spelling escaped in the same way. A page could therefore close the block visually from
+ * INSIDE the block — the exact fake-frame attack this cleaner exists to stop.
+ *
+ * 'İ' (U+0130) and 'ı' (U+0131) are SINGLE UTF-16 code units, so mapping them onto "i" keeps
+ * `lower.length === metin.length` and every index still points at the same character in the
+ * raw text. That is the invariant toLowerCase() breaks (it yields TWO code points for 'İ'),
+ * and the reason the fold is written by hand rather than delegated.
+ *
+ * NOT folded into asciiLower itself, deliberately. asciiLower also drives findTags /
+ * findElements / removeBetween, and there the same fold would be a LOOSENING: measured on a
+ * variant that folded inside asciiLower, a <TITLE> tag whose 'I' was written as Turkish 'İ'
+ * — which no browser parses as a title — had its body extracted into PageFacts.title, i.e.
+ * attacker prose landing in the field the agent trusts most. HTML tag names are ASCII; the
+ * delimiter's audience is a Turkish-reading agent. Two questions, two folds.
+ */
+function ayracKatla(s: string): string {
+  return asciiLower(s).replace(/[İı]/g, "i");
 }
 
 /** Attribute value from a tag — closed by the SAME quote that opened it, so a nested ' or " does not split the value. */
@@ -148,7 +177,9 @@ const MAX_TAG_LEN = 8192; // skip a single absurdly long (hostile) tag
  * `toLowerCase()` MUST NOT be used here: Turkish 'İ' (U+0130) expands to two code
  * points ("i" plus a combining dot) and the string grows, so indices drift out of
  * alignment with the raw HTML and every slice shifts by one character, leaking a
- * stray '<' into the title. HTML tag names are ASCII anyway, so this is enough.
+ * stray '<' into the title. HTML tag names are ASCII anyway, so this is enough HERE. It is
+ * NOT enough for the delimiter search, whose audience is a Turkish-reading agent rather than
+ * an HTML parser — that path folds further, see ayracKatla.
  */
 function asciiLower(s: string): string {
   return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));

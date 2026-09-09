@@ -445,7 +445,22 @@ const sessions = new Map<string, Session>();
 /** Sessions being established but not yet registered — closes the per-user cap race. */
 const pendingSessions = new Map<number, number>();
 
-/** Drops expired sessions and OAuth state (memory-exhaustion DoS protection). */
+/**
+ * DROPS WHAT HAS EXPIRED. Every collection here is fed by a path that runs before, or
+ * instead of, real work, so the sweep is what turns their ceilings into something other
+ * than "the process's memory": idle MCP `sessions`, the OAuth surface's `oauthPencereleri`,
+ * the refused-request `kotuIstekPencereleri`, the already-spent `harcananState`, and the
+ * per-user counters behind `limiter`.
+ *
+ * "OAuth STATE" here means the SPENT-state record, not a pending-state pool. The state
+ * itself is stateless — a signed cookie (signState / verifyState) — and the only thing kept
+ * server-side is the note that a given state has already been spent. The pending pool was
+ * deleted when the cookie replaced it, and for several commits afterwards this line still
+ * promised a sweep of "OAuth state" that by then happened nowhere: the sentence outlived
+ * its code. test/faz4Http.test.ts now ties the two together in BOTH directions — the names
+ * backticked above are read as the list of swept collections, so dropping a sweep, or
+ * adding one silently, fails there.
+ */
 function sweep(): void {
   const now = Date.now();
   for (const [sid, s] of sessions) {
@@ -459,8 +474,8 @@ function sweep(): void {
     }
   }
   // Expired windows are dropped here as well as when they are next touched: a bucket that
-  // is never asked about again must not stay resident (both maps are fed by callers who
-  // never authenticate).
+  // is never asked about again must not stay resident — and two of these three maps are fed
+  // by callers who never authenticate.
   for (const [k, p] of oauthPencereleri) if (now - p.start >= PENCERE_MS) oauthPencereleri.delete(k);
   for (const [k, p] of kotuIstekPencereleri) if (now - p.start >= PENCERE_MS) kotuIstekPencereleri.delete(k);
   for (const [k, bitis] of harcananState) if (now >= bitis) harcananState.delete(k);
@@ -1238,8 +1253,9 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
  * testable and has to be read from one place. If it blocks, the process does NOT listen at
  * all: an unencrypted public address is accepted only when AEGIS_ALLOW_PLAINTEXT approves it
  * EXPLICITLY. The warning does not fall silent even when PUBLIC_URL is https — because the
- * listener itself is plain HTTP, and when it is published on 0.0.0.0
- * ters vekil atlanabilir hâle gelir.
+ * listener itself is plain HTTP, and when it is published on 0.0.0.0 the reverse proxy in
+ * front of it becomes bypassable: anything that can reach the machine on this port talks to
+ * the server directly, in the clear, and the TLS the https URL advertises never happens.
  */
 const BIND = process.env.AEGIS_BIND?.trim() || "0.0.0.0";
 const duzMetin = duzMetinKarari({

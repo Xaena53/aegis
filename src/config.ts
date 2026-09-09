@@ -34,7 +34,13 @@ export interface AegisConfig {
   maxDailyBudget: number;
   /** Nokia Network-as-Code application key; absent = network verification off. */
   nacToken?: string;
-  /** E.164 number of the human whose approval the network verifies. */
+  /**
+   * The E.164 number of the human whose approval the network verifies. Unlike the simulation
+   * channels below, this one IS validated while the environment is read: an unreadable value
+   * throws and the server does not start (see parseApproverPhone). An ABSENT or empty value
+   * is a different case and keeps the documented default (undefined) — the gate then refuses
+   * on its own, because a missing approver is not a verified one.
+   */
   approverPhone?: string;
   /** SIM-swap lookback window for high-risk actions (hours). */
   simSwapWindowHours: number;
@@ -53,8 +59,7 @@ export interface AegisConfig {
    * The SIMULATION channel ("temiz" | "degisti"): when it is set, a simulated channel is
    * used instead of the real NaC SDK, so a demo runs without a token. The value is NOT
    * validated here: a malformed environment value must not bring the server down at
-   * startup, and is refused at decision time with a
-   * reddedilmelidir (bkz. networkTrust.ts, fail-closed).
+   * startup, and is refused at decision time by networkTrust.ts (fail-closed).
    */
   nacSimulate?: string;
   /**
@@ -150,7 +155,7 @@ export function nacConfigFromEnv(): Pick<
   return {
     stepUp: parseBool(process.env.AEGIS_STEPUP, false, "AEGIS_STEPUP"),
     nacToken: process.env.AEGIS_NAC_TOKEN?.trim() || undefined,
-    approverPhone: process.env.AEGIS_APPROVER_PHONE?.trim() || undefined,
+    approverPhone: parseApproverPhone(process.env.AEGIS_APPROVER_PHONE),
     // Passed through raw on purpose; "temiz"/"degisti" is validated at decision time.
     nacSimulate: process.env.AEGIS_NAC_SIMULATE?.trim() || undefined,
     // Same reasoning: "dogrulandi"/"uyusmadi" is validated at decision time.
@@ -372,6 +377,50 @@ function parseBudgetCap(raw: string | undefined): number {
     );
   }
   return n;
+}
+
+/**
+ * THE APPROVER'S NUMBER IS REFUSED WHEN IT CANNOT BE READ — the budget cap's rule, applied
+ * to the other half of the network gate.
+ *
+ * The value used to be trimmed and nothing else, so ANY non-empty string became "the
+ * approver". MEASURED with AEGIS_APPROVER_PHONE="9" and AEGIS_NAC_SIMULATE=temiz: the gate
+ * PASSED and wrote an evidence line reading "SIM değişimi yok (son 24 saat, ***)" — telling
+ * the human that the approver's line had been checked, while what was configured is not a
+ * phone number at all. "TEST" behaved identically, and the local spelling "0555 111 22 33"
+ * (no country code) travelled through as "0555********33". The gate's own fail-closed rule —
+ * an EMPTY number is a refusal (networkTrust.ts) — was therefore defeated by any typo that
+ * leaves one character behind.
+ *
+ * On the real channel the same value travels to CAMARA as `phoneNumber`, and a stub one also
+ * shreds the operator's diagnostic: with "9" configured, `Status 429 … retry after 90 s` came
+ * out as `Status 42*** … retry after ***0 s` (see GIZLI_ASGARI_UZUNLUK in networkTrust.ts).
+ * The shape accepted here is at least 8 characters long — exactly that floor.
+ *
+ * NO SILENT REPAIR: "+90 555 111 22 33" is not quietly squeezed into digits. A value the
+ * operator did not write is a value nobody verified, and the number decides WHOSE line the
+ * network is asked about; the request is refused with the expected shape named instead.
+ *
+ * An ABSENT or empty variable is a different case and keeps the documented default: that is
+ * an operator who did not configure the network gate, not one who mistyped. With a token or a
+ * simulation channel set, the gate refuses on its own — absence never reads as "verified".
+ */
+function parseApproverPhone(raw: string | undefined): string | undefined {
+  const t = raw?.trim();
+  if (!t) return undefined;
+  // E.164: a "+", a country code that cannot start with 0, and 7-15 digits in total.
+  if (!/^\+[1-9]\d{6,14}$/.test(t)) {
+    // Same reasoning as parseBudgetCap: the raw value never reaches the message — a token or
+    // someone else's number pasted into the wrong slot must not travel out with the error.
+    throw new Error(
+      `AEGIS_APPROVER_PHONE geçersiz (beklenen: E.164 — '+' ile başlar, ülke kodu dahil 7-15 ` +
+        `rakam; boşluk, parantez, tire ve baştaki 0 yazılmaz — örn. +905551112233). ` +
+        `Düzeltilmeden sunucu açılmaz: numara olmayan bir değer sessizce kabul edilseydi, ağ ` +
+        `kapısı onaylayıcının hattını sorgulamadan "doğrulandı" kanıtı yazardı. ` +
+        `Değer sır ihtimaline karşı gösterilmiyor.`
+    );
+  }
+  return t;
 }
 
 /**
