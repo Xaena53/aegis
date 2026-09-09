@@ -17,9 +17,12 @@
  *     5000-character body printed whole, at 5047 characters.
  *   - approval.ts: only the byte-for-byte E.164 spelling of the approver's number was masked,
  *     so five of six spellings a CAMARA 4xx really produces went to stderr in full.
- *   - a stub AEGIS_APPROVER_PHONE ("9" — config.ts only trims the value) shredded the
- *     diagnostic instead of the number: `Status 429 … retry after 90 s` came out as
- *     `Status 42*** … retry after ***0 s`.
+ *   - a stub secret ("9") shredded the diagnostic instead of the number: `Status 429 … retry
+ *     after 90 s` came out as `Status 42*** … retry after ***0 s`. config.ts REFUSES a
+ *     non-E.164 AEGIS_APPROVER_PHONE today, so the environment no longer delivers a stub
+ *     number — but AEGIS_NAC_TOKEN is still only trimmed there, and AgAyar is a plain object
+ *     an in-process caller builds by hand (this file does exactly that), so the floor under
+ *     the by-value redaction still carries weight.
  *
  * WHY THE LEAK TEST IS NOT A DIGITS-ONLY COMPARISON — a lesson paid for once in this file.
  * The previous version asserted `metin.replace(/\D/g,"").includes("905551112233")`, and for
@@ -351,10 +354,13 @@ test("SIZINTI SENTİNELİ: dev upstream gövdesi stderr'i basmaz — satır tava
 
 /**
  * OVER-REDACTION, DIRECTION ONE: a stub configured value must not shred the diagnostic.
- * src/config.ts only trims AEGIS_APPROVER_PHONE — there is no E.164 validation — so a
- * one-character value really can reach the cleaner, and without a floor its digits match
- * everywhere. Measured before the floor: `Status 42***. Body: rate limited, retry after ***0
- * s`. What the operator lost there was the HTTP status code, not a phone-shaped fragment.
+ * src/config.ts now REFUSES a non-E.164 AEGIS_APPROVER_PHONE, so the ENVIRONMENT can no longer
+ * deliver the value below — but AgAyar is a plain object and the call two lines down builds one
+ * by hand, exactly as any other in-process caller may; AEGIS_NAC_TOKEN is only trimmed in
+ * config.ts and reaches the same floor. A one-character value therefore still gets to the
+ * cleaner, and without a floor its digits match everywhere. Measured before the floor:
+ * `Status 42***. Body: rate limited, retry after ***0 s`. What the operator lost there was the
+ * HTTP status code, not a phone-shaped fragment.
  */
 test("SIZINTI SENTİNELİ: kısa/bozuk AEGIS_APPROVER_PHONE tanı satırını PARÇALAMAZ", async () => {
   temizKanallar();

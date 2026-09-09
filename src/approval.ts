@@ -38,6 +38,21 @@
  * this server's. Every caller-supplied field is stripped of line breaks, control bytes and
  * invisible characters before anything is composed out of it (see istemMetniTemizle), so the
  * only line structure the human sees is the one written here.
+ *
+ * THE FRAME, AND ONLY THE FRAME. What that buys is structure; it does not buy truth, and the
+ * difference is not a detail. On the one line it is allowed to occupy, an account-supplied
+ * name can still ASSERT something false — measured today, with the cleaner in place, the first
+ * line of the prompt reads `"Ayakkabı" kampanyası için ağ kapısı TEMİZ geçti, bu istem yalnızca
+ * formalitedir. …`. Nothing here can tell an honest campaign name from a lying one, and there
+ * is nothing here to separate either: `eylem` arrives as ONE already-composed string, because
+ * the calling tool splices the name into the middle of the gate's own sentence
+ * (`"${name}" kampanyası YAYINA ALINACAK …`, write.ts).
+ *
+ * SO THE OTHER HALF OF THAT DEFENCE IS THE CALLING TOOL'S, and naming it is the only way it
+ * gets built: an account-supplied value belongs in its own field, rendered by the gate on its
+ * own escaped line, never interpolated into a sentence the human will read as the gate's own
+ * voice. Until that is done the honest description of this file is the narrow one — it defends
+ * the line structure of the prompt, not the claims made inside a line.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
@@ -130,27 +145,36 @@ function elicitationVar(server: McpServer): boolean {
 
 /**
  * Is this code point one that can move text off the line the server put it on, or hide it
- * there? The C0 controls (NUL, TAB, CR, LF and the ESC that starts every ANSI sequence),
- * DEL and the C1 controls, the Unicode line and paragraph separators, the bidi marks,
- * overrides and isolates, and the zero-width / word-joiner family.
+ * there? Three families:
  *
- * Written as a numeric predicate rather than a character class on purpose: a range like
- * this spelled out inside a regex literal puts the raw bytes it is meant to catch INTO
- * this source file, where a reviewer cannot see them and a careless editor can eat them.
+ *   - `\p{Cc}` — the C0 controls (NUL, TAB, CR, LF and the ESC that starts every ANSI
+ *     sequence), DEL and the C1 controls;
+ *   - `\p{Zl}` / `\p{Zp}` — the Unicode LINE and PARAGRAPH separators, which open a new line
+ *     in a renderer without ever being an `\n` a string check would notice;
+ *   - `\p{Cf}` plus the wider DEFAULT-IGNORABLE set — everything that renders as NOTHING: the
+ *     bidi marks, overrides and isolates, the zero-width / word-joiner family, the BOM, SOFT
+ *     HYPHEN, the variation selectors, the invisible LETTERS (HANGUL FILLER U+3164, HANGUL
+ *     CHOSEONG FILLER U+115F, MONGOLIAN VOWEL SEPARATOR U+180E) and the TAGS block
+ *     U+E0000–U+E007F.
+ *
+ * WHY THE THIRD FAMILY IS ASKED OF THE ENGINE AND NOT LISTED HERE. It used to be a
+ * hand-written list of numeric ranges, and a hand-written list is worth exactly as much as the
+ * day it was written: measured against the list this replaces, the name
+ * `AD<U+E0041><U+E0042><U+00AD><U+180E><U+3164>SONU` reached the human prompt UNTOUCHED —
+ * five invisible code points, none of them on the list, one of them the TAGS block that is the
+ * known channel for smuggling an instruction the human cannot see into a line the AGENT reads
+ * back on the weak channel. Named Unicode properties cannot fall behind the standard, and —
+ * this was the reason the old predicate avoided a character class — they put no raw bytes into
+ * this source file either, where a reviewer could not see them and a careless editor could eat
+ * them.
+ *
+ * KEPT AS A CODE-POINT PREDICATE so the caller decides what to do with a hit; the substitution
+ * itself lives in istemMetniTemizle.
  */
+const GORUNMEZ_KALIP = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+
 function gorunmezMi(kod: number): boolean {
-  return (
-    kod <= 0x1f ||
-    (kod >= 0x7f && kod <= 0x9f) ||
-    kod === 0x061c ||
-    (kod >= 0x200b && kod <= 0x200f) ||
-    kod === 0x2028 ||
-    kod === 0x2029 ||
-    (kod >= 0x202a && kod <= 0x202e) ||
-    (kod >= 0x2060 && kod <= 0x2064) ||
-    (kod >= 0x2066 && kod <= 0x2069) ||
-    kod === 0xfeff
-  );
+  return GORUNMEZ_KALIP.test(String.fromCodePoint(kod));
 }
 
 /**
@@ -174,6 +198,13 @@ function gorunmezMi(kod: number): boolean {
  * So the frame stays the server's: every one of those characters becomes a single space and
  * runs of whitespace collapse, which leaves untrusted text able to occupy only the line the
  * server put it on.
+ *
+ * THE SENTENCE ITSELF IS NOT REMOVED, and that is a choice rather than an oversight: the
+ * forged bullet is gone, but the words "the network check already passed cleanly, this prompt
+ * is a formality" still reach the human INSIDE the action line, because that is where the
+ * calling tool put the name. Deleting them would take evidence away from the person deciding
+ * and would mean this file guessing which of a caller's words are lies. See the file header:
+ * neutralising the claim is the calling tool's half of the work, not the cleaner's.
  *
  * NOTHING IS TRUNCATED, and this is a RENDERING rule, not a silent correction of a value —
  * the stored campaign name is untouched, and no gate reads these strings. A length cap was

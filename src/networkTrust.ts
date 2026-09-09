@@ -1414,7 +1414,13 @@ function desenKac(s: string): string {
  * came out as `Status 42***. Body: rate limited, retry after ***0 s` — what the operator lost
  * was the HTTP status code, not the "phone-shaped fragment" the comment had promised. Nothing
  * is loosened by it: rule 3 below still masks any full E.164 that appears in the text.
- * src/config.ts only trims AEGIS_APPROVER_PHONE, so a short value really can reach here.
+ * WHY IT IS STILL LOAD-BEARING, now that src/config.ts REFUSES a non-E.164
+ * AEGIS_APPROVER_PHONE (parseApproverPhone): the environment can no longer hand over a stub
+ * NUMBER, but two doors are still open and both were measured. AEGIS_NAC_TOKEN is only
+ * trimmed in config.ts, so a one-character token reaches the `jeton` branch below; and AgAyar
+ * is a plain object, so any in-process caller — this module's own tests included — can pass
+ * `{approverPhone: "9"}` straight to agDogrula. Remove the floor and either one shreds the
+ * diagnostic exactly as measured above.
  */
 const GIZLI_ASGARI_UZUNLUK = 8;
 

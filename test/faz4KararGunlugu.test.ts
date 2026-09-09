@@ -324,8 +324,14 @@ test("hiçbir JSDoc bloğu ÖKSÜZ değil (bir bloğun ardından doğrudan başk
  * Türkçe'ye özgü harf VE İngilizce'de bulunmayan Türkçe kelime/ek kalıbı.
  *
  * KAPSAM YALNIZ YORUMLAR. Ürün metinleri (console.error içindeki Türkçe uyarılar) TÜRKÇE
- * KALIR ve kod satırında dururlar; bu ayrım aşağıdaki kendi kendini sınama testinde
- * çivilenir, yoksa "kod satırını atla" muafiyeti gözcüyü delen bir kapıya dönüşürdü.
+ * KALIR ve dize gövdelerinde dururlar. Muafiyet ARTIK BİR SINIF DEĞİL: "tırnak gören satırı
+ * at" kuralı ölçülerek delik çıktı (bu tarayıcının KENDİ 'yakalanmalı' örneği, tırnaklı bir
+ * kod satırının kuyruğuna konduğunda görünmez kalıyordu). Yerine dize/şablon/regex GÖVDELERİ
+ * tek tek maskeleniyor ve geriye kalan taranıyor; blok yorumları da satır-üstü bir durum
+ * makinesiyle izleniyor, böylece yıldızsız `/* ... *\/` bloğunun iç satırları da yorumdur.
+ * Bu ayrımın darlığı aşağıdaki kendi kendini sınama testinde ÖLÇÜLEN kör noktalarla
+ * çivilenir. Yedek halka: test/faz5KararGunlugu.test.ts hiç yorum ayıklamadan, dosyanın HER
+ * satırı üzerinden aynı iddiayı kurar.
  */
 const TURKCE_HARF = /[çğıöşüÇĞİÖŞÜâîû]/;
 /** İngilizce'de karşılığı olmayan, bu programın çeviri kalıntılarında GEÇEN kelimeler. */
@@ -358,24 +364,103 @@ const TURKCE_KELIMELER = new Set([
 /** Türkçe olumsuzluk eki (-maz/-mez): gelecekteki yarım çevirilerin en olası kuyruğu. */
 const OLUMSUZ_EK = /^[a-zçğıöşü]{4,}m[ae]z$/;
 
-/** Satırın YORUM olan kısmı ("" ise satır kod). Tek muafiyet budur ve dardır: satırın
- * yorum olmayan yarısı. */
-function yorumKismi(satir: string): string {
+/** Whether a `/` at index `i` can legally OPEN a regex literal instead of being a division:
+ * only right after an operator, an opening bracket, or at the start of the line. */
+function regexBaslayabilir(satir: string, i: number): boolean {
+  const onceki = satir.slice(0, i).replace(/\s+$/, "");
+  return onceki === "" || /[(,=:[!&|?{};+\-*%~^<>]$/.test(onceki);
+}
+
+/**
+ * Index just past the literal that OPENS at `i` — a string, a template or a regex. An
+ * unterminated literal consumes the rest of the line: that is the safe direction, because the
+ * scan then reports nothing for the line instead of reading string content as a comment.
+ */
+function literalAtla(satir: string, i: number): number {
+  const kapanis = satir[i];
+  let j = i + 1;
+  while (j < satir.length) {
+    const c = satir[j];
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (kapanis === "/" && c === "[") {
+      // A regex character class may hold an unescaped '/'.
+      while (j < satir.length && satir[j] !== "]") j += satir[j] === "\\" ? 2 : 1;
+      j++;
+      continue;
+    }
+    if (c === kapanis) return j + 1;
+    j++;
+  }
+  return satir.length;
+}
+
+/**
+ * The COMMENT half of one line ("" when the line is pure code). `durum` carries the
+ * block-comment state ACROSS lines.
+ *
+ * THE EXEMPTION REMOVES THE LEGITIMATE EXPRESSION, NEVER A CLASS OF LINES. The first version
+ * of this function dropped the WHOLE line as soon as a quote appeared before `//`, and it
+ * counted a block comment's inner lines as comment only when they began with `*`. Both were
+ * MEASURED holes: this scanner's own "must be caught" sample went invisible at the tail of a
+ * quoted code line, and a starless `/* ... *\/` block hid the historical residue verbatim.
+ * So string, template and regex BODIES are masked one literal at a time and whatever is left
+ * is read — a code line is no longer a reason to stop looking.
+ *
+ * A line that only LOOKS like the middle of a block (starts with `*`) is still treated as
+ * comment even when no `/*` opened on this line: the self-test below feeds single fragments,
+ * and erring toward "this is a comment" can only make a finding louder, never silence one.
+ */
+function yorumKismi(satir: string, durum: { blokIcinde: boolean }): string {
   const t = satir.trim();
-  if (t.startsWith("*") || t.startsWith("/*") || t.startsWith("//")) return t;
-  const i = satir.indexOf("//");
-  if (i < 0) return "";
-  // Tırnak/backtick'ten SONRA gelen "//" bir dize içindedir; kodun kendisi taranmaz.
-  if (/["'`]/.test(satir.slice(0, i))) return "";
-  return satir.slice(i);
+  if (!durum.blokIcinde && t.startsWith("*")) {
+    if (t.includes("*/")) durum.blokIcinde = false;
+    return t;
+  }
+  const parcalar: string[] = [];
+  let i = 0;
+  while (i < satir.length) {
+    if (durum.blokIcinde) {
+      const kapanis = satir.indexOf("*/", i);
+      if (kapanis < 0) {
+        parcalar.push(satir.slice(i));
+        break;
+      }
+      parcalar.push(satir.slice(i, kapanis));
+      durum.blokIcinde = false;
+      i = kapanis + 2;
+      continue;
+    }
+    const c = satir[i];
+    if (c === "/" && satir[i + 1] === "/") {
+      parcalar.push(satir.slice(i));
+      break;
+    }
+    if (c === "/" && satir[i + 1] === "*") {
+      durum.blokIcinde = true;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`" || (c === "/" && regexBaslayabilir(satir, i))) {
+      i = literalAtla(satir, i);
+      continue;
+    }
+    i++;
+  }
+  return parcalar.join(" ").trim();
 }
 
 type Kalinti = { satir: number; parca: string };
 
 function cevirKalintisiTara(kaynak: string): Kalinti[] {
   const bulgular: Kalinti[] = [];
+  // The block state belongs to the SCAN, not to a line: the inner lines of a starless block
+  // are comment as well, and a line-local decision could never see that.
+  const durum = { blokIcinde: false };
   kaynak.split("\n").forEach((ham, i) => {
-    const yorum = yorumKismi(ham);
+    const yorum = yorumKismi(ham, durum);
     if (!yorum) return;
     if (TURKCE_HARF.test(yorum)) {
       bulgular.push({ satir: i + 1, parca: yorum.trim() });
@@ -406,6 +491,25 @@ const KOTU_ORNEKLER: Array<[string, string]> = [
   ["bilinmeyen ama -mez ekli kuyruk", " * bu satır hiçbir yerde görünmez"],
   ["tek satırlık yorumda kalıntı", "  // pencere yoksa halkada YOKTUR."],
   ["satır sonu yorumunda kalıntı", "  const x = 1; // sessizce durur"],
+  // The four below were MEASURED as holes in the first version of yorumKismi: each one was
+  // injected into src/kararGunlugu.ts on disk and the suite stayed 6/6 green.
+  [
+    "ÖLÇÜLEN KÖR NOKTA: tırnak ve regex taşıyan kod satırının kuyruğu",
+    '  const tek = metin.replace(/\\s+/g, " ").trim(); // pencere yoksa halkada YOKTUR.',
+  ],
+  [
+    "ÖLÇÜLEN KÖR NOKTA: import satırının kuyruğu",
+    '  import { x } from "node:fs"; // ÇOK ÖNEMLİ: bu satır sessizce değiştirilemez.',
+  ],
+  [
+    "ÖLÇÜLEN KÖR NOKTA: şablon dizesi taşıyan satırın kuyruğu",
+    "  console.error(`[aegis] ${e} — bitti`); // bu satır asla değiştirilmez",
+  ],
+  [
+    "ÖLÇÜLEN KÖR NOKTA: yıldızsız blok yorumunun İÇ satırı",
+    "/*\n  etmez, denetim izi sessizce durur.\n*/",
+  ],
+  ["tek satırlık blok yorum", "/* pencere yoksa halkada YOKTUR. */"],
 ];
 
 const TEMIZ_ORNEKLER: Array<[string, string]> = [
@@ -415,6 +519,10 @@ const TEMIZ_ORNEKLER: Array<[string, string]> = [
   ["dize içindeki // yorum değildir", '  const u = "https://ornek.example/a";'],
   ["sözlük değerleri İngilizce yorumda geçebilir", ' * ("gecti/simulasyon", "gercek", "kapali")'],
   ["alan adları kalıntı sayılmaz", " * simSwapKanali / devSwapPencereSaat / retNedeniKisa"],
+  // Masking must be exact in BOTH directions: the Turkish belongs to the string body, and the
+  // English tail after it is a real comment that carries no residue.
+  ["Türkçe dize + İngilizce yorum kuyruğu", '  const m = "denetim izi sessizce durur"; // english tail'],
+  ["regex gövdesindeki eğik çizgi yorum açmaz", "  const p = /a\\/\\/b/;"],
 ];
 
 test("çeviri kalıntısı tarayıcısı: kırık satırı YAKALAR, İngilizce yorumu rahat bırakır", () => {

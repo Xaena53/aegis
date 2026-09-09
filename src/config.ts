@@ -37,9 +37,19 @@ export interface AegisConfig {
   /**
    * The E.164 number of the human whose approval the network verifies. Unlike the simulation
    * channels below, this one IS validated while the environment is read: an unreadable value
-   * throws and the server does not start (see parseApproverPhone). An ABSENT or empty value
-   * is a different case and keeps the documented default (undefined) — the gate then refuses
-   * on its own, because a missing approver is not a verified one.
+   * throws (see parseApproverPhone).
+   *
+   * WHERE THAT THROW LANDS — MEASURED, because the wording here used to promise a refusal AT
+   * STARTUP, and that promise was false. Both entry points read this slice LAZILY: stdio
+   * resolves the context on the first tool call (adsClient.ts getEnvContext) and hosted mode
+   * once per request (http.ts contextFor); no startup path calls nacConfigFromEnv. Spawned
+   * with AEGIS_APPROVER_PHONE=9 the process printed "MCP sunucusu stdio üzerinde hazır." and
+   * stayed up, the MCP handshake completed and the tools listed. What the throw closes is
+   * every tool call that needs the account context: those come back isError, naming this
+   * variable. Fail-closed all the same — no gate ever verifies an approver nobody could read.
+   *
+   * An ABSENT or empty value is a different case and keeps the documented default (undefined)
+   * — the gate then refuses on its own, because a missing approver is not a verified one.
    */
   approverPhone?: string;
   /** SIM-swap lookback window for high-risk actions (hours). */
@@ -354,10 +364,19 @@ export function parseNumEnv(name: string, raw: string | undefined, varsayilan: n
  * one warning line goes to stderr, which under MCP stdio lands in a client log file the
  * operator never opens. A cap that can be raised by a typo is not a cap.
  *
- * So an unreadable cap throws, and the server does not start. This is the pattern already
- * standing in this function (missing credentials throw) and in the hosted half of the very
- * same setting (store.ts `updateSettings`: "maxDailyBudget 0'dan büyük bir sayı olmalı.").
- * Fail-closed: an unknown ceiling is not a default ceiling.
+ * So an unreadable cap throws. This is the pattern already standing in this function (missing
+ * credentials throw) and in the hosted half of the very same setting (store.ts
+ * `updateSettings`: "maxDailyBudget 0'dan büyük bir sayı olmalı."). Fail-closed: an unknown
+ * ceiling is not a default ceiling.
+ *
+ * WHERE THAT THROW LANDS — MEASURED, because this comment used to promise a refusal AT STARTUP
+ * and the operator's message repeated it. The process comes up: loadConfig is called LAZILY,
+ * on the first context resolution (adsClient.ts getEnvContext), so with
+ * AEGIS_MAX_DAILY_BUDGET="250,00" the MCP handshake completed and every tool listed. What the
+ * throw closes is the account context: list_accounts came back isError carrying the message
+ * below, while a tool that needs no context (analyze_site) still answered. That is the
+ * fail-closed line — nothing can be spent under a ceiling nobody could read — and it is the
+ * line the message must state, instead of a startup that never happens.
  *
  * An ABSENT or empty variable is a different case and keeps the documented default: that is
  * an operator who did not choose, not an operator who mistyped.
@@ -372,8 +391,9 @@ function parseBudgetCap(raw: string | undefined): number {
     throw new Error(
       `AEGIS_MAX_DAILY_BUDGET geçersiz (beklenen: 0'dan büyük bir sayı; ondalık ayırıcı ` +
         `NOKTA, para birimi/binlik ayracı yazılmaz — örn. 250 ya da 250.5). ` +
-        `Düzeltilmeden sunucu açılmaz: geçersiz bir tavan varsayılana çekilseydi, ` +
-        `niyetinden YÜKSEK bir tavanla koşabilirdin. Değer sır ihtimaline karşı gösterilmiyor.`
+        `Düzeltilmeden hesabına dokunan hiçbir araç çalışmaz: geçersiz bir tavan varsayılana ` +
+        `çekilseydi, niyetinden YÜKSEK bir tavanla koşabilirdin. ` +
+        `Değer sır ihtimaline karşı gösterilmiyor.`
     );
   }
   return n;
@@ -415,8 +435,9 @@ function parseApproverPhone(raw: string | undefined): string | undefined {
     throw new Error(
       `AEGIS_APPROVER_PHONE geçersiz (beklenen: E.164 — '+' ile başlar, ülke kodu dahil 7-15 ` +
         `rakam; boşluk, parantez, tire ve baştaki 0 yazılmaz — örn. +905551112233). ` +
-        `Düzeltilmeden sunucu açılmaz: numara olmayan bir değer sessizce kabul edilseydi, ağ ` +
-        `kapısı onaylayıcının hattını sorgulamadan "doğrulandı" kanıtı yazardı. ` +
+        `Düzeltilmeden hesabına dokunan hiçbir araç çalışmaz: numara olmayan bir değer ` +
+        `sessizce kabul edilseydi, ağ kapısı onaylayıcının hattını sorgulamadan "doğrulandı" ` +
+        `kanıtı yazardı. ` +
         `Değer sır ihtimaline karşı gösterilmiyor.`
     );
   }

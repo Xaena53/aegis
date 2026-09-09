@@ -4,7 +4,7 @@ import { enums } from "google-ads-api";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { sahteContext, baglanti, cagir } from "./helpers/harness.js";
+import { sahteContext, baglanti, cagir, type Kayit } from "./helpers/harness.js";
 import { buildServer } from "../src/server.js";
 import { __setMetaKanalForTests, type MetaKampanya } from "../src/meta/client.js";
 import { normalizeGaql, ensureGaqlLimit, formatAdsError } from "../src/util.js";
@@ -351,15 +351,32 @@ test("KRİTİK: tek okunamayan alan 500 kampanyalık raporu DÜŞÜRMEZ", async 
  * flow always comes back with `onaylandi === false` and the "no NaN in front of the user"
  * invariant is never measured on the sentence written AFTER a human says yes.
  *
- * That sentence exists twice. The Google half (src/tools/write.ts, "… bütçesi
- * güncellendi: ${eskiBilinmiyor ? "OKUNAMADI" : oldBudget} → …") WAS MEASURED and is
- * guarded: turning the ternary into `${oldBudget}` puts 4 tests of
- * test/faz3Write.test.ts in the red. The Meta twin (src/tools/meta.ts) came back
- * UNGUARDED under the same mutation — `${eskiBilinmiyor ? "?" : eski}` → `${eski}` left
- * all 86 tests of meta.test.ts, metaButceKiyas.test.ts, onarim2ToolsMeta.test.ts,
- * faz3MetaClient/faz3MetaDogrula, kapiKapsami and promises green while the tool was
- * telling the user "undefined → 400". The two guards below nail that branch, and they
- * fail in BOTH directions: an unreadable figure invented, or a measured figure hidden.
+ * That sentence exists twice, and BOTH twins are pinned in this file: the Meta one right
+ * below, the Google one at the end. Each pair fails in BOTH directions — an unreadable
+ * figure invented, or a measured figure hidden.
+ *
+ * WHY THE GOOGLE HALF IS REPEATED HERE. test/faz3Write.test.ts does cover it (measured:
+ * turning `${eskiBilinmiyor ? "OKUNAMADI" : oldBudget}` into `${oldBudget}` puts 4 of its
+ * 11 tests in the red). But under that SAME mutation this file stayed 32/32 GREEN, so the
+ * regression class it exists for — an unknown budget handed to the agent as a number — was
+ * invisible in the file whose whole subject is the unknown budget, and the only cover for
+ * it lived in a neighbouring file written in the same phase. A fail-closed watcher that
+ * depends on a neighbour surviving a merge is not a watcher; the twin below removes that
+ * dependency.
+ *
+ * The Meta twin (src/tools/meta.ts) was unguarded EVERYWHERE under the same mutation —
+ * `${eskiBilinmiyor ? "?" : eski}` → `${eski}` left all 86 tests of meta.test.ts,
+ * metaButceKiyas.test.ts, onarim2ToolsMeta.test.ts, faz3MetaClient/faz3MetaDogrula,
+ * kapiKapsami and promises green while the tool was telling the user "undefined → 400".
+ *
+ * NOTE FOR WHOEVER UNIFIES THE TWO WORDINGS. The human prompt says "OKUNAMADI" on both
+ * sides, but the sentence the AGENT reads still differs: Meta marks the unknown with "?"
+ * (src/tools/meta.ts) while Google spells out "OKUNAMADI" (src/tools/write.ts). If meta.ts
+ * is changed to spell it out too, exactly ONE line here has to widen with it —
+ * `assert.match(out, /\? → 400/)` becomes `assert.match(out, /(\?|OKUNAMADI) → 400/)`.
+ * Nothing else may be relaxed: the counter-pole test right after it reads "?" as "not
+ * measured", so widening it as well would let a build that prints "?" for every budget
+ * stay green.
  */
 
 const META_KAMPANYA = "120200000000001";
@@ -464,4 +481,93 @@ test("Meta ikizi: OKUNABİLEN eski tutar hâlâ rakamıyla yazılır (gözcü he
   } finally {
     __setMetaKanalForTests(undefined);
   }
+});
+
+/* ── GOOGLE TWIN OF THE SAME BRANCH ── why it is repeated here: see the block above. */
+
+/**
+ * Fake Google context plus an elicitation-capable client; collects prompts and writes.
+ *
+ * `hamMikro` is the RAW `campaign_budget.amount_micros` as the API would hand it over, not
+ * a parsed number: the whole point is what `mikrodanTutar` does with an unreadable shape.
+ */
+async function googleIkizi(hamMikro: unknown): Promise<{
+  istemci: Client;
+  istemler: string[];
+  rec: Kayit;
+}> {
+  const istemler: string[] = [];
+  const { ctx, rec } = sahteContext({
+    queries: [
+      [
+        /campaign_budget\.explicitly_shared/,
+        [
+          {
+            campaign: { id: 1, name: "Google kampanyası" },
+            campaign_budget: {
+              resource_name: "customers/1/campaignBudgets/9",
+              // A real `false` is required, or the sharedness gate refuses before the budget
+              // is ever read and this test would measure the wrong refusal.
+              explicitly_shared: false,
+              amount_micros: hamMikro,
+            },
+          },
+        ],
+      ],
+    ],
+  });
+
+  /**
+   * nacToken/approverPhone are absent ON PURPOSE — same reasoning as the Meta twin: the
+   * network layer takes its "not configured" branch, so what is measured here is the
+   * sentence written AFTER approval, not the gate that precedes it.
+   */
+  const server = buildServer(() => ctx);
+  const istemci = new Client(
+    { name: "failclosed-google", version: "0" },
+    { capabilities: { elicitation: { form: {} } } }
+  );
+  istemci.setRequestHandler(ElicitRequestSchema, async (istek: any) => {
+    istemler.push(String(istek?.params?.message ?? ""));
+    return { action: "accept" as const, content: { onay: true } };
+  });
+
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(a), istemci.connect(b)]);
+  return { istemci, istemler, rec };
+}
+
+test("Google ikizi: ONAYLANAN bütçe artışında okunamayan eski tutar rakam gibi sunulmaz", async () => {
+  // "abc" is one of the shapes `mikrodanTutar` answers undefined for; before it existed the
+  // same field went through `Number(...)/1e6` and reached the agent as NaN.
+  const { istemci, istemler, rec } = await googleIkizi("abc");
+  const r: any = await istemci.callTool({
+    name: "update_campaign_budget",
+    arguments: { customerId: M, campaignId: K, newDailyBudget: 400 },
+  });
+  const out = String(r.content?.[0]?.text ?? "");
+
+  assert.equal(istemler.length, 1, "okunamayan eski bütçe her hâlükârda insana sorulur");
+  assert.match(istemler[0], /Mevcut bütçe OKUNAMADI/, "insana okunamadığı SÖYLENMELİ");
+  assert.equal(rec.mutations.length, 1, "insan onayladıysa yazma gerçekten yapılır");
+  assert.doesNotMatch(out, /NaN|undefined/i, "ölçülemeyen tutar bozuk bir değer olarak yazılamaz");
+  assert.doesNotMatch(out, /: 0 →/, "okunamayan bütçe kesin bir 0 gibi sunulamaz");
+  assert.match(out, /OKUNAMADI → 400/, "eski rakamın yerinde 'ölçülmedi' işareti durmalı");
+});
+
+test("Google ikizi: OKUNABİLEN eski tutar hâlâ rakamıyla yazılır (gözcü her şeye 'OKUNAMADI' demiyor)", async () => {
+  // Counter-pole: on its own, the guard above would stay green on code that admits
+  // "OKUNAMADI" for every budget it is given.
+  const { istemci, istemler, rec } = await googleIkizi(100_000_000);
+  const r: any = await istemci.callTool({
+    name: "update_campaign_budget",
+    arguments: { customerId: M, campaignId: K, newDailyBudget: 400 },
+  });
+  const out = String(r.content?.[0]?.text ?? "");
+
+  assert.equal(istemler.length, 1, "artış yine onay ister");
+  assert.match(istemler[0], /Mevcut: 100 → Yeni: 400/, "ölçülmüş rakam insana rakam olarak gider");
+  assert.equal(rec.mutations.length, 1);
+  assert.match(out, /100 → 400/, "ölçülmüş eski tutar ajandan da gizlenmez");
+  assert.doesNotMatch(out, /OKUNAMADI/, "ölçülmüş bütçe 'bilinmiyor' diye sunulamaz");
 });
