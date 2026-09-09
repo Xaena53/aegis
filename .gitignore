@@ -21,6 +21,18 @@ coverage/
 # plan/kreatif içerir. Kaynak değil, artefakt — depoya girmez.
 rapor-brain-*.md
 
+# Decision log (AEGIS_DECISION_LOG). The docs hand the operator a path that lands right
+# here in the repository root — docs/DEMO.md and docs/CAMARA.md both show
+# `AEGIS_DECISION_LOG=./kararlar.jsonl` — and every line carries an UNMASKED ad account
+# id (hesapId), the amount at stake (tutar) and the approver number in masked form. This
+# repository is PUBLIC and gitleaks cannot save us here: an account id and an amount match
+# no secret pattern, so a routine `git add -A` after a demo would simply publish them.
+# Same class as rapor-brain-*.md above, which was already closed for exactly this reason.
+# The second pattern covers the rollover generation: src/kararGunlugu.ts renames the file
+# to `<path>.1` on reaching its ceiling, and `*.jsonl` alone does not match that name.
+*.jsonl
+*.jsonl.[0-9]
+
 # Doğrulama artefaktları: denetim/onarım turlarında bir düzeltmenin gerçekten kilitlendiğini
 # ölçmek için dosyalar geçici olarak bozulup yedekten geri konuyor. O yedekler ve prob
 # betikleri kaynak değil; biri unutulursa depoya sızmasın.

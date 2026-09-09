@@ -9,5 +9,12 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src/**/*", "test/**/*"]
+  // `scripts/**/*` is IN SCOPE on purpose. scripts/agDogrula.mts, scripts/metaDogrula.mts
+  // and scripts/video-demo.mts (npm run agtest / metatest / video) import NAMED exports from
+  // src. While this directory was missing from the list, none of the three gates looked at
+  // them: build compiles src, this check compiled src+test, npm test runs test/. Renaming an
+  // export in src left CI fully green and the break only surfaced at run time — in front of a
+  // jury, on `npm run video`. The compiler catches it here now. (.mjs scripts still stay out:
+  // allowJs is off; test/derlemeGirdileri.test.ts and its siblings watch those.)
+  "include": ["src/**/*", "test/**/*", "scripts/**/*"]
 }
