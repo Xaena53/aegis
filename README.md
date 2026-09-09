@@ -10,8 +10,8 @@ human is prompted, and before any money moves.*
 [![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1496-brightgreen.svg)](test/)
-[![Coverage](https://img.shields.io/badge/line%20coverage-85.43%25-brightgreen.svg)](#test-metrics)
+[![Tests](https://img.shields.io/badge/tests-1765-brightgreen.svg)](test/)
+[![Coverage](https://img.shields.io/badge/line%20coverage-83.19%25-brightgreen.svg)](#test-metrics)
 [![MCP](https://img.shields.io/badge/MCP-tools%20%C2%B7%20resources%20%C2%B7%20prompts%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇹🇷 [Türkçe README](README.tr.md)
@@ -31,7 +31,7 @@ being a story the agent tells and becomes a fact the server can verify.
 |---|---|
 | **What it is** | An MCP server that lets an AI agent run real Google Ads and Meta campaigns behind server-side spending guards |
 | **The idea** | Consent is verified, not claimed: the human is asked through the protocol, and the mobile network is asked *before* the human |
-| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 1496 automated tests at 85.43% line coverage; Docker deployment |
+| **Status** | Working software. All three integrations verified live — Google Ads, five of six CAMARA links, and Meta; 1765 automated tests at 83.19% line coverage; Docker deployment |
 | **Not yet** | Number Verification (device-side OIDC, uncallable from a server — an architectural verdict, not a pending task) · a real subscriber network behind the CAMARA calls (the account is in Simulator mode) |
 
 ## Contents
@@ -480,7 +480,7 @@ a public issue.
 ```bash
 npm run build      # compile to dist/
 npm run typecheck  # src + tests, with noUnusedLocals
-npm test           # 1496 offline tests
+npm test           # 1765 offline tests
 npm run smoke      # live checks against your real Google Ads account
 npm run agtest     # live checks of the trust chain against Nokia Network-as-Code
 npm run metatest   # live checks of the Meta path (add --write to create a paused campaign)
@@ -498,18 +498,19 @@ refusal assertable, and also why those green tests say nothing about the live CA
 ### Test metrics
 
 ```
-1496 tests · 0 failures       line 85.43%  ·  branch 90.28%  ·  function 84.50%
+1765 tests · 0 failures       line 83.19%  ·  branch 88.24%  ·  function 81.47%
 ```
 
 Those three figures are the test runner's own **all files** row
 (`node --test --experimental-test-coverage`), reproducible in one command and not
 hand-picked. It counts `scripts/` and `src/http.ts` too. They were last measured on
-Node 24.19.0, the version CI runs.
+2026-09-09, on Node 24.19.0 — the version CI runs, and the version to reproduce them on.
 
 Numbers in a README rot silently, so these are held to the report rather than to
 goodwill. `test/faz3ReadmeKapsam.test.ts` keeps the badge, the status row, the table and
-the prose from drifting apart on every run, and re-reads the figures themselves against a
-real coverage report when you hand it one:
+the prose from drifting apart on every run — in both languages, since
+[README.tr.md](README.tr.md) prints every one of these figures a second time — and
+re-reads the figures themselves against a real coverage report when you hand it one:
 
 ```bash
 node --import tsx --test --experimental-test-coverage \
@@ -520,13 +521,21 @@ KAPSAM_RAPORU=kapsam.txt node --import tsx --test test/faz3ReadmeKapsam.test.ts
 That second command is what catches a stale figure or a floor that stopped being held —
 both of which this section was carrying until they were measured.
 
+**CI does not run it, and saying so is part of the claim.** The workflow runs
+`npm run build`, `npm run typecheck`, `npm test`, the dependency audit and a secret scan;
+there is no coverage step and no coverage threshold in `package.json`. A coverage run takes
+minutes and would recurse into the test that reads it, so re-measuring is a release step done
+by hand — which means that between two runs of that command, these figures and the floors
+below rest on someone remembering to run it. That is why they are stamped with a date and
+a runtime instead of being presented as continuously verified.
+
 **The all-files line figure went DOWN while the suite grew, and the reason is worth stating
 rather than hiding.** `scripts/demo-senaryo.mjs` — over 1,500 lines — had no tests at all, so it
 appeared nowhere in the report and contributed nothing to the average. It now has tests, which
 put it into the denominator at 31%, and that alone moves the all-files line figure by roughly
 four points. The security-critical files moved the other way in the same rounds:
-`src/approval.ts` 99.81%, `src/networkTrust.ts` 98.95%, `src/siteExtract.ts` 99.83%,
-`src/store.ts` 99.55%, `src/tools/read.ts` 99.80%. A single repository-wide average cannot say
+`src/approval.ts` 99.82%, `src/networkTrust.ts` 98.95%, `src/store.ts` 99.30%,
+`src/tools/read.ts` 99.73%. A single repository-wide average cannot say
 that, which is why the per-area table below exists.
 
 `src/http.ts` reads low
@@ -534,29 +543,50 @@ for a reason worth stating rather than hiding: the hosted layer *is* tested end 
 but `test/http.test.ts` drives it as a **spawned server process**, so the parent's
 instrumentation never sees those lines execute. Multi-tenant isolation, session binding,
 rate limiting and the OAuth-state gate all have tests; the coverage number simply cannot
-see them. The line and function figures are stable run to run; the **branch** figure
-is not, and the honest reading of it is approximate: one timeout-race branch in
-`networkTrust.ts` is not always taken, which moves the all-files branch number by about
-a tenth of a point between runs, and that file's own branch reading between roughly
-ninety-seven and ninety-six percent.
+see them. Of the three columns the **branch** figure is the least steady even for a fixed
+set of test files, and the honest reading of it is approximate: one timeout-race branch in
+`networkTrust.ts` is not always taken, which moves the all-files branch number by about a
+tenth of a point between runs, and that file's own branch reading between roughly
+ninety-eight and ninety-six percent.
+
+**A per-file row is not the coverage that file's own tests reach, and that surprised us
+enough to measure it.** The runner merges the reports of every test process, and the merge
+is not a union: a module several test files import can read far LOWER in the merged table
+than when it is measured alone. Reproduced deterministically, in both file orders and with
+`--test-concurrency=1` — `brain/ortak.mjs` reads 49.79% in the whole-suite report above and
+95.64% when only `test/brain/ortak.test.mjs` runs; `src/siteExtract.ts` came back 100%
+from one run of the command above and 80.03% from the next, after new test files that
+import it had landed. So a figure here is reproducible for a given SET of test files and
+moves when that set changes — which is also why the floors below are set to what the
+whole-suite report holds rather than to what each module's own tests reach, and why the
+`scripts/brain/` row is dragged down to its lowest member.
 
 Per-area floors, not exact readings: the table says what the suite is *held above*, so a
 refactor that moves a figure by a tenth of a point does not turn the README into a lie.
-A floor is only worth printing if it is actually held, and three of these cells were not:
-`approval.ts` sat at 94.64% branch under a 95% floor, `tools/site.ts` at 76.92% function
-under 84%, `brain/ortak.mjs` at 93.94% function under 95%. They were lowered to the
-measurement rather than the measurement being rounded up to them.
+A floor is only worth printing if it is actually held, and three of these cells were not
+when they were last checked: `tools/site.ts` measured 76.92% function under an 84% floor,
+`brain/ortak.mjs` 93.94% under 95%, and `approval.ts` 94.64% branch under 95%. They were
+lowered to the measurement rather than the measurement being rounded up to them.
+
+`approval.ts` earns a second sentence, because it is the file that implements the human
+approval gate and its floor should not drift down quietly. The 95% branch floor was dropped
+to 94% on a reading taken while a round of new branching code was in the file and its tests
+were not yet — a bad reason to weaken a published guarantee. Re-measured on the runtime and
+the date this section names, it reads 94.59% branch: still under 95%, so the floor stays at
+94% for now, and it now stands in its own row rather than being averaged behind
+`rateLimit.ts`'s 100%. It goes back to 95% when the reading does, not before.
 
 | Area | Line | Branch | Function |
 |---|---|---|---|
-| `rateLimit.ts` · `approval.ts` | ≥ 99% | ≥ 94% | 100% |
+| `rateLimit.ts` — the spend limiter | ≥ 99% | ≥ 99% | 100% |
+| `approval.ts` — the human approval gate | ≥ 99% | ≥ 94% | 100% |
 | `kararGunlugu.ts` · `config.ts` | ≥ 99% | ≥ 77% | 100% |
-| `networkTrust.ts` — the six-link trust chain | ≥ 98% | ≥ 96% | ≥ 97% |
-| `meta/client.ts` · `adsClient.ts` · `store.ts` | ≥ 96% | ≥ 91% | ≥ 88% |
+| `networkTrust.ts` — the six-link trust chain | ≥ 98% | ≥ 93% | ≥ 96% |
+| `meta/client.ts` · `adsClient.ts` · `store.ts` | ≥ 96% | ≥ 90% | ≥ 88% |
 | `tools/` — write, read, site, meta | ≥ 96% | ≥ 72% | ≥ 76% |
-| `scripts/brain/` — Growth Brain modules | ≥ 93% | ≥ 86% | ≥ 93% |
+| `scripts/brain/` — Growth Brain modules | ≥ 49% | ≥ 35% | ≥ 31% |
 
-`scripts/growth-brain.mjs` sits at 59.75%, and what is uncovered is the CLI entry point
+`scripts/growth-brain.mjs` sits at 60.19%, and what is uncovered is the CLI entry point
 rather than the logic: `ana()` wires argv to the tools and prints to the terminal. The
 part that matters — the human approval gate standing in front of every write — is
 exercised the only way that can see its channel lock: a real operating-system pipe, a real

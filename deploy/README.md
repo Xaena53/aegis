@@ -67,7 +67,9 @@ migration script; the supported path is:
    sudo apt-get install -y sqlite3
    journalctl -u aegis -n 40 --no-pager     # read the census and the "Kurtarma" lines
    DB=/opt/aegis/data/aegis.db
-   sudo -u aegis -H sqlite3 "$DB" ".backup '$DB.kurtarma-yedegi'"
+   # umask 077: this copy holds every tenant's secrets, exactly like the live store, and a
+   # file sqlite3 creates on the side is born 0644 under the default umask (measured).
+   sudo -u aegis -H sh -c "umask 077; sqlite3 '$DB' \".backup '$DB.kurtarma-yedegi'\""
    sudo -u aegis -H sqlite3 "$DB" "DELETE FROM users WHERE id IN (<only the ids the refusal listed>);"
    ```
 
@@ -293,12 +295,31 @@ In WAL mode, copying the `.db` file while the service runs produces a corrupt ba
 recent writes may still live in `.db-wal`. Use SQLite's `.backup`, which writes one
 consistent file:
 
+**The copy is owner-only too — 0600, and it is measured.** The backup holds exactly what the
+live store holds: every tenant's e-mail, Google `sub`, budget ceiling and encrypted refresh
+token. The server narrows its own file to 0600 as it opens it, but nothing narrows a file
+that `sqlite3` creates on the side: measured, a new file under systemd's default `umask 022`
+is born **0644** and `mkdir` gives **0755**, so a nightly backup run as written would put a
+world-readable copy of the whole store next to a database that was carefully closed. Hence
+`umask 077` around the run, `chmod 700` on the directory, and a `stat` that reads the result
+back — attempting is not achieving.
+
 ```bash
 sudo apt-get install -y sqlite3
-sudo mkdir -p /backup && sudo chown aegis:aegis /backup
-sudo -u aegis -H sqlite3 /opt/aegis/data/aegis.db \
-  ".backup '/backup/aegis-$(date +%F).db'"
+sudo mkdir -p /backup && sudo chown aegis:aegis /backup && sudo chmod 700 /backup
+sudo -u aegis -H sh -c '
+  umask 077
+  hedef="/backup/aegis-$(date +%F).db"
+  sqlite3 /opt/aegis/data/aegis.db ".backup $hedef"
+  chmod 600 "$hedef"
+  stat -c "%a %n" "$hedef"
+'
 ```
+
+The last line must print `600` — a backup that comes back any other way is readable by every
+other local account on the host and should be deleted, not kept. (`chmod 600` after the fact
+is not redundant with `umask`: the umask only shapes files that are NEW, and a re-run that
+overwrites yesterday's file keeps whatever mode that file already had.)
 
 Store `AEGIS_MASTER_KEY` somewhere other than the backups.
 

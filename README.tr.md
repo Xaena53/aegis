@@ -10,8 +10,8 @@ insana sorulmadan ve para hareket etmeden önce.*
 [![CI](https://github.com/Xaena53/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xaena53/aegis/actions/workflows/ci.yml)
 [![Lisans: AGPL v3](https://img.shields.io/badge/Lisans-AGPL_v3-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](package.json)
-[![Test](https://img.shields.io/badge/test-1496-brightgreen.svg)](test/)
-[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-85.43%25-brightgreen.svg)](#test-metrikleri)
+[![Test](https://img.shields.io/badge/test-1765-brightgreen.svg)](test/)
+[![Kapsam](https://img.shields.io/badge/sat%C4%B1r%20kapsam%C4%B1-83.19%25-brightgreen.svg)](#test-metrikleri)
 [![MCP](https://img.shields.io/badge/MCP-ara%C3%A7lar%20%C2%B7%20kaynaklar%20%C2%B7%20prompt%27lar%20%C2%B7%20elicitation-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 🇬🇧 [English README](README.md)
@@ -32,7 +32,7 @@ bir hikâye olmaktan çıkıp sunucunun doğrulayabildiği bir olguya dönüşü
 |---|---|
 | **Nedir** | Yapay zekâ ajanının gerçek Google Ads ve Meta kampanyalarını, sunucu taraflı harcama kapıları arkasından yönetmesini sağlayan MCP sunucusu |
 | **Fikir** | Onay iddia edilmez, doğrulanır: insana protokol üzerinden sorulur, mobil ağa ise insandan *önce* |
-| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %85.43 satır kapsamıyla 1496 otomatik test; Docker dağıtımı |
+| **Durum** | Çalışan yazılım. Üç entegrasyonun üçü de canlı doğrulandı — Google Ads, altı CAMARA halkasının beşi ve Meta; %83.19 satır kapsamıyla 1765 otomatik test; Docker dağıtımı |
 | **Henüz yok** | Number Verification (cihaz-taraflı OIDC, sunucudan çağrılamaz — bekleyen bir iş değil, mimari bir hüküm) · CAMARA çağrılarının arkasında gerçek bir abone şebekesi (hesap Simulator kipinde) |
 
 ## İçindekiler
@@ -470,7 +470,7 @@ Açık bulduysan lütfen herkese açık issue yerine GitHub Security Advisories 
 ```bash
 npm run build      # dist/ derlemesi
 npm run typecheck  # src + testler, noUnusedLocals ile
-npm test           # 1496 çevrimdışı test
+npm test           # 1765 çevrimdışı test
 npm run smoke      # gerçek Google Ads hesabına karşı canlı kontroller
 npm run agtest     # güven zincirinin Nokia NaC platformuna karşı canlı kontrolü
 npm run metatest   # Meta yolunun canlı kontrolü (--write ile duraklatılmış kampanya kurar)
@@ -489,18 +489,20 @@ söylememesinin sebebi de.
 ### Test metrikleri
 
 ```
-1496 test · 0 hata         satır %85.43  ·  dal %90.28  ·  fonksiyon %84.50
+1765 test · 0 hata         satır %83.19  ·  dal %88.24  ·  fonksiyon %81.47
 ```
 
 Bu üç rakam, test koşucusunun kendi **all files** satırıdır
 (`node --test --experimental-test-coverage`): tek komutla yeniden üretilebilir, elle
-seçilmemiştir. `scripts/` ve `src/http.ts` de sayıma dahildir. En son, CI'nin koştuğu
-sürüm olan Node 24.19.0 üzerinde ölçüldü.
+seçilmemiştir. `scripts/` ve `src/http.ts` de sayıma dahildir. En son 2026-09-09'da,
+CI'nin koştuğu ve yeniden üretmek için kullanılması gereken sürüm olan Node 24.19.0
+üzerinde ölçüldü.
 
 README'deki rakamlar sessizce bayatlar, bu yüzden iyi niyete değil rapora bağlandılar.
 `test/faz3ReadmeKapsam.test.ts` her koşuda rozetin, durum satırının, tablonun ve
-düzyazının birbirinden ayrışmasını engelliyor; rakamların kendisini de, gerçek bir kapsam
-raporu verildiğinde yeniden okuyor:
+düzyazının birbirinden ayrışmasını engelliyor — iki dilde birden, çünkü
+[README.md](README.md) bu rakamların hepsini bir kez daha yazıyor; rakamların kendisini de,
+gerçek bir kapsam raporu verildiğinde yeniden okuyor:
 
 ```bash
 node --import tsx --test --experimental-test-coverage \
@@ -511,12 +513,20 @@ KAPSAM_RAPORU=kapsam.txt node --import tsx --test test/faz3ReadmeKapsam.test.ts
 Bayat bir rakamı ya da artık tutulmayan bir tabanı yakalayan, o ikinci komuttur — bu
 bölüm, ölçülene kadar ikisini de taşıyordu.
 
+**CI o komutu koşmuyor ve bunu söylemek de iddianın parçası.** İş akışı `npm run build`,
+`npm run typecheck`, `npm test`, bağımlılık denetimi ve sır taraması koşuyor; ne bir kapsam
+adımı ne de `package.json`'da bir kapsam eşiği var. Kapsam koşusu dakikalar sürüyor ve onu
+okuyan testin içine geri özyineleyecek; bu yüzden yeniden ölçüm, elle yapılan bir sürüm
+adımı — yani o komutun iki koşusu arasında bu rakamlar ve aşağıdaki tabanlar, birinin
+komutu koşmayı hatırlamasına bağlı. Sürekli doğrulanıyormuş gibi sunulmak yerine bir tarih
+ve bir çalışma zamanı damgası taşımalarının sebebi de bu.
+
 **All-files satır rakamı, paket BÜYÜRKEN düştü; sebebi gizlenmek yerine söylenmeye değer.**
 `scripts/demo-senaryo.mjs` — 1.500 satırın üzerinde — hiç testi olmayan bir dosyaydı, dolayısıyla raporda
 HİÇ GÖRÜNMÜYOR ve ortalamaya hiçbir şey katmıyordu. Artık testleri var, paydaya %31 ile girdi
 ve tek başına all-files satır rakamını yaklaşık dört puan aşağı çekti. Güvenlik açısından
-kritik dosyalar aynı turlarda ters yöne gitti: `src/approval.ts` %99.81, `src/networkTrust.ts`
-%98.95, `src/siteExtract.ts` %99.83, `src/store.ts` %99.55, `src/tools/read.ts` %99.80. Tek
+kritik dosyalar aynı turlarda ters yöne gitti: `src/approval.ts` %99.82, `src/networkTrust.ts`
+%98.95, `src/store.ts` %99.30, `src/tools/read.ts` %99.73. Tek
 bir depo geneli ortalama bunu söyleyemez; aşağıdaki alan tablosu tam bu yüzden var.
 
 `src/http.ts` düşük
@@ -524,29 +534,51 @@ görünüyor ve bunun sebebi gizlenmek yerine söylenmeye değer: barındırıla
 uca test EDİLİYOR, ama `test/http.test.ts` onu **ayrı bir sunucu süreci başlatarak**
 sürüyor; dolayısıyla ana sürecin ölçümü o satırların çalıştığını hiç görmüyor. Çok
 kiracılı izolasyon, oturum bağlama, hız sınırı ve OAuth durum kapısı testli — kapsam
-rakamı onları göremiyor, o kadar. Satır ve fonksiyon rakamları koşudan koşuya sabittir;
-**dal** rakamı değildir ve dürüst okuması yaklaşıktır: `networkTrust.ts` içindeki bir
+rakamı onları göremiyor, o kadar. Üç sütun içinde en oynak olanı, test dosyası kümesi
+sabitken bile **dal** rakamıdır ve dürüst okuması yaklaşıktır: `networkTrust.ts` içindeki bir
 zaman-aşımı yarışı dalı her koşuda alınmıyor; bu, all-files dal rakamını koşular arasında
-onda bir puan kadar oynatıyor, o dosyanın kendi dal okumasını da doksan yedi ile doksan
+onda bir puan kadar oynatıyor, o dosyanın kendi dal okumasını da doksan sekiz ile doksan
 altı arasında gezdiriyor.
+
+**Dosya başına bir satır, o dosyanın KENDİ testlerinin ulaştığı kapsam değildir; bunu
+ölçecek kadar şaşırtıcı bulduk.** Koşucu her test sürecinin raporunu birleştiriyor ve bu
+birleştirme bir birleşim (union) değil: birden çok test dosyasının içe aktardığı bir modül,
+birleşik tabloda tek başına ölçüldüğünden çok DAHA DÜŞÜK okuyabiliyor. Belirlenimci biçimde,
+iki dosya sırasında da ve `--test-concurrency=1` ile yeniden üretildi — `brain/ortak.mjs`
+yukarıdaki paket raporunda %49.79, yalnız `test/brain/ortak.test.mjs` koştuğunda %95.64
+okuyor; `src/siteExtract.ts` yukarıdaki komutun bir koşusunda %100, onu içe aktaran yeni
+test dosyaları indikten sonraki koşusunda %80.03 döndü. Yani buradaki bir rakam, verili bir
+test dosyası KÜMESİ için yeniden üretilebilir ve küme değişince oynar — aşağıdaki tabanların
+her modülün kendi testlerinin ulaştığı değere göre değil, paket raporunun tuttuğu değere göre
+konulmasının ve `scripts/brain/` satırının en düşük üyesine çekilmesinin sebebi de bu.
 
 Tablo tam ölçüm değil TABAN verir: paketin altına düşmediği değerleri söyler, böylece
 bir rakamı onda bir puan oynatan yeniden düzenleme README'yi yalancı çıkarmaz.
-Bir taban ancak GERÇEKTEN tutuluyorsa yazılmaya değer; bu hücrelerin üçü tutulmuyordu:
-`approval.ts` %95 dal tabanının altında %94.64, `tools/site.ts` %84 fonksiyon tabanının
-altında %76.92, `brain/ortak.mjs` %95 altında %93.94. Ölçüm tabana yuvarlanmak yerine
-tabanlar ölçüme indirildi.
+Bir taban ancak GERÇEKTEN tutuluyorsa yazılmaya değer; son bakıldığında bu hücrelerin üçü
+tutulmuyordu: `tools/site.ts` %84 fonksiyon tabanının altında %76.92, `brain/ortak.mjs` %95
+altında %93.94, `approval.ts` da %95 dal tabanının altında %94.64. Ölçüm tabana yuvarlanmak
+yerine tabanlar ölçüme indirildi.
+
+`approval.ts` ikinci bir cümleyi hak ediyor, çünkü insan onay kapısını uygulayan dosya o ve
+tabanı sessizce aşağı kaymamalı. %95'lik dal tabanı, dosyaya yeni bir tur dallanmalı kod
+girmişken ve testleri henüz inmemişken alınan bir okumaya bakılarak %94'e indirilmişti —
+yayımlanmış bir güvenceyi zayıflatmak için kötü bir gerekçe. Bu bölümün adını verdiği
+çalışma zamanı ve tarihte yeniden ölçüldüğünde %94.59 dal okuyor: hâlâ %95'in altında, bu
+yüzden taban şimdilik %94'te kalıyor ve artık `rateLimit.ts`'in %100'ünün arkasında
+ortalanmak yerine kendi satırında duruyor. Okuma %95'e döndüğünde taban da dönecek, önce
+değil.
 
 | Alan | Satır | Dal | Fonksiyon |
 |---|---|---|---|
-| `rateLimit.ts` · `approval.ts` | ≥ %99 | ≥ %94 | %100 |
+| `rateLimit.ts` — harcama sınırlayıcı | ≥ %99 | ≥ %99 | %100 |
+| `approval.ts` — insan onay kapısı | ≥ %99 | ≥ %94 | %100 |
 | `kararGunlugu.ts` · `config.ts` | ≥ %99 | ≥ %77 | %100 |
-| `networkTrust.ts` — altı halkalı güven zinciri | ≥ %98 | ≥ %96 | ≥ %97 |
-| `meta/client.ts` · `adsClient.ts` · `store.ts` | ≥ %96 | ≥ %91 | ≥ %88 |
+| `networkTrust.ts` — altı halkalı güven zinciri | ≥ %98 | ≥ %93 | ≥ %96 |
+| `meta/client.ts` · `adsClient.ts` · `store.ts` | ≥ %96 | ≥ %90 | ≥ %88 |
 | `tools/` — write, read, site, meta | ≥ %96 | ≥ %72 | ≥ %76 |
-| `scripts/brain/` — Growth Brain modülleri | ≥ %93 | ≥ %86 | ≥ %93 |
+| `scripts/brain/` — Growth Brain modülleri | ≥ %49 | ≥ %35 | ≥ %31 |
 
-`scripts/growth-brain.mjs` %59.75'te duruyor; kapsanmayan yer mantık değil CLI giriş
+`scripts/growth-brain.mjs` %60.19'da duruyor; kapsanmayan yer mantık değil CLI giriş
 noktası: `ana()` argümanları araçlara bağlar ve terminale basar. Asıl önemli parça — her
 yazmanın önünde duran insan onay kapısı — kanal kilidini görebilecek tek biçimde
 sınanıyor: gerçek bir işletim sistemi borusu, gerçek bir dosya yönlendirmesi ve gerçekten

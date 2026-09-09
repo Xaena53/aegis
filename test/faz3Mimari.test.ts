@@ -44,6 +44,16 @@ function diyagram(baslik: string): string {
   return m[1];
 }
 
+/**
+ * `diyagram`in TERSI: bir bolumun cit bloklarindan arindirilmis govdesi — yani ANLATIM.
+ * Diyagram dugumleri ve dizin listeleri ETIKET tasir, aciklama tasimaz. Bir cumlenin
+ * belgede yazili oldugunu iddia eden gozcu, o cumlenin yerine bir etiketi kabul ederse
+ * anlatimin tamami ucup gittiginde bile yesil kalir — olculdu, bkz. Test 4.
+ */
+function proza(baslik: string): string {
+  return bolum(baslik).replace(/```[a-z]*\n[\s\S]*?\n```/g, "");
+}
+
 /** `src/` kokundeki modul adlari — elle tutulmaz, DIZINDEN sayilir. */
 function srcKokModulleri(): string[] {
   return readdirSync(path.join(KOK, "src"), { withFileTypes: true })
@@ -192,17 +202,34 @@ test("Layers diyagramı harcama yolundaki modülleri adıyla anıyor", () => {
 });
 
 test("\"önce ağ, sonra insan\" sıralaması hem belgede yazılı hem kodda geçerli", () => {
-  // BELGE YONU: networkTrust'i anan bir paragraf, insan istemine gore SIRAYI soylemeli.
-  const paragraflar = MIMARI.split(/\n\s*\n/);
-  const sira = paragraflar.filter(
-    (p) =>
-      p.includes("networkTrust.ts") && /\bbefore\b/.test(p) && /\bhuman\b|\bprompt\b/.test(p)
-  );
-  assert.ok(
-    sira.length > 0,
-    "ARCHITECTURE.md, ag kapisinin insan isteminden ONCE soruldugunu hicbir yerde soylemiyor — " +
-      "kapinin merkezi invaryanti mimari belgede yok."
-  );
+  /**
+   * BELGE YONU — iki olculmus delige karsi kuruldu.
+   *
+   * (1) CIT HARIC TUTULUR. Ilk surum belgenin TAMAMINDA paragraf ariyordu, ve "Repository
+   *     layout" citindeki tek satirlik dizin anotasyonu ("networkTrust.ts  … consulted
+   *     before the prompt") predikati TEK BASINA tatmin ediyordu: invaryanti ANLATAN iki
+   *     proza paragrafi da silindiginde gozcu yesil kaliyordu (mutasyonla olculdu). Bir
+   *     dizin listesi anotasyonu anlatimin yerini tutmaz. Test 3'te ayni sinif delige
+   *     TERS tedavi uygulaniyor (orada yalniz cit okunur); burada cit ayiklanir.
+   *
+   * (2) HER BOLUM KENDI CUMLESINDEN SORUMLU. Invaryant iki ayri okur icin iki ayri yerde
+   *     duruyor: "Layers" katman siralamasini kuran cumleyi tasir, "The network trust
+   *     gate" ise ayni siralamanin GEREKCESINI. Belgenin tamaminda tek bir eslesme
+   *     aramak, birini silip otekine yaslanmayi serbest birakirdi; ikisi ayri ayri
+   *     civilenir. Bolum basligi kaybolursa `bolum()` zaten "gozcu bayatlamis" diye duser.
+   */
+  const SIRA_ANLATIYOR = (p: string): boolean =>
+    p.includes("networkTrust.ts") && /\bbefore\b/.test(p) && /\bhuman\b|\bprompt\b/.test(p);
+
+  for (const baslik of ["Layers", "The network trust gate"]) {
+    const paragraflar = proza(baslik).split(/\n\s*\n/);
+    assert.ok(
+      paragraflar.some(SIRA_ANLATIYOR),
+      `ARCHITECTURE.md "${baslik}" bolumunun ANLATIMI, ag kapisinin insan isteminden ONCE ` +
+        `soruldugunu soylemiyor — kapinin merkezi invaryanti o bolumden ucmus. ` +
+        `(Cit icindeki diyagram dugumleri ve dizin satirlari sayilmaz: etiket, anlatim degildir.)`
+    );
+  }
 
   // KOD YONU: approval.ts'te ag cagrisi, istem cagrisindan once gelmeli.
   const onay = readFileSync(path.join(KOK, "src", "approval.ts"), "utf8");

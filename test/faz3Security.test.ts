@@ -26,6 +26,18 @@
  *      would have read invariant 3, concluded that was the documented behaviour, and not
  *      reported the one failure the product's headline control is built to prevent.
  *
+ *   3) THAT MEASUREMENT WAS CONFIGURATION-DEPENDENT, and neither the document nor this file
+ *      said so — a later round caught it. The run above uses the DEFAULT configuration; with
+ *      AEGIS_STEPUP on (invariant 8, shipped and documented) the same unreadable signal
+ *      measures as:
+ *        stepUp:true, devSwapCheck:true, simSwap unreadable, devSwap clean over a REAL link
+ *          ->  onaylandi=true, kanal="insan", PROMPTS SHOWN = 1
+ *      So invariant 3's gate half, written without a qualifier, contradicted invariant 8 of
+ *      its own list: one said "a prompt here is a vulnerability", the other described the
+ *      feature that shows it. The document now carries the carve-out, and the guard below
+ *      measures BOTH of its edges — voucherless escalation still refuses at zero prompts,
+ *      vouched escalation does prompt — so neither edge can drift without going red.
+ *
  * BIDIRECTIONALITY (this file's contract). No test here is text-only. Every documented
  * claim is paired with the BEHAVIOUR that makes it true, in the same test:
  *   (a) the DOC drifts -> red (the claim is searched inside the section it belongs to; a
@@ -74,7 +86,16 @@ function bolum(basligiIceren: string): string {
  * bakan bir regex, cümle DURURKEN kırmızı olurdu — yani gözcü anlamı değil biçimlendirmeyi
  * ölçerdi.
  */
-const duzle = (s: string): string => s.replace(/\*\*/g, "").replace(/\s+/g, " ");
+const duzle = (s: string): string =>
+  s
+    .replace(/\*\*/g, "")
+    /**
+     * Kod çitleri de biçimlendirmedir: belge ortam değişkenlerini `AEGIS_STEPUP` diye
+     * yazıyor ve çitleri bırakan bir gözcü, cümle DURURKEN sırf yazım biçimi yüzünden
+     * kırmızı olurdu — yine anlamı değil markdown'ı ölçerdi.
+     */
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ");
 
 const KAPSAM = duzle(bolum("Kapsam"));
 const DEGISMEZLER = bolum("Tasarım gereği güvenlik değişmezleri");
@@ -153,6 +174,24 @@ test("SECURITY.md Kapsam: ağ kapısının atlatılması açıkça kapsam İÇİ
     /doğrulanamayan\/okunamayan\/çelişkili bir sinyalin kapıdan geçirilmesi/i,
     "maddenin ikinci yarısı (bozuk sinyal geçirilemez) kayıp"
   );
+  /**
+   * VE AYNI KAYIT BURADA DA YAZILI OLMALI. Triyajın dayanağı iki yerde: araştırmacı önce
+   * "açık sayılır" listesini okur, 3. maddeyi sonra. Kapsam maddesi kayıtsız kalırsa,
+   * 3. maddede kapatılan çelişki (belge, 8. maddede SEVK EDİLMİŞ kademeli doğrulamayı
+   * açık ilan ediyor) buradan aynen geri döner — "doğrudan kabul edilir" sözü yine
+   * tutulamaz. Kayıt, açık sınıfını daraltmıyor: kefilSİZ yükseltmenin hâlâ açık olduğu
+   * aynı cümlede yazılı.
+   */
+  assert.match(
+    KAPSAM,
+    /8\. maddedeki kefilli kademeli doğrulama/i,
+    "Kapsam maddesi 8. maddedeki kademeyi kayıt olarak anmıyor — liste 8. maddeyle çelişiyor"
+  );
+  assert.match(
+    KAPSAM,
+    /kefilsiz yükseltme yine açıktır/i,
+    "kaydın sınırı yazılmamış: kefilsiz yükseltmenin AÇIK sayıldığı da söylenmeli"
+  );
 
   /**
    * KIRMIZI OLMA YÖNÜ — KOD: kapı, onay kapısından AYRI bir kontrol olmaktan çıkarsa.
@@ -198,6 +237,46 @@ test("SECURITY.md 3. değişmez: kapıda belirsizlik insana SORULMAZ (istem say�
   );
 
   /**
+   * KIRMIZI OLMA YÖNÜ — BELGE, İKİNCİ TUR: kapı yarısı yeniden KOŞULSUZ yazılırsa.
+   *
+   * ÖLÇÜLDÜ (bu turun probu, enjekte kanallar, ağa çıkış yok): risk="high",
+   * `stepUp:true`, `devSwapCheck:true`, SIM Swap yanıtı OKUNAMIYOR, cihaz değişimi
+   * halkası gerçek kanaldan temiz  ->  onaylandi=true, kanal="insan", İSTEM SAYISI=1.
+   * Yani "kapıda belirsizlik insana HİÇ sorulmaz, istem sayısı SIFIRDIR" hükmü, sevk
+   * edilmiş ve 8. maddede BELGELENMİŞ bir yapılandırmada yanlıştı: aynı listenin 3. ve 8.
+   * maddeleri birbirini yalanlıyordu. Public depoda "bu değişmezlerden birini kırdığınızı
+   * gösterirseniz doğrudan kabul edilir" diyen bir belge için bu, tutulamayacak bir söz.
+   *
+   * Kayıt DAR tutulur: sıfır-istem hükmü varsayılan yapılandırmaya bağlanır, tek istisna
+   * 8. maddedeki KEFİLLİ kademeye verilir ve kefilsiz hâlin hâlâ ret olduğu yazdırılır.
+   */
+  assert.match(
+    UCUNCU,
+    /AEGIS_STEPUP kapalıyken/i,
+    "sıfır-istem hükmü koşulsuz yazılmış — AEGIS_STEPUP açıkken 8. madde bunu ÖLÇÜLEBİLİR biçimde yalanlıyor"
+  );
+  assert.match(
+    UCUNCU,
+    /bkz\. 6-8/,
+    "kapı yarısı, kaydı tanımlayan 8. maddeye yönlendirmeli (6-7 durumu 8. maddeyi görmezden gelir)"
+  );
+  assert.match(
+    UCUNCU,
+    /kefil yoksa ret aynen durur ve istem sayısı yine sıfırdır/i,
+    "kefilsiz yükseltmenin YAPILMADIĞI yazılmalı — kayıt bu cümle olmadan sınırsız okunur"
+  );
+  /**
+   * "Açıktır" cümlesi triyajın dayanağı; kaydın DIŞINDA kalması gerekir. Aynı cümlede
+   * (araya nokta girmeden) kaydı anan bir kayıt-cümleciği aranır: kayıt uzağa, ayrı bir
+   * cümleye taşınırsa mutlak hüküm geri gelmiş olur.
+   */
+  assert.match(
+    UCUNCU,
+    /dışında[^.]{0,140}bir açıktır, doğru davranış değil/i,
+    "mutlak \"bu bir açıktır\" hükmü kaydına bağlanmamış — 8. maddeyle çelişki geri döndü"
+  );
+
+  /**
    * KIRMIZI OLMA YÖNÜ — KOD: ağ kontrolü istemden SONRAYA alınırsa ya da okunamayan yanıt
    * "temiz" sayılırsa. Kanal `undefined` döndürüyor: operatör yanıtı OKUNAMADI — "bilinmiyor",
    * "hayır" değil.
@@ -217,6 +296,59 @@ test("SECURITY.md 3. değişmez: kapıda belirsizlik insana SORULMAZ (istem say�
       0,
       "doğrulanamayan sinyalde İSTEM GÖSTERİLMİŞ — SECURITY.md 3. maddesi bunun tersini vaat ediyor"
     );
+  });
+
+  /**
+   * KIRMIZI OLMA YÖNÜ — KOD, KAYDIN İKİ KENARI. Belge artık tek bir kayıt ilan ediyor;
+   * kaydın İKİ kenarı da burada ölçülür, çünkü belgeyi yanlışlayacak olan tam da kenarın
+   * kayması. Bir önceki tur bu maddeyi yalnız stepUp KAPALI yapılandırmada ölçüyordu:
+   * kayıt yazılmamıştı ve gözcü, hükmün açık yapılandırmada yanlış olduğunu göremiyordu.
+   *
+   * (a) KEFİLSİZ yükseltme YOKTUR. stepUp açık, ama sinyali çürütebilecek hiçbir gerçek
+   *     halka koşmuyor: istem sayısı yine SIFIR. Bu kenar kayarsa hem 3. maddenin
+   *     "kefil yoksa ret aynen durur" cümlesi hem 8. maddenin kefalet ilkesi yalan olur.
+   */
+  await izole(async () => {
+    __setSimSwapKanalForTests({ verifySimSwap: async () => undefined });
+    const sorulanlar: string[] = [];
+    const sonuc = await onayAl(
+      istemSunucu(sorulanlar),
+      { eylem: "bütçe artışı", satirlar: [], risk: "high", agAyar: { ...TEK_HALKA, stepUp: true } },
+      undefined
+    );
+    assert.equal(sonuc.onaylandi, false, "kefil yokken yükseltme verilmemeli");
+    assert.equal(sonuc.kanal, "ag", "kefilsiz kademe reddi AĞ kapısından gelmeli");
+    assert.equal(
+      sorulanlar.length,
+      0,
+      "KEFİLSİZ kademe insana SORULMUŞ — 3. maddenin kaydı ve 8. maddenin kefalet ilkesi bunun tersini vaat ediyor"
+    );
+  });
+
+  /**
+   * (b) KEFİLLİ yükseltme VARDIR ve insana gider — belgenin ilan ettiği kaydın ta kendisi.
+   *     Bu kenar kaybolursa (kademe sökülür ya da AEGIS_STEPUP koşulsuz reddeder hâle
+   *     gelirse) belge, artık olmayan bir davranışı tarif ediyor olur ve madde yine
+   *     kodun yaptığından başkasını söyler. İstem, bozuk sinyali ADIYLA anmak zorunda:
+   *     kaydın karşılığı olan telafi kontrolü, insanın neyi doğruladığını bilmesidir.
+   */
+  await izole(async () => {
+    __setSimSwapKanalForTests({ verifySimSwap: async () => undefined });
+    __setCihazDegisimKanalForTests({ cihazDegistiMi: async () => false });
+    const sorulanlar: string[] = [];
+    const sonuc = await onayAl(
+      istemSunucu(sorulanlar),
+      {
+        eylem: "bütçe artışı",
+        satirlar: [],
+        risk: "high",
+        agAyar: { ...TEK_HALKA, stepUp: true, devSwapCheck: true },
+      },
+      undefined
+    );
+    assert.equal(sorulanlar.length, 1, "KEFİLLİ kademe istem göstermeli — 3. maddenin kaydı bunu ilan ediyor");
+    assert.match(sorulanlar[0], /SIM Swap/, "kademe istemi, bozuk sinyali ADIYLA anmalı");
+    assert.equal(sonuc.kanal, "insan", "kefilli kademede karar İNSAN kanalından çıkmalı");
   });
 
   /**

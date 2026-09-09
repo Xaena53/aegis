@@ -23,8 +23,12 @@
  *   · rename the recorder (`kayit`) and the count would silently collapse to zero, which is
  *     how a guard like this becomes a vacuum — so the recorder's own definition is asserted
  *     separately, and a count of zero is a failure rather than a comparison;
- *   · nest a `kayit()` call inside a branch and the "in one command" claim would start
- *     over-promising, so the flat, unconditional shape of the call sites is measured too.
+ *   · put a `kayit()` call somewhere a run does not always reach — inside a branch, or under
+ *     a section wrapped in `if (…) {` — and the "in one command" claim starts over-promising,
+ *     so the unconditional shape of every call site is measured too, from the enclosing
+ *     block openers rather than from indentation (a top-level `if (…) {` indents its body
+ *     exactly like a bare `{`, which is how the indentation version of this test was walked
+ *     around: measured, three green tests, a run printing 19/19 against "twenty-three").
  *
  * The sentences are read from THEIR OWN SECTION, never from the whole file: the words
  * "checks" and "kontrol" occur dozens of times in a 35 KB document, and whole-file matching
@@ -52,42 +56,165 @@ const BETIK = "scripts/agDogrula.mts";
 /** The recorder every live check goes through; the run's total is `sonuclar.length`. */
 const KAYITCI = "kayit";
 
-/** One `kayit(...)` call site: which line it is on and how deep it sits. */
+/** One `kayit(...)` call site: where it is, and what encloses it. */
 interface Cagri {
   readonly satir: number;
-  readonly girinti: number;
+  /**
+   * The trimmed text of the line each enclosing `{` was opened on, outermost first. The
+   * script's shape is one bare top-level block per section, i.e. `["{"]`. An `if (…) {`
+   * around a section lands here VERBATIM — which is the whole reason this is a list of
+   * opener texts and not, as it used to be, a count of leading spaces: a top-level
+   * `if (…) {` leaves its body at exactly the same indent as a bare `{` does, so an
+   * indentation test cannot see the one mutation it was written to catch (measured).
+   */
+  readonly kapsayanlar: readonly string[];
+  /** Whatever precedes the call on its own line — an `if (x) ` prefix shows up here. */
+  readonly onEk: string;
+}
+
+interface Tarama {
+  readonly cagrilar: readonly Cagri[];
+  /**
+   * Every brace, string, template substitution and comment closed at EOF. A scanner that
+   * loses its place would under-count the call sites and read their enclosing blocks wrong,
+   * and both failures are silent — so the balance is asserted rather than assumed.
+   */
+  readonly dengeli: boolean;
+}
+
+/** What an open `{` belongs to while scanning. */
+type Cerceve =
+  | { readonly tur: "blok"; readonly acilis: string }
+  | { readonly tur: "ikame" }
+  | { readonly tur: "sablon" };
+
+/**
+ * Whether the `/` at `i` opens a regex literal rather than being a division. The script has
+ * three (`!/HU/.test(…)`), and one of them contains both a `{` and a `"`; read as code, those
+ * two characters desynchronise the block stack for the rest of the file.
+ */
+function regexBaslangici(kaynak: string, i: number): boolean {
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(kaynak[j] ?? "")) j--;
+  return !/[A-Za-z0-9_$)\]]/.test(kaynak[j] ?? "");
 }
 
 /**
- * The `kayit(...)` CALL SITES of the script — comments excluded on purpose. A commented-out
- * check does not run, and counting one would let the README promise a check the platform is
- * never asked for. The property-access guard (`[^A-Za-z0-9_$.]`) keeps a hypothetical
- * `x.kayit(...)` from being counted as this recorder.
+ * The `kayit(...)` CALL SITES of the script, each with the chain of blocks enclosing it.
+ * Comments and string bodies are skipped on purpose: a commented-out check does not run, and
+ * counting one would let the README promise a check the platform is never asked for. The
+ * property-access guard keeps a hypothetical `x.kayit(...)` from being counted as this
+ * recorder.
  */
-function kayitCagrilari(kaynak: string): Cagri[] {
+function kayitCagrilari(kaynak: string): Tarama {
+  const satirlar = kaynak.split("\n").map((s) => s.replace(/\r$/, ""));
   const cagrilar: Cagri[] = [];
-  const satirlar = kaynak.split(/\r?\n/);
-  let blokYorumda = false;
-  for (let i = 0; i < satirlar.length; i++) {
-    const satir = satirlar[i] ?? "";
-    const kirpik = satir.trim();
-    if (blokYorumda) {
-      if (kirpik.includes("*/")) blokYorumda = false;
+  const yigin: Cerceve[] = [];
+  let modu: "kod" | "sablon" | "tek" | "cift" | "satirYorum" | "blokYorum" | "regex" = "kod";
+  let sinifta = false; // inside a [...] class of a regex, where "/" does not close it
+  let satir = 1;
+  let satirBasi = 0;
+
+  for (let i = 0; i < kaynak.length; i++) {
+    const c = kaynak[i] ?? "";
+    const d = kaynak[i + 1] ?? "";
+
+    if (c === "\n") {
+      if (modu === "satirYorum") modu = "kod";
+      satir++;
+      satirBasi = i + 1;
       continue;
     }
-    if (kirpik.startsWith("/*")) {
-      if (!kirpik.includes("*/")) blokYorumda = true;
+    if (modu === "satirYorum") continue;
+    if (modu === "blokYorum") {
+      if (c === "*" && d === "/") {
+        modu = "kod";
+        i++;
+      }
       continue;
     }
-    if (kirpik.startsWith("//") || kirpik.startsWith("*")) continue;
-    if (!new RegExp(`(^|[^A-Za-z0-9_$.])${KAYITCI}\\s*\\(`).test(satir)) continue;
-    cagrilar.push({ satir: i + 1, girinti: (satir.match(/^ */)?.[0] ?? "").length });
+    if (modu === "tek" || modu === "cift") {
+      if (c === "\\") i++;
+      else if ((modu === "tek" && c === "'") || (modu === "cift" && c === '"')) modu = "kod";
+      continue;
+    }
+    if (modu === "regex") {
+      if (c === "\\") i++;
+      else if (c === "[") sinifta = true;
+      else if (c === "]") sinifta = false;
+      else if (c === "/" && !sinifta) modu = "kod";
+      continue;
+    }
+    if (modu === "sablon") {
+      if (c === "\\") i++;
+      else if (c === "`") {
+        yigin.pop(); // the "sablon" frame this literal opened
+        modu = "kod";
+      } else if (c === "$" && d === "{") {
+        yigin.push({ tur: "ikame" });
+        modu = "kod";
+        i++;
+      }
+      continue;
+    }
+
+    // modu === "kod"
+    if (c === "/" && d === "/") {
+      modu = "satirYorum";
+      i++;
+      continue;
+    }
+    if (c === "/" && d === "*") {
+      modu = "blokYorum";
+      i++;
+      continue;
+    }
+    if (c === "/") {
+      if (regexBaslangici(kaynak, i)) {
+        modu = "regex";
+        sinifta = false;
+      }
+      continue;
+    }
+    if (c === "'") {
+      modu = "tek";
+      continue;
+    }
+    if (c === '"') {
+      modu = "cift";
+      continue;
+    }
+    if (c === "`") {
+      yigin.push({ tur: "sablon" });
+      modu = "sablon";
+      continue;
+    }
+    if (c === "{") {
+      yigin.push({ tur: "blok", acilis: (satirlar[satir - 1] ?? "").trim() });
+      continue;
+    }
+    if (c === "}") {
+      if (yigin.pop()?.tur === "ikame") modu = "sablon";
+      continue;
+    }
+    if (
+      !/[A-Za-z0-9_$.]/.test(kaynak[i - 1] ?? "") &&
+      new RegExp(`^${KAYITCI}\\s*\\(`).test(kaynak.slice(i, i + KAYITCI.length + 8))
+    ) {
+      cagrilar.push({
+        satir,
+        kapsayanlar: yigin.flatMap((f) => (f.tur === "blok" ? [f.acilis] : [])),
+        onEk: kaynak.slice(satirBasi, i),
+      });
+    }
   }
-  return cagrilar;
+
+  return { cagrilar, dengeli: yigin.length === 0 && modu === "kod" };
 }
 
 const BETIK_KAYNAK = oku(BETIK);
-const CAGRILAR = kayitCagrilari(BETIK_KAYNAK);
+const TARAMA = kayitCagrilari(BETIK_KAYNAK);
+const CAGRILAR = TARAMA.cagrilar;
 const KONTROL_SAYISI = CAGRILAR.length;
 
 /* ── Sayı ↔ kelime ────────────────────────────────────────────────────────────── */
@@ -230,6 +357,13 @@ test("kayıtçı hâlâ `kayit` ve sayım sıfıra çökmüş değil (gözcünü
     `${BETIK}: koşu kendi toplamını \`sonuclar.length\` ile basıyordu; o satır gittiyse ` +
       `ekrandaki toplam ile buradaki sayım artık aynı şeyi saymıyor olabilir.`
   );
+  assert.ok(
+    TARAMA.dengeli,
+    `${BETIK} taranırken ayrıştırıcı yerini kaybetti (dosya sonunda açık blok/dize/yorum ` +
+      `kaldı). Bu sessiz bir arıza olurdu: eksik sayılan çağrılar ve yanlış okunan ` +
+      `kapsayıcılar. Betikte alışılmadık bir sözdizimi (ör. yeni bir regex ya da iç içe ` +
+      `şablon) varsa kayitCagrilari() onu tanıyacak biçimde genişletilmeli.`
+  );
 });
 
 test("`npm run agtest`'in kontrol sayısı iki README'de de doğru yazıyor (TR/EN parite)", () => {
@@ -267,19 +401,30 @@ test("`npm run agtest`'in kontrol sayısı iki README'de de doğru yazıyor (TR/
 
 test("her kontrol koşulsuz koşuyor, yani 'tek komutta N kontrol' fazla söz vermiyor", () => {
   /**
-   * The claim both READMEs make is a FLAT count for a SINGLE run. A `kayit()` nested inside
-   * a branch or a loop would break that in either direction — fewer checks than promised on
-   * one path, or the same check counted twice — and the count above cannot see it. The
-   * script keeps every call site inside a top-level block, i.e. at most one indent level.
+   * The claim both READMEs make is a FLAT count for a SINGLE run. A `kayit()` reached only
+   * on some paths breaks it in either direction — fewer checks than promised on one run, or
+   * the same check counted twice — and the count above cannot see that.
+   *
+   * WHAT THIS USED TO MEASURE, AND WHY THAT WAS NOT ENOUGH: it counted leading spaces and
+   * called anything past one indent level "nested". Measured: turning the Q4 section's bare
+   * `{` into `if (process.env.AEGIS_Q4) {` leaves its four checks at the very same indent,
+   * so all three tests stayed green while a real run printed 19/19 and both READMEs still
+   * said twenty-three. The shape is read from the code now, not from the whitespace: each
+   * call must sit in exactly ONE enclosing block, that block's opener must be a bare `{`,
+   * and nothing may precede the call on its own line (`if (x) kayit(...)` is the same
+   * defect written differently).
    */
-  const nested = CAGRILAR.filter((c) => c.girinti > 2);
+  const sartli = CAGRILAR.filter(
+    (c) => c.kapsayanlar.length !== 1 || c.kapsayanlar[0] !== "{" || c.onEk.trim() !== ""
+  );
   assert.deepEqual(
-    nested.map((c) => c.satir),
+    sartli.map((c) => `${BETIK}:${c.satir} → ${[...c.kapsayanlar, `${c.onEk.trim()}…`].join(" › ")}`),
     [],
-    `${BETIK}: bu satırlardaki ${KAYITCI}() çağrıları bir dal/döngü içine girmiş. ` +
-      `İçeri girmiş bir kontrol her koşuda çalışmaz; iki README'nin "tek komutta ` +
+    `${BETIK}: bu ${KAYITCI}() çağrılarına her koşuda varılmıyor — yukarıda listelenen ` +
+      `kapsayıcı satır(lar) çıplak bir "{" değil, ya da çağrının önünde bir koşul var. ` +
+      `Koşullu bir kontrol her koşuda çalışmaz; iki README'nin "tek komutta ` +
       `${KONTROL_SAYISI} kontrol" cümlesi o anda gerçekten koşan sayıdan fazlasını vaat ` +
-      `etmeye başlar. Ya çağrı en üst seviyeye çıkarılmalı, ya cümle koşullu olduğunu ` +
-      `söylemeli.`
+      `etmeye başlar. Ya çağrı koşulsuz en üst seviye bloğa çıkarılmalı, ya iki cümle de ` +
+      `kontrolün koşullu olduğunu söylemeli.`
   );
 });

@@ -22,7 +22,8 @@ Aşağıdakiler **açık** sayılır:
 - Kimlik doğrulama/yetkilendirme atlatma (bearer, oturum çerezi, OAuth akışı)
 - **Onay kapılarının atlatılması** — insan onayı olmadan harcamayı artıran herhangi bir yol
 - **Ağ güven kapısının atlatılması** — kapı temiz geçmeden onay isteminin gösterilmesi,
-  ya da doğrulanamayan/okunamayan/çelişkili bir sinyalin kapıdan geçirilmesi
+  ya da doğrulanamayan/okunamayan/çelişkili bir sinyalin kapıdan geçirilmesi (tek kayıt:
+  8. maddedeki **kefilli** kademeli doğrulama; kefilsiz yükseltme yine açıktır)
 - Güvenlik kelepçelerinin (bütçe tavanı, yazma izni) ajan tarafından gevşetilmesi
 - Şifreli refresh token'ların ifşası
 - Uzaktan kod çalıştırma, SSRF, servis dışı bırakma
@@ -49,10 +50,15 @@ kabul edilir:
 3. Belirsizlikte **kapalı arıza** — iki yüzeyde iki ayrı yöne, ikisi de güvenli taraf:
    - **Ads tarafı:** kampanya durumu okunamıyorsa (boş yanıt, eksik alan, tanınmayan
      değer) kampanya **yayında sayılır** ve **onay istenir**; onaysız yazma yapılmaz.
-   - **Ağ güven kapısı:** doğrulanamayan/okunamayan/çelişkili sinyal insana **hiç
-     sorulmaz** — işlem, onay istemi **gösterilmeden** reddedilir (bkz. 6-7). Kapının
-     reddettiği anda gösterilen istem sayısı **sıfırdır**. Kapıdaki belirsizlikte onay
-     isteminin gösterildiği bir yol bulursanız bu bir **açıktır**, doğru davranış değil.
+   - **Ağ güven kapısı:** `AEGIS_STEPUP` kapalıyken (**varsayılan**) doğrulanamayan/
+     okunamayan/çelişkili sinyal insana **hiç sorulmaz** — işlem, onay istemi
+     **gösterilmeden** reddedilir (bkz. 6-8). Kapının reddettiği anda gösterilen istem
+     sayısı **sıfırdır**. `AEGIS_STEPUP` açıkken tek kayıt 8. maddedir: bozuk sinyali
+     **çürütebilecek** ve o koşuda gerçekten bir şey **gözlemiş** bir halka gerçek kanaldan
+     temiz döndüyse ret, o sinyali adıyla anan kademeli doğrulama istemine çevrilir —
+     **kefil yoksa ret aynen durur ve istem sayısı yine sıfırdır.** Bu kaydın dışında
+     kapıdaki belirsizlikte onay isteminin gösterildiği bir yol bulursanız bu bir
+     **açıktır**, doğru davranış değil.
 4. Bütçe tavanı ve yazma izni MCP üzerinden **yalnız okunur**; değişiklik yalnız
    insanın tarayıcı oturumundan yapılır (API anahtarı bu kapıyı açmaz).
 5. `analyze_site` çıktısı güvenilmez dış içeriktir ve sınırlandırılmış bir blokta sunulur.
