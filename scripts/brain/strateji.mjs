@@ -7,8 +7,11 @@
  *
  * 1) The trust boundary is redrawn on every LLM call: the research fields travel only in the
  *    user message, inside a <arastirma-verisi> block marked "data, not instructions"; they
- *    never mix into the system prompt. Attempts to escape the block
- *    (site.ts:179 deseniyle) temizlenir.
+ *    never mix into the system prompt. Attempts to escape the block are cleaned by
+ *    ayracNotrle (see ortak.mjs; it mirrors ayracTemizle in src/siteExtract.ts): the
+ *    delimiter's literal NAME is neutralised. This is deliberately NOT the old
+ *    length-bounded regex, whose `[^>]{0,200}` bound 201 characters of padding walked
+ *    straight past, closing the block early.
  * 2) planDogrula fails closed: the budget check is written as
  *    `Number.isFinite(b) && b > 0 && b <= tavan`, which also drops NaN and strings; on a
  *    violation there is NO SILENT CLAMPING, an Error is thrown.

@@ -29,9 +29,22 @@
  *    steps are cancelled; there is never a "find the newest campaign" guess.
  */
 
-/** The marker mcpBaglan leaves at its result cap, following the demo-agent.mjs
- * pattern. */
-const KIRPMA_ISARETI = "[... sonuç kırpıldı ...]";
+/**
+ * The marker mcpBaglan leaves at its result cap — IMPORTED FROM ITS PRODUCER, never copied.
+ *
+ * ortak.mjs both defines the marker and appends it in sonucKirp(); this module is the
+ * consumer that refuses to parse an id out of a text carrying it. The two used to be a pair
+ * of hand-written literals with no link between them, and the drift ran in the fail-OPEN
+ * direction: change the sentence on the producing side — say to
+ * "[... sonuç kırpıldı (30000 karakter tavanı) ...]" — and the `metin.includes(...)` test
+ * below never matches again. Measured on a copy of this module wired to a producer whose
+ * marker had been changed: a create_search_campaign response cut off at the cap came back
+ * kirpik=false, the step was stamped 'tamam' instead of 'belirsiz', the remaining steps were
+ * NOT cancelled, and kimlikAyikla() went on to regex an id out of the truncated text. One
+ * import removes the failure mode; a local copy could only ever be checked by a human
+ * noticing two files at once.
+ */
+import { KIRPMA_ISARETI } from "./ortak.mjs";
 
 /** The write tools this module may call — a fixed allowlist. */
 export const YAZMA_IZINLI = Object.freeze([
@@ -406,13 +419,36 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
       devam = false;
       basari = false;
     } else {
+      /**
+       * THE STAMP TELLS THE TRUTH ABOUT THE CHECK, NOT ABOUT THE DECISION TO CARRY ON.
+       *
+       * The row count is the ONLY thing that makes this step meaningful: without it we do
+       * not know whether a campaign of the same name is already standing in the account.
+       * The stamp used to be the constant "tamam" here, so a run_gaql answer that carried
+       * no isError but did not match `^\d+ satır` — "(boş yanıt)", or read.ts's output
+       * format changing under us — entered the audit table as TAMAM while the very next
+       * line pushed the warning "sonucu çözümlenemedi". The table then said the
+       * duplicate-name check had run successfully at the same moment the module admitted it
+       * could not read the answer. Measured before the fix: durum "tamam", sonucOzeti
+       * "(boş yanıt)", and rapor.mjs printed TAMAM for a check that never happened.
+       *
+       * 'belirsiz' is this module's word for exactly that state (see sonucDurumu): not "it
+       * failed", but "whether it happened COULD NOT BE CONFIRMED". Carrying on is still the
+       * right call — the run stamp already makes the name near-unique — but "we carried on"
+       * and "the check was fine" are not the same sentence, and only the second one is a
+       * lie. The stamp is what rapor.mjs reads (adimBasarisizMi treats anything other than
+       * 'tamam' as not-successful), so the report now flags the setup instead of blessing
+       * it. The go-live gate is untouched: growth-brain.mjs looks at uygulamaSonucu.basari,
+       * which this branch does not change.
+       */
+      const olculdu = Number.isFinite(satirSayisi);
       adimlar.push({
         arac: "run_gaql",
         ozet: "idempotenlik kontrolü",
-        sonucOzeti: Number.isFinite(satirSayisi) ? "aynı adlı kampanya yok" : gorunurOzet(metin),
-        durum: "tamam",
+        sonucOzeti: olculdu ? "aynı adlı kampanya yok" : gorunurOzet(metin),
+        durum: olculdu ? "tamam" : "belirsiz",
       });
-      if (!Number.isFinite(satirSayisi)) {
+      if (!olculdu) {
         uyarilar.push("İdempotenlik kontrolü sonucu çözümlenemedi — damgalı ad benzersiz varsayılarak devam edildi.");
       }
     }
@@ -612,10 +648,23 @@ export function yayinCagirici(cagir) {
 const YAYIN_BASARI_IZI = /YAYINDA \(ENABLED\)/;
 
 /**
- * The human-approval gate's signatures. These are checked FIRST: when the network gate
- * passes CLEANLY, its evidence lines — which can mention things like AEGIS_NAC_SIMULATE — are
- * appended to the approval gate's refusal text, and in the opposite order a clean pass would
- * be misreported as "the network refused".
+ * The human-approval gate's signatures, checked FIRST — a refusal from the human gate must
+ * never be reported as a refusal from the network gate.
+ *
+ * THE ORIGINAL REASON FOR THAT ORDER NO LONGER HOLDS, and saying so matters more than the
+ * order itself. It used to read: "when the network gate passes cleanly, its evidence lines —
+ * which can mention things like AEGIS_NAC_SIMULATE — are appended to the approval gate's
+ * refusal text". src/approval.ts does not do that any more. The gate's evidence (`ag.kanit`)
+ * is spread into `insanSatirlari`, which is the HUMAN's channel alone: it is rendered into
+ * the elicitation prompt and nowhere else. Every refusal text this client can receive is
+ * built from `ozet.satirlar` or from a fixed sentence, so no masked approver number, no
+ * look-back window and no expected country reaches the agent — deliberately, so that anyone
+ * probing the gate cannot read off its dimensions. On this client the point is moot twice
+ * over: mcpBaglan does not advertise elicitation, so the prompt is never shown here at all.
+ *
+ * The order is kept anyway, on the narrower ground stated in the first line, and
+ * yayinSonucuSinifla additionally runs the network patterns over the BULLET-FREE body
+ * (maddesizGovde), so a summary line could not reach them even if one carried network words.
  */
 const INSAN_KAPISI_IZLERI = [/confirm=true ile tekrar çağır/i, /^İşlem yapılmadı:/mu];
 
@@ -654,7 +703,11 @@ const AG_KAPISI_IZLERI = [
   /AEGIS_(APPROVER_PHONE|EXPECTED_COUNTRY)/u,
 ];
 
-/** The bullet lines of the approval summary — the network evidence travels in them. */
+/**
+ * The bullet lines of the approval summary. THE NETWORK GATE'S EVIDENCE IS NOT AMONG THEM —
+ * approval.ts keeps `ag.kanit` in `insanSatirlari`, the human prompt's channel, and this
+ * client never sees it.
+ */
 function maddeSatirlari(metin) {
   return String(metin ?? "")
     .split("\n")
@@ -746,11 +799,13 @@ export function yayinSonucuSinifla(metin, kampanyaAdi) {
    * A refusal always beats a success. If one text carries both a refusal and a success
    * marker, that text is a refusal.
    *
-   * The order among the refusal kinds, human before network, was kept DELIBERATELY: as the
-   * note on INSAN_KAPISI_IZLERI above explains, the evidence lines of a network gate that
-   * passed cleanly are appended to the approval gate's refusal text. This fix only moves the
-   * success signature to the end; it does not touch the refusal kinds' order relative to one
-   * another.
+   * The order among the refusal kinds, human before network, is kept DELIBERATELY: a
+   * refusal from the human gate must not be reported as a refusal from the network gate.
+   * (The note on INSAN_KAPISI_IZLERI above gives the fuller story — the reason ORIGINALLY
+   * written here, that a cleanly-passing network gate's evidence lines ride along in the
+   * approval gate's refusal text, stopped being true when approval.ts moved that evidence
+   * into the human-only channel.) Moving the success signature to the end did not touch the
+   * refusal kinds' order relative to one another.
    */
   if (INSAN_KAPISI_IZLERI.some((d) => d.test(temiz))) return "insan-onayi-gerekli";
   const govde = maddesizGovde(temiz);
@@ -760,8 +815,24 @@ export function yayinSonucuSinifla(metin, kampanyaAdi) {
   return "hata";
 }
 
-/** The network-evidence and approval-summary lines, with the bullet stripped and the text
- * cleaned. */
+/**
+ * THE APPROVAL SUMMARY'S bullet lines, with the bullet stripped and the text cleaned.
+ *
+ * IT DOES NOT RETURN NETWORK EVIDENCE, and it cannot: the summary is all this client is
+ * given. approval.ts spreads the gate's evidence into `insanSatirlari`, which is rendered
+ * only into the human's elicitation prompt — a client without elicitation, and mcpBaglan is
+ * one, receives a refusal built from `ozet.satirlar` alone. So what comes back here on the
+ * --yayinla path is "Hesap: … · Kampanya: …", "Günlük bütçe: …", "Coğrafi hedef: …" and
+ * their siblings; the masked approver number, the look-back window and the expected country
+ * are withheld from the agent ON PURPOSE. Nothing here can widen that channel: this is a
+ * READER of whatever the server chose to send, and putting the CAMARA evidence in front of
+ * the operator would take a decision on the server about what may cross to the agent, not a
+ * change in this file.
+ *
+ * The name of the return field (`kanitSatirlari`) and rapor.mjs's heading over the block are
+ * older than that server decision and still promise network evidence — see the notes handed
+ * back with this fix; rapor.mjs is not this module's to edit.
+ */
 export function kanitSatirlariniAyikla(metin) {
   return maddeSatirlari(metin)
     .map((s) => gorunurOzet(s.replace(/^•\s*/u, ""), 300))

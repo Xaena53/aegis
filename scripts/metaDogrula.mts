@@ -41,7 +41,9 @@ if (eksik.length) {
   process.exit(2);
 }
 
-const { metaKanali, __setMetaKanalForTests } = await import("../src/meta/client.js");
+const { metaKanali, __setMetaKanalForTests, hataTemizle } = await import(
+  "../src/meta/client.js"
+);
 
 const sonuclar: Array<[string, boolean, string]> = [];
 const kayit = (ad: string, gecti: boolean, not: string) => {
@@ -68,16 +70,39 @@ console.log(`  Reklam hesabı: ${ayar.metaAdAccountId}${yazmaModu ? "  ·  YAZMA
     kayit("jeton kabul ediliyor", true, "beklenmedik biçimde başarılı döndü ama jeton geçerli");
   } catch (e: any) {
     const m = String(e?.message ?? e);
-    const jetonSorunu = /OAuth|190|access token|Invalid OAuth/i.test(m);
-    kayit(
-      "jeton kabul ediliyor (kimlik doğrulama geçti)",
-      !jetonSorunu,
-      jetonSorunu ? `jeton reddedildi: ${m.slice(0, 140)}` : `beklenen hata alındı: ${m.slice(0, 110)}`
-    );
+    /**
+     * THE CANARY SINGS BEFORE THE BIRD IS LET OUT, NOT AFTER.
+     *
+     * These two records used to run the other way round: the raw upstream message was
+     * printed first (`m.slice(0, 140)`) and only THEN was it asked whether that same text
+     * carried the access token. Measured, the terminal read:
+     *
+     *   GEÇTİ  jeton kabul ediliyor … proxy: access_token=<the live token> rejected upstream
+     *   KALDI  hata metni erişim jetonunu SIZDIRMIYOR
+     *
+     * — a leak announced one line after it happened. A check that runs after the print is
+     * not a guard, it is a post-mortem.
+     *
+     * TWO THINGS CHANGE AND THEY MUST BOTH STAY. (1) The leak check runs FIRST. (2) What is
+     * printed is the CLEANED text, while what is CHECKED stays the RAW text. Cleaning `m`
+     * before the check would look like a fix and be the opposite of one: hataTemizle would
+     * remove the token, the check would find nothing, and an upstream that really is echoing
+     * our token back would be reported as GEÇTİ. Detection belongs on the raw text; masking
+     * belongs on the way to the screen.
+     */
     kayit(
       "hata metni erişim jetonunu SIZDIRMIYOR",
       !m.includes(ayar.metaToken),
       "jeton hiçbir hata mesajında görünmemeli"
+    );
+    const temiz = hataTemizle(m, ayar.metaToken);
+    const jetonSorunu = /OAuth|190|access token|Invalid OAuth/i.test(m);
+    kayit(
+      "jeton kabul ediliyor (kimlik doğrulama geçti)",
+      !jetonSorunu,
+      jetonSorunu
+        ? `jeton reddedildi: ${temiz.slice(0, 140)}`
+        : `beklenen hata alındı: ${temiz.slice(0, 110)}`
     );
   }
 }
@@ -128,7 +153,14 @@ if (yazmaModu) {
       `yazılan 100 → okunan ${geri.gunlukButce}`
     );
   } catch (e: any) {
-    kayit("kampanya oluşturuldu", false, String(e?.message ?? e).slice(0, 180));
+    /**
+     * The same rule as the read path, and this branch is the WEAKER of the two: there is no
+     * leak canary here at all, so an unmasked print would go unreported as well as unstopped.
+     * Not every throw that lands here has been cleaned at the source — the read-back GET on
+     * line above rethrows transport errors verbatim — so the cleaning happens here.
+     */
+    const temiz = hataTemizle(String(e?.message ?? e), ayar.metaToken);
+    kayit("kampanya oluşturuldu", false, temiz.slice(0, 180));
   }
 } else {
   console.log("  (yazma denemeleri atlandı — gerçek kampanya oluşturmak için --write ekleyin)\n");

@@ -45,7 +45,11 @@
  * cannot be proven, shout through the same interlock — an unreadable answer counting as
  * changed. Only after the account is back where it belongs may the missing refusal, or a
  * prompt shown even once, end the demo in an ERROR; the elicitation handler for those acts
- * ALWAYS refuses, as a fail-closed precaution.
+ * ALWAYS refuses, as a fail-closed precaution. The one campaign 3/B does not push back is one
+ * that --kampanya named while it was ALREADY ENABLED: that is not a write of ours to reverse,
+ * and pausing it would stop someone else's live campaign. There the reservation is spoken
+ * instead of shouted — an unreadable status is reported as DOĞRULANAMADI, never as "no write
+ * happened".
  *
  * Every act first verifies, with READ-ONLY queries, that its candidate can reach the network
  * gate at all: update_campaign_budget answers first on the account's safety ceiling and then
@@ -1517,14 +1521,29 @@ try {
       if (yayindaOlabilir) {
         throw new Error(`GÜVENLİK İHLALİ: ret metnine rağmen kampanya #${aday3.id} durumu "${durumB}" okundu.`);
       }
-      yaz(soluk(`Geri okuma: kampanya #${aday3.id} durumu ${durumB} — yazma yapılmadı.`));
+      /**
+       * "NO WRITE HAPPENED" IS A MEASUREMENT, NOT A DEFAULT.
+       *
+       * Reaching this line with an UNREADABLE status is possible on exactly one path: a
+       * candidate that was ALREADY ENABLED before the run — only --kampanya can name one — so
+       * `zatenYayindaydi` lifted the live check above. No reversal is owed there, because we
+       * do not pause someone else's live campaign; but no CLAIM is owed either. A status that
+       * could not be read measured NOTHING, and printing "yazma yapılmadı" over it would
+       * report the unmeasured as measured, on stage and in the summary table alike. The screen
+       * says only what the account actually answered.
+       */
+      yaz(
+        okunabildiB
+          ? soluk(`Geri okuma: kampanya #${aday3.id} durumu ${durumB} — yazma yapılmadı.`)
+          : sari(`Geri okuma BAŞARISIZ: kampanya #${aday3.id} durumu ${durumB} — yazma yapılmadığı DOĞRULANAMADI.`)
+      );
       ozet.push({
         perde: "3/B",
         eylem: EYLEM_YAYIN,
         sim: "degisti",
         karar: "RET (ağ doğrulaması başarısız)",
         istem: "HİÇ gösterilmedi (0)",
-        yazma: `yok (geri okundu: ${durumB})`,
+        yazma: okunabildiB ? `yok (geri okundu: ${durumB})` : `DOĞRULANAMADI (${durumB})`,
       });
       await istemci.close();
       istemci = undefined;
