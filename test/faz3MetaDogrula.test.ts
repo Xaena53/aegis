@@ -37,7 +37,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -52,7 +52,21 @@ const ISTEMCI = join(KOK, "src", "meta", "client.ts");
  */
 const JETON = "TEST-ONLY-EAAB-jeton-kalibi-0123456789";
 
-const gecici = mkdtempSync(join(tmpdir(), "aegis-metadogrula-"));
+/**
+ * THE COPY LIVES INSIDE THE REPOSITORY, NOT IN THE SYSTEM TEMP DIRECTORY.
+ *
+ * The copy still imports what the original imports — `dotenv` among them — and Node resolves
+ * a bare specifier by walking UP from the importing file looking for `node_modules`. From
+ * `/tmp/...` there is no such ancestor, so on Linux CI every run of this file died with
+ * `ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'` and all three assertions failed. It
+ * passed on Windows only by accident: `os.tmpdir()` sits under the user profile there, and
+ * the walk up happened to find a `node_modules` on the way to the drive root.
+ *
+ * Putting the copy under the repository root makes resolution identical on every platform —
+ * it finds THIS project's node_modules, which is the one the script is meant to run against.
+ * `.tmp*` is covered by .gitignore, and the directory is removed in `after()` regardless.
+ */
+const gecici = mkdtempSync(join(KOK, ".tmp-metadogrula-"));
 after(() => rmSync(gecici, { recursive: true, force: true }));
 
 /**
