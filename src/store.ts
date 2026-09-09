@@ -47,9 +47,11 @@ let cachedMasterKey: Buffer | undefined;
  * with no reason in it, and the warm backup is broken in exactly the same way.
  *
  * The "adspilot" prefix is the product's former name and it stays DELIBERATELY. The bulk
- * rename to Aegis changed this line too; the embedded ciphertext in test/anahtarBelgesi.ts
- * caught it immediately. If you want to rotate the key, the path is reconnecting users, not
- * changing the salt.
+ * rename to Aegis changed this line too; the embedded ciphertext in test/store.test.ts (the
+ * "DEPOYA GÖMÜLÜ ŞİFRELİ METİN" test, which repeats this salt from its own side instead of
+ * importing it) caught it immediately. The similarly named test/anahtarBelgesi.test.ts is a
+ * different guard: it keeps the DOCS and the code saying the same thing about the key. If
+ * you want to rotate the key, the path is reconnecting users, not changing the salt.
  */
 const ANAHTAR_TUZU = "adspilot-token-encryption-v1";
 const ANAHTAR_ASGARI_UZUNLUK = 32;
@@ -405,7 +407,8 @@ export class UserStore {
    * Inserts or refreshes the user and returns a NEW API key.
    * When `subject` (Google's `sub`) is present it is the tenant key; otherwise the email
    * is the fallback, a path that exists only for stdio and tests since the hosted flow
-   * requires a subject.
+   * requires a subject. A subject that is present but BLANK is neither of those two states
+   * and is refused outright — see the check at the top of the body.
    * Everything runs in one transaction so two concurrent callbacks cannot race into a
    * UNIQUE violation and lose the user's fresh refresh token.
    */
@@ -416,6 +419,30 @@ export class UserStore {
     loginCustomerId?: string;
     maxDailyBudget?: number;
   }): { apiKey: string; userId: number } {
+    /**
+     * A PRESENT-BUT-BLANK SUBJECT IS REFUSED. It is neither an identity nor an absence.
+     *
+     * The same field was read with two different notions of emptiness: the lookup and the
+     * takeover gate below ask whether `subject` is TRUTHY, while the INSERT asks whether it
+     * is NULLISH (`?? null`). An empty string walked between the two — measured: the row
+     * was written with google_sub = "" (a TEXT value, not NULL), which the takeover gate
+     * then read back as an UNLINKED row. A later login carrying a DIFFERENT `sub` on the
+     * same e-mail therefore claimed that row, inheriting the victim's login_customer_id and
+     * budget ceiling and invalidating the victim's API key — exactly the takeover the gate
+     * exists to stop. A second blank subject failed the other way, with the raw
+     * "UNIQUE constraint failed: users.google_sub" leaking out of SQLite.
+     *
+     * The fix is a refusal rather than a silent rewrite to `undefined`: a caller that has no
+     * subject omits the field, and a caller that believes it HAS one but hands over blank
+     * space is contradicting itself. Today the hosted flow cannot reach this (http.ts drops
+     * a falsy `sub` before calling), so this is defence in depth, not a live hole.
+     */
+    if (input.subject !== undefined && input.subject.trim() === "") {
+      throw new Error(
+        "google_sub (subject) boş — kimliği okunamayan bir kiracı anahtarıyla kayıt açılmaz. " +
+          "Subject yoksa alanı hiç gönderme (stdio/test akışı); varsa Google'ın `sub` iddiasını olduğu gibi ver."
+      );
+    }
     const { plain, hash } = generateApiKey();
     const enc = encryptSecret(input.refreshToken);
     this.db.exec("BEGIN IMMEDIATE");
@@ -446,7 +473,12 @@ export class UserStore {
         .prepare("SELECT id, google_sub FROM users WHERE email = ?")
         .get(input.email) as { id: number; google_sub: string | null } | undefined;
 
-      if (!bySub && byEmail && byEmail.google_sub && byEmail.google_sub !== input.subject) {
+      // NULL is the ONLY shape that means "never linked". A row whose google_sub is a blank
+      // string — one a pre-fix build could write, or an offline sqlite3 repair — is a row
+      // whose ownership cannot be READ, and unreadable is not unowned: it is not handed over
+      // either. A truthy test here would call such a row free and claim it.
+      const mevcutSahip = byEmail?.google_sub ?? null;
+      if (!bySub && byEmail && mevcutSahip !== null && mevcutSahip !== input.subject) {
         throw new Error(
           "Bu e-posta başka bir Google hesabına bağlı. Güvenlik gereği devralınmaz — " +
             "hesap sahibiyle iletişime geçin."
@@ -648,7 +680,10 @@ export class UserStore {
   private rowToUser(row: any): StoredUser {
     return {
       id: Number(row.id),
-      googleSub: row.google_sub ? String(row.google_sub) : undefined,
+      // NULL — not "falsy" — is what "never linked" means. A blank google_sub is reported as
+      // it stands instead of being smoothed into `undefined`, which would show a row whose
+      // ownership cannot be read as an unowned one: the same asymmetry upsertUser refuses.
+      googleSub: row.google_sub != null ? String(row.google_sub) : undefined,
       email: String(row.email),
       refreshToken: decryptSecret(String(row.refresh_token_enc)),
       loginCustomerId: row.login_customer_id ? String(row.login_customer_id) : undefined,

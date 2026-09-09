@@ -15,12 +15,20 @@
  *    tool into a new point of failure: legitimate spending approvals would break because of
  *    a mistyped path.
  *
- * 2) NO SECRETS ARE WRITTEN. A full approver number, a NaC token or raw upstream error text
- *    NEVER enters a record. The number field is the gate's own maskele() output and is
- *    additionally validated structurally before it is written here (at least one '*' — an
- *    unmasked E.164 number cannot get through that gate). The refusal reason is not free
- *    text but a code from networkTrust's FIXED RetNedeni vocabulary, so no upstream text can
- *    leak into the log.
+ * 2) NO SECRETS ARE WRITTEN, AND THE FILE IS NOT PUBLIC EITHER. A full approver number, a
+ *    NaC token or raw upstream error text NEVER enters a record. The number field is the
+ *    gate's own maskele() output and is additionally validated structurally before it is
+ *    written here (at least one '*' — an unmasked E.164 number cannot get through that
+ *    gate). The refusal reason is not free text but a code from networkTrust's FIXED
+ *    RetNedeni vocabulary, so no upstream text can leak into the log.
+ *
+ *    "No secret" is not the same as "public". What is left after the redaction is still the
+ *    masked approver number, the ad-account ids, the daily amounts and the exact minute a
+ *    spending increase was refused over which signal — enough to pick a target and to learn
+ *    the size of the gate, which is precisely why approval.ts keeps some of it away from the
+ *    agent in the first place. So the file is CREATED with mode 0600 (see kararYaz): on a
+ *    default systemd unit the log directory is world-traversable and an unrestricted create
+ *    lands on 0644, meaning every local account on the box can read the whole audit trail.
  *
  * 3) THE RECORD IS DERIVED FROM THE TRACE, NOT FROM TEXT. Channel, window, number and
  *    refusal reason used to be guessed by sniffing the refusal and evidence STRINGS; because
@@ -277,21 +285,13 @@ export function agKararKaydiOlustur(
 }
 
 /**
- * Appends the record as JSONL. With AEGIS_DECISION_LOG unset the LOG IS OFF: no file is
- * created and no side effect is produced.
- *
- * The environment is read at decision time rather than at module load: being able to switch
- * the log on and off within a single process is needed by both the operator and the tests.
- */
-/**
  * THE LOG FILE'S BYTE CEILING, and its single generation of backup.
  *
  * Writing records had no upper bound: every risky decision appended a line and the file only
  * grew. A single malicious — or merely buggy — agent could fill the disk with a flood of
  * requests that do not even require approval, because the gate refuses them anyway. And a
  * full disk is this module's worst failure mode: since a write error does not bring the flow
- * down, nobody
- * etmez, denetim izi sessizce durur.
+ * down, nobody notices — the audit trail simply stops, silently.
  *
  * On reaching the ceiling the file is rolled over to `<path>.1` and a new one is opened. A
  * single generation is deliberate: a fixed two-file ceiling is the only honest middle ground
@@ -320,6 +320,17 @@ function dosyayiDevret(hedef: string): void {
   }
 }
 
+/**
+ * Appends the record as JSONL. With AEGIS_DECISION_LOG unset the LOG IS OFF: no file is
+ * created and no side effect is produced.
+ *
+ * The environment is read at decision time rather than at module load: being able to switch
+ * the log on and off within a single process is needed by both the operator and the tests.
+ *
+ * THIS BLOCK BELONGS DIRECTLY ABOVE THE FUNCTION. It once drifted upwards, above the
+ * GUNLUK_AZAMI_BAYT docblock, and kararYaz's behavioural contract — "unset means OFF" —
+ * disappeared from every IDE hover of the only exported writer in this module.
+ */
 export function kararYaz(kayit: KararKaydi): void {
   const hedef = process.env.AEGIS_DECISION_LOG?.trim();
   if (!hedef) return;
@@ -357,7 +368,25 @@ export function kararYaz(kayit: KararKaydi): void {
       retNedenleri: kayit.retNedenleri,
       kademeDogrulayan: kayit.kademeDogrulayan,
     });
-    appendFileSync(hedef, satir + "\n", "utf8");
+    /**
+     * MODE 0600 — the trail is created readable by its OWNER ONLY.
+     *
+     * Without a mode the file is opened 0o666 & ~umask; the deployed unit sets no UMask=,
+     * so the default 0022 applies and the file lands on 0644 inside a LogsDirectory that is
+     * 0755. Every local account on the machine could then read the whole audit trail: the
+     * masked approver number, the Google Ads customer id and the Meta ad-account id, the
+     * daily amounts, the campaign names and the minute each spending increase was refused.
+     * None of that is a secret in the "token or full phone number" sense — invariant 2 holds
+     * — but it is not public data either, and the file's own access control had never been
+     * stated anywhere.
+     *
+     * HONEST LIMIT: a mode only applies WHEN THE FILE IS CREATED. An audit file that already
+     * exists keeps the permissions it has, and this call deliberately does not chmod it —
+     * silently re-permissioning a path the operator handed us (a collector's group-readable
+     * log, say) would be a side effect nobody asked for. A rollover fixes it by itself: the
+     * old generation is renamed away and the next line creates a fresh 0600 file.
+     */
+    appendFileSync(hedef, satir + "\n", { encoding: "utf8", mode: 0o600 });
   } catch (e: any) {
     /**
      * Swallowing this silently would be as bad as dropping it: the operator would have no

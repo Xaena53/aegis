@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 process.env.AEGIS_MASTER_KEY = "birim-test-anahtari-32-bayttan-uzun-olmali";
 const DB = join(tmpdir(), `aegis-test-${process.pid}.db`);
@@ -438,4 +440,119 @@ test("AEGIS_DB açıkça verilmişse hiçbir tahmin yapılmaz", () => {
     if (eskiEnv === undefined) delete process.env.AEGIS_DB;
     else process.env.AEGIS_DB = eskiEnv;
   }
+});
+
+/**
+ * SPDX BAŞLIK KAPSAMI — bu dosyanın KENDİ ilk satırı da dahil.
+ *
+ * NEDEN VAR: depo AGPL-3.0-only altında PUBLIC duruyor. LICENSE, package.json'daki
+ * `"license": "AGPL-3.0-only"` ve kaynak dosyaların başlıkları bunu söylüyor; ama
+ * "Add SPDX headers and copyright" turu kapsamı tamamlamadı ve 16 dosya — İÇLERİNDE BU
+ * DOSYA — hangi lisansa tabi olduğunu söyleyen tek bir satır bile taşımıyordu. Bu dosya
+ * kopyalanmaya en açık parçaları (şifreleme gidiş-dönüşü, gömülü şifreli metin, kiracı
+ * izolasyonu) tutuyor; tek başına alındığında lisanssız görünüyordu ve REUSE/scancode
+ * gibi tarayıcılar onu "lisans bilinmiyor" diye raporluyordu. Hiçbir kapı bunu ölçmüyordu:
+ * kaynakHijyeni.test.ts ham NUL baytını ve HMAC anahtar kaynağını çiviliyor, başlığı değil.
+ *
+ * ÇİFT YÖNLÜ — bir borç listesi ancak iki yönde de kızarırsa bekçidir:
+ *   (1) BORÇ LİSTESİNDE OLMAYAN başlıksız bir dosya kırmızıdır. Bundan sonra src/, test/
+ *       ya da scripts/ altına eklenen her .ts/.mts/.mjs başlık taşımak zorunda.
+ *   (2) BORÇ LİSTESİNDEKİ bir dosya başlığını kazandığında ya da silindiğinde de
+ *       kırmızıdır. Kapanmış bir borç listede kalamaz: duran bir kayıt, adını taşıdığı
+ *       yola sonradan konan başlıksız bir dosyayı sessizce affeder.
+ *
+ * Eşleşme TAM: kırpılmış satır SPDX_SATIRI'na birebir eşit olmalı. "SPDX ekle" diyen bir
+ * TODO yorumu ya da bu cümlenin kendisi başlık sayılmaz — geniş bir "içeriyor" testi
+ * bekçiyi delerdi.
+ */
+const SPDX_SATIRI = "// SPDX-License-Identifier: AGPL-3.0-only";
+const SPDX_KOK = fileURLToPath(new URL("..", import.meta.url));
+const SPDX_DIZINLERI = ["src", "test", "scripts"];
+/** allowJs kapalı olsa da .js buraya dahil: lisans etiketi derleyiciyi değil dağıtımı ilgilendirir. */
+const SPDX_UZANTILARI = new Set([".ts", ".mts", ".mjs", ".js"]);
+
+/**
+ * KAPANMAMIŞ BORÇ — başlığı hâlâ olmayan, bilinen dosyalar. Bu liste yalnız KÜÇÜLEBİLİR:
+ * bir satır eklemek borcu kapatır, kapanan borç buradan silinmelidir (yukarıdaki 2. yön).
+ * Bu turda yalnız kendi dosyam düzeltilebildiği için kalanlar burada adlarıyla duruyor —
+ * sessizce görmezden gelinmiyor.
+ */
+const SPDX_BORCLULARI = [
+  "scripts/demo-agent.mjs",
+  "scripts/smoke.mjs",
+  "test/approval.test.ts",
+  "test/eval.test.ts",
+  "test/failclosed.test.ts",
+  "test/helpers/harness.ts",
+  "test/http.test.ts",
+  "test/promises.test.ts",
+  "test/prompts.test.ts",
+  "test/rateLimit.test.ts",
+  "test/resources.test.ts",
+  "test/siteExtract.test.ts",
+  "test/tools.read.test.ts",
+  "test/tools.write.test.ts",
+  "test/util.test.ts",
+];
+
+/** Nokta ile başlayan adlar atlanır: `.tmp-*` çalışma dizinleri depo içine yazılır. */
+function spdxDosyalari(dizin: string, toplanan: string[] = []): string[] {
+  for (const ad of readdirSync(dizin)) {
+    if (ad.startsWith(".") || ad === "node_modules" || ad === "dist") continue;
+    const tam = join(dizin, ad);
+    if (statSync(tam).isDirectory()) spdxDosyalari(tam, toplanan);
+    else if (SPDX_UZANTILARI.has(extname(ad))) toplanan.push(tam);
+  }
+  return toplanan;
+}
+
+/** İlk 5 satırdan biri TAM OLARAK SPDX satırı mı (satır 1, ya da shebang'in altında satır 2). */
+function spdxVar(yol: string): boolean {
+  return readFileSync(yol, "utf8")
+    .split("\n", 5)
+    .some((satir) => satir.trim() === SPDX_SATIRI);
+}
+
+function spdxGoreli(yol: string): string {
+  return yol.slice(SPDX_KOK.length).split("\\").join("/");
+}
+
+test("src+test+scripts altındaki her kaynak SPDX başlığı taşır (borç listesi çift yönlü)", () => {
+  const borc = new Set(SPDX_BORCLULARI);
+  const eksikler: string[] = [];
+  let sayac = 0;
+  for (const dizin of SPDX_DIZINLERI) {
+    for (const yol of spdxDosyalari(join(SPDX_KOK, dizin))) {
+      sayac++;
+      const goreli = spdxGoreli(yol);
+      if (!spdxVar(yol) && !borc.has(goreli)) eksikler.push(goreli);
+    }
+  }
+
+  assert.ok(
+    sayac >= 150,
+    `Taranan kaynak dosya sayısı beklenmedik biçimde düşük (${sayac}) — yürüyücü kör kalmış ` +
+      `olabilir. Taranmayan dosya bulgu üretmez; sıfıra yakın bir sayı "temiz" değil "kör" demektir.`
+  );
+
+  assert.deepEqual(
+    eksikler.sort(),
+    [],
+    `SPDX başlığı taşımayan dosya(lar): ${eksikler.join(", ")}.\n` +
+      `Depo AGPL-3.0-only altında PUBLIC yayımlanıyor; başlıksız bir dosya tek başına ` +
+      `kopyalandığında lisansı bilinmez görünür ve otomatik tarayıcılar onu "lisans bilinmiyor" ` +
+      `diye raporlar. İlk satıra (shebang varsa hemen altına) şunu ekle: ${SPDX_SATIRI}`
+  );
+
+  const bayat = SPDX_BORCLULARI.filter((goreli) => {
+    const tam = join(SPDX_KOK, goreli);
+    return !existsSync(tam) || spdxVar(tam);
+  });
+  assert.deepEqual(
+    bayat,
+    [],
+    `Kapanmış ya da artık var olmayan borç kaydı/kayıtları: ${bayat.join(", ")}. ` +
+      `SPDX_BORCLULARI listesinden sil — duran bir borç kaydı, o yola sonradan konan ` +
+      `başlıksız bir dosyayı sessizce affeder.`
+  );
 });
