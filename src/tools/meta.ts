@@ -16,7 +16,10 @@
  * expensive teaches people to route around the gate. But a decrease is only a decrease when
  * the number being compared and the number being written describe THE SAME OBJECT: on a
  * non-CBO campaign the figure that comes back is the SUM OF THE AD SETS while the write goes
- * to the campaign, so that shortcut does not apply there (see `kiyaslanamaz` below).
+ * to the campaign, so that shortcut does not apply there (see `kiyaslanamaz` below) — nor
+ * where the object was never IDENTIFIED, because on a node the read could not confirm to be
+ * a campaign "400 → 300" is not known to lower the spending the caller meant (see
+ * `kampanyaDegilseRet`).
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -179,6 +182,31 @@ function kampanyaKimligiHatasi(v: string): string | null {
  * branch of set_meta_campaign_status — that write is issued before any read at all, because
  * a pause STOPS spending and making it wait on a read Meta routinely fails would aim
  * fail-closed the wrong way. This gate guards the direction in which money leaves.
+ *
+ * IT STANDS IN FRONT OF A DECREASE TOO, AND THAT IS NOT THE CONTRADICTION IT LOOKS LIKE.
+ * Measured: with `dugumTuru: "dogrulanmadi"` and a campaign-level read of 400,
+ * `update_meta_campaign_budget({dailyBudget: 100})` is refused, no write leaves and no prompt
+ * is shown. The refusal below names only the CEILING, and a decrease is never compared
+ * against the ceiling — so read on its own that refusal looks arbitrary, and the obvious
+ * "repair" is to exempt the decrease from the identity question. That would be a loosening.
+ * The reason it is not exempt was the half of the sentence that had gone missing, and it is
+ * written down here and in the refusal text now.
+ *
+ * A BUDGET WRITE ASSERTS A NUMBER ABOUT AN OBJECT; A PAUSE ASSERTS NOTHING. "Unknown is not
+ * lower" is applied one function down to the NUMBER (`eskiBilinmiyor`) and to its SCALE
+ * (`kiyaslanamaz`); this gate applies it to the OBJECT. On a node nobody identified, "400 →
+ * 300" is not known to lower the spending the caller meant: `reklamSetiButcesi` in
+ * meta/client.ts exists precisely because a campaign's real daily total can sit in several
+ * sibling ad sets, so lowering ONE node's own budget leaves the siblings unread and
+ * untouched while the tool reports that spending fell. That is an unknown dressed as a
+ * value. So the decrease shortcut is exempt from the CEILING question it never needed, and
+ * not from the IDENTITY question, which it needs exactly as much as an increase does.
+ *
+ * AND THE PAUSE EXCEPTION DOES NOT REACH IT. A pause writes no number, its effect is
+ * complete whatever the node turns out to be, its report claims nothing beyond "durumu:
+ * PAUSED", and it is issued before the read because the read is the very thing that may be
+ * unavailable in the emergency a pause exists for. Here the read has already come back, and
+ * refusing costs the caller one corrected id.
  */
 function kampanyaDegilseRet(k: MetaKampanya, kimlik: string, token?: string): string | null {
   if (k.dugumTuru === "kampanya") return null;
@@ -196,6 +224,9 @@ function kampanyaDegilseRet(k: MetaKampanya, kimlik: string, token?: string): st
     `Reddedildi: ${kimlik} kimliğinin bir Meta KAMPANYASI olduğu okuma sırasında ` +
     `gözlenemedi; reklam seti ya da reklam kimliği de bu alanların hepsini döndürür ve ` +
     `hesap güvenlik tavanı kampanyanın değil tek bir setin bütçesiyle karşılaştırılırdı. ` +
+    `Bu, bütçeyi DÜŞÜREN istek için de geçerlidir: tanınmayan bir düğüme yazılan sayı ` +
+    `"harcama düştü" anlamına gelmez — düğüm bir reklam setiyse kampanyanın diğer setleri ` +
+    `okunmadan, dokunulmadan harcamaya devam eder. ` +
     `Güvenlik gereği doğrulanmamış düğüme yazılmaz. Sebep: ${sebep}.`
   );
 }

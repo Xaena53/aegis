@@ -25,6 +25,33 @@ function tanimliAlanlar<T extends Record<string, number | undefined>>(alanlar: T
 }
 
 /**
+ * AN UNREADABLE ENUM IS NOT A VALUE — it returns `undefined`, exactly as `sayiOku` does.
+ *
+ * `String(tablo[x] ?? x)` used to sit at the enum call sites, and it broke in two
+ * directions. When the field never arrived, the reverse lookup returned `undefined` and
+ * `String(undefined)` wrote the LITERAL TEXT "undefined" into the report: a campaign whose
+ * state nobody could read was published as `durum: "undefined"`, an unknown wearing the
+ * clothes of a value, on the very field an agent reads to answer "is this campaign
+ * running". When the API sent the enum's NAME instead of its number, the reverse lookup
+ * ran the other way — `CampaignStatus["ENABLED"]` is `2` — and the report said
+ * `durum: "2"`, a number invented out of a perfectly readable status.
+ *
+ * The number is therefore resolved only from a NUMERIC value, a name is accepted only when
+ * this SDK's enum actually knows it, and everything else — a missing field, a numeric
+ * string, a value outside the enum — is an UNKNOWN whose field is not written at all and
+ * whose name is announced through `okunamayanAlanlar`.
+ */
+function enumAdi(tablo: Record<string | number, unknown>, ham: unknown): string | undefined {
+  if (typeof ham === "number") {
+    const ad = tablo[ham];
+    return typeof ad === "string" ? ad : undefined;
+  }
+  // A name is only a name if the enum maps it BACK to a number; "2" or "toString" is not.
+  if (typeof ham === "string") return typeof tablo[ham] === "number" ? ham : undefined;
+  return undefined;
+}
+
+/**
  * Dual output: a human-readable summary plus typed structured data.
  *
  * The agent never has to parse numbers out of prose — amounts arrive already divided
@@ -109,8 +136,18 @@ const KAMPANYA_SEMASI = {
     z.object({
       id: z.string(),
       ad: z.string(),
-      durum: z.string(),
-      kanal: z.string(),
+      /**
+       * Status and channel obey the same rule as the money fields: an unreadable enum is
+       * NOT written. Writing the text "undefined" (or the enum's number) here dressed an
+       * unknown as a value on the field that answers "is this campaign running", and the
+       * unknown never reached `okunamayanAlanlar` either, so the row's own honesty note
+       * stayed silent about it.
+       */
+      durum: z
+        .string()
+        .optional()
+        .describe("Kampanya durumu. Okunamadıysa HİÇ YAZILMAZ — ETKİN (yayında) varsayma"),
+      kanal: z.string().optional().describe("Reklam kanalı türü. Okunamadıysa HİÇ YAZILMAZ — bilindiği varsayılamaz"),
       gunlukButce: z.number().optional().describe(OLCUM_NOTU),
       maliyet: z.number().optional().describe(OLCUM_NOTU),
       tiklama: z.number().optional().describe(OLCUM_NOTU),
@@ -623,16 +660,28 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             ctrYuzde: ctrHam === undefined ? undefined : Number((ctrHam * 100).toFixed(2)),
             ortTbm: mikrodanTutar(m.average_cpc),
           };
-          const okunamayanAlanlar = Object.entries(alanlar)
-            .filter(([, v]) => v === undefined)
-            .map(([k]) => k);
+          /**
+           * The status and the channel are read by the SAME rule, and they are counted in
+           * the SAME list. They used to be built with `String(tablo[x] ?? x)`, which wrote
+           * the literal "undefined" for a campaign whose state could not be read — and
+           * because neither field lives in `alanlar`, the row announced its unreadable
+           * MONEY fields honestly while staying silent about the unknown status. An absent
+           * status must never be taken for ENABLED.
+           */
+          const durum = enumAdi(enums.CampaignStatus as any, r.campaign.status);
+          const kanal = enumAdi(enums.AdvertisingChannelType as any, r.campaign.advertising_channel_type);
+          const okunamayanAlanlar = [
+            ...(durum === undefined ? ["durum"] : []),
+            ...(kanal === undefined ? ["kanal"] : []),
+            ...Object.entries(alanlar)
+              .filter(([, v]) => v === undefined)
+              .map(([k]) => k),
+          ];
           return {
             id: String(r.campaign.id),
             ad: String(r.campaign.name),
-            durum: String((enums.CampaignStatus as any)[r.campaign.status] ?? r.campaign.status),
-            kanal: String(
-              (enums.AdvertisingChannelType as any)[r.campaign.advertising_channel_type] ?? r.campaign.advertising_channel_type
-            ),
+            ...(durum === undefined ? {} : { durum }),
+            ...(kanal === undefined ? {} : { kanal }),
             ...tanimliAlanlar(alanlar),
             ...(okunamayanAlanlar.length ? { okunamayanAlanlar } : {}),
           };
@@ -640,7 +689,9 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
 
         const lines = kampanyalar.map(
           (k) =>
-            `#${k.id} ${k.ad} [${k.durum}] (${k.kanal})\n` +
+            // The unknown is admitted in the human-readable line too: "[undefined]" read as
+            // a state, whereas "[OKUNAMADI — ETKİN varsayma]" reads as the absence of one.
+            `#${k.id} ${k.ad} [${k.durum ?? "OKUNAMADI — ETKİN varsayma"}] (${k.kanal ?? "OKUNAMADI"})\n` +
             `  günlük bütçe: ${sayiMetni(k.gunlukButce, 2)} | maliyet: ${sayiMetni(k.maliyet, 2)} | tıklama: ${sayiMetni(k.tiklama)} | gösterim: ${sayiMetni(k.gosterim)} | dönüşüm: ${sayiMetni(k.donusum)} | CTR: ${k.ctrYuzde === undefined ? "OKUNAMADI" : `%${k.ctrYuzde.toFixed(2)}`} | ort.TBM: ${sayiMetni(k.ortTbm, 2)}` +
             (k.okunamayanAlanlar
               ? `\n  ⚠ OKUNAMAYAN ALAN: ${k.okunamayanAlanlar.join(", ")} — bu kampanya için o sayılar BİLİNMİYOR, 0 varsayma`
