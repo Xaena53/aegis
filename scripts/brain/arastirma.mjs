@@ -18,6 +18,8 @@
  * on the tool surface, and the prompt labels it as such.
  */
 
+import { ayracNotrle } from "./ortak.mjs";
+
 const SITE_VERISI_PROMPT_TAVANI = 12_000; // isteme siteden alınacak azami karakter
 const KIRPMA_ISARETI = "[... sonuç kırpıldı ...]"; // mcpBaglan'ın sonuç kırpma işareti
 const AZAMI_LISTE = 20; // rakipYaklasimlari / riskler tavanı (şişirilmiş liste savunması)
@@ -49,32 +51,27 @@ export function kontrolKarakterTemizle(metin) {
 }
 
 /**
- * Delimiter-escape cleaning — the SAME rule as ayracTemizle in src/siteExtract.ts.
+ * Delimiter-escape cleaning — the SAME rule as ayracTemizle in src/siteExtract.ts, and now
+ * literally the SAME IMPLEMENTATION the strategy, creative and allocation prompts use:
+ * ortak.mjs's ayracNotrle.
  *
- * WHY a literal rather than a pattern: it used to be `<\s*\/?\s*site-verisi[^>]{0,200}>`, and
- * that bound of 200 was a gate — a payload of `</site-verisi` plus 201 characters of padding
- * plus `>` fell OUTSIDE the pattern and passed through uncleaned. Raising the bound is playing
- * the same race one more round; instead the delimiter's NAME is neutralised, leaving no
- * variant of writing it. A linear scan with indexOf, no backtracking. toLowerCase() is NOT
- * used: Turkish 'İ' expands into two code points, the string grows, and the indices lose
- * their alignment with the raw text.
+ * WHY IT STOPPED BEING A LOCAL COPY: the sentence above used to be a claim rather than a fact,
+ * and it went stale the moment ayracTemizle learned to fold the Turkish spelling of the name.
+ * Measured at that point: `</SİTE-VERİSİ>` came back from HERE unchanged while the server-side
+ * twin neutralised it — one rule documented, two rules running, in a repository whose whole
+ * claim is that it can be audited. A copy of a security rule decays; a call does not.
+ *
+ * The rule itself, in one line: the old `<\s*\/?\s*site-verisi[^>]{0,200}>` bound of 200 was a
+ * GATE — 201 characters of padding fell outside the pattern and passed uncleaned — so the
+ * delimiter's NAME is neutralised instead, in every spelling of it. See ortak.mjs for the fold
+ * and the invisible-character filter this now inherits.
+ *
+ * Control characters are stripped FIRST and SEPARATELY: ANSI and C0/C1 bytes are a terminal
+ * and approval-prompt problem, not a delimiter problem.
  */
 const AYRAC_ADI = "site-verisi";
 export function siteVerisiTemizle(metin) {
-  const kaynak = kontrolKarakterTemizle(metin);
-  const kucuk = kaynak.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
-  let cikti = "";
-  let i = 0;
-  for (;;) {
-    const s = kucuk.indexOf(AYRAC_ADI, i);
-    if (s < 0) {
-      cikti += kaynak.slice(i);
-      break;
-    }
-    cikti += kaynak.slice(i, s) + "[etiket-temizlendi]";
-    i = s + AYRAC_ADI.length;
-  }
-  return cikti;
+  return ayracNotrle(kontrolKarakterTemizle(metin), AYRAC_ADI);
 }
 
 /**

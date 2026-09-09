@@ -9,14 +9,16 @@
  * yeter — yani ters vekil, saldırgan için isteğe bağlı olur. Sunucunun uyarısı da tam
  * bu iki yapılandırmada (https PUBLIC_URL, ya da localhost PUBLIC_URL) SUSUYORDU.
  *
- * Buradaki testler iki bekçiyi birden tutar: (1) örnek/dağıtım artefaktları loopback'e
+ * Buradaki testler üç bekçiyi birden tutar: (1) örnek/dağıtım artefaktları loopback'e
  * yayınlar, (2) süreç düz metin durumunu yayın biçiminden BAĞIMSIZ olarak söyler ve
- * şifresiz bir genel adreste açık onay olmadan HİÇ dinlemez.
+ * şifresiz bir genel adreste açık onay olmadan HİÇ dinlemez, (3) bu dosyanın kendi
+ * kurulumu, ayağa kaldırdığı sunucunun deposunu — SQLite'ın WAL yan dosyaları dahil —
+ * kırmızı bir iddiada bile temp dizininde bırakmaz.
  */
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { duzMetinKarari, yerelAdres } from "../src/config.js";
@@ -97,6 +99,51 @@ test("127.0.0.0/8'in tamamı loopback sayılır", () => {
 const PORT = 9400 + (process.pid % 180);
 const DB = join(tmpdir(), `aegis-yayin-${process.pid}.db`);
 
+/** The store file plus the two WAL side files SQLite keeps beside it. */
+const DB_EKLERI = ["", "-wal", "-shm"] as const;
+
+/**
+ * Deletes the store — THE SIDE FILES INCLUDED.
+ *
+ * MEASURED before this fix: the two tests below deleted `DB` only, so every single run
+ * left `aegis-yayin-<pid>.db-wal` and `.db-shm` behind in the OS temp directory (538
+ * stale files counted there against 0 surviving `.db`). Those journals carry the very
+ * rows the store does — encrypted refresh tokens and API-key hashes — and the leak is
+ * platform-independent, so CI leaked two files per run as well.
+ *
+ * Errors are swallowed: a just-killed child can still hold the handles on Windows and
+ * `rmSync` then throws EPERM (`force: true` suppresses ENOENT, never a lock). The
+ * cleanup watchman at the end of this file is what keeps that catch honest.
+ */
+function depoyuSil(dbYolu: string): void {
+  for (const ek of DB_EKLERI) {
+    try {
+      rmSync(dbYolu + ek, { force: true });
+    } catch {
+      /* file still locked on Windows */
+    }
+  }
+}
+
+/**
+ * Runs `iddialar` with the store deleted in `finally`.
+ *
+ * The cleanup used to sit after the assertions and outside any `finally`, so the first
+ * RED assertion skipped it entirely — exactly the run on which a leftover store matters
+ * most. Cleanup never decides a verdict either: it happens after the assertions, so a
+ * Windows lock cannot turn a healthy product red.
+ */
+function temizlikleDegerlendir(dbYolu: string, iddialar: () => void): void {
+  try {
+    iddialar();
+  } finally {
+    depoyuSil(dbYolu);
+  }
+}
+
+// Backstop for the path no `finally` covers: `sunucuyuKostur` itself failing to resolve.
+after(() => depoyuSil(DB));
+
 function sunucuyuKostur(ek: Record<string, string>): Promise<{ kod: number | null; hata: string; cikti: string }> {
   return new Promise((coz) => {
     const p = spawn(process.execPath, ["--import", "tsx", "src/http.ts"], {
@@ -130,10 +177,11 @@ function sunucuyuKostur(ek: Record<string, string>): Promise<{ kod: number | nul
 
 test("şifresiz genel adreste süreç BAŞLAMAZ (onay yoksa)", async () => {
   const r = await sunucuyuKostur({ AEGIS_PUBLIC_URL: `http://ads.ornek.test:${PORT}` });
-  assert.equal(r.kod, 1, `süreç dinlemeye geçmemeliydi — çıktı: ${r.cikti.slice(0, 200)}`);
-  assert.doesNotMatch(r.cikti, /dinliyor/, "engel varken hiçbir port açılmamalı");
-  assert.match(r.hata, /AEGIS_ALLOW_PLAINTEXT/);
-  rmSync(DB, { force: true });
+  temizlikleDegerlendir(DB, () => {
+    assert.equal(r.kod, 1, `süreç dinlemeye geçmemeliydi — çıktı: ${r.cikti.slice(0, 200)}`);
+    assert.doesNotMatch(r.cikti, /dinliyor/, "engel varken hiçbir port açılmamalı");
+    assert.match(r.hata, /AEGIS_ALLOW_PLAINTEXT/);
+  });
 });
 
 test("https PUBLIC_URL ile bile 0.0.0.0 dinleyicisi uyarıyı yazar", async () => {
@@ -141,7 +189,55 @@ test("https PUBLIC_URL ile bile 0.0.0.0 dinleyicisi uyarıyı yazar", async () =
     AEGIS_PUBLIC_URL: `https://ads.ornek.test`,
     AEGIS_BIND: "0.0.0.0",
   });
-  assert.match(r.cikti, /dinliyor/, `süreç ayağa kalkmalıydı — stderr: ${r.hata.slice(0, 300)}`);
-  assert.match(r.hata, /UYARI:.*127\.0\.0\.1/s, "yayın biçiminden bağımsız uyarı susmamalı");
-  rmSync(DB, { force: true });
+  temizlikleDegerlendir(DB, () => {
+    assert.match(r.cikti, /dinliyor/, `süreç ayağa kalkmalıydı — stderr: ${r.hata.slice(0, 300)}`);
+    assert.match(r.hata, /UYARI:.*127\.0\.0\.1/s, "yayın biçiminden bağımsız uyarı susmamalı");
+  });
+});
+
+/* ── 4) Temizliğin kendi gözcüsü ─────────────────────────────────────────────── */
+
+/**
+ * Written out LITERALLY on purpose — NOT derived from `DB_EKLERI`.
+ *
+ * A watchman that reads the same constant as the code it watches is no watchman: drop
+ * "-shm" from `DB_EKLERI` and a self-referential check would stop creating that file,
+ * stop looking for it, and stay green while the leak came back.
+ */
+const BEKLENEN_EKLER = ["", "-wal", "-shm"];
+
+test("TEMİZLİK KANCASI: kırmızı iddia bile SQLite üçlüsünü temp'te BIRAKMAZ", () => {
+  /**
+   * THE CLEANUP'S OWN WATCHMAN.
+   *
+   * Two regressions, one measurement, and each assertion below catches a different one:
+   *  - `assert.throws` + the leftovers check together prove the delete runs in `finally`;
+   *    move `depoyuSil` back out of it and the thrown assertion skips cleanup, so all
+   *    three files survive.
+   *  - the leftovers check alone proves every extension is named; drop "-wal" or "-shm"
+   *    from `DB_EKLERI` and that file survives.
+   *
+   * A real store is not needed here: only the file NAMES are under test, and writing
+   * them directly keeps this watchman free of a child process that could hide the
+   * regression behind a Windows lock.
+   */
+  const db = join(tmpdir(), `aegis-yayin-temizlik-${process.pid}.db`);
+  try {
+    for (const ek of BEKLENEN_EKLER) writeFileSync(db + ek, "x");
+
+    assert.throws(
+      () => temizlikleDegerlendir(db, () => assert.fail("kırmızı iddia")),
+      /kırmızı iddia/,
+      "iddianın hatası yutulmamalı — temizlik verdicti belirlemez"
+    );
+
+    assert.deepEqual(
+      BEKLENEN_EKLER.filter((ek) => existsSync(db + ek)),
+      [],
+      "temp dizininde SQLite artığı kalmamalı: yan dosyalar şifreli refresh-token satırlarını taşır"
+    );
+  } finally {
+    // The watchman must not leak either — not even on the run where it goes red.
+    for (const ek of BEKLENEN_EKLER) rmSync(db + ek, { force: true });
+  }
 });

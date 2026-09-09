@@ -453,30 +453,141 @@ export async function mcpBaglan() {
  * plus `>` falls outside the pattern, passes uncleaned, and closes the block early: from that
  * point on, what follows looks to the model not like "data" but like the system's own
  * instructions. Raising the bound is playing the same race one more round; instead the
- * delimiter's NAME is neutralised, leaving no variant of writing it — not with spaces, not
- * with a slash, not with attributes, none.
+ * delimiter's NAME is neutralised, and no amount of padding, no spacing, no slash and no
+ * attribute puts a spelling of the name back together on the other side.
  *
- * The same hole had been closed in src/siteExtract.ts; the two .mjs twins here, the strategy
- * and creative prompts, had been left open. One implementation, three call sites.
+ * The same hole had been closed in src/siteExtract.ts; the .mjs twins here — the strategy,
+ * creative and allocation prompts, plus arastirma.mjs's site-data cleaner — had been left
+ * open. One implementation, four call sites.
  *
- * toLowerCase() is NOT used: Turkish 'İ' expands into two code points, the string grows, and
- * the indices lose their alignment with the raw text. An ASCII-only lowering preserves that
- * alignment. The scan is linear via indexOf — no backtracking, and therefore no ReDoS.
+ * SPELLING IS PART OF THE NAME, and this is where the twins drifted apart once already: after
+ * ayracTemizle learned the Turkish letters, this function still let `</ARAŞTIRMA-VERİSİ>`
+ * through, so the repository documented one rule and ran two. It now carries the SAME rule as
+ * src/siteExtract.ts, and test/faz5SiteExtract.test.ts pins the two tables against each other
+ * so they cannot drift again:
+ *   - a character folds to the ASCII character it READS AS — compatibility decomposition with
+ *     the combining marks removed, plus BENZEYENLER for the look-alikes borrowed from other
+ *     alphabets (measured escapes: the DECOMPOSED 'İ' = I + U+0307, Cyrillic 'І' U+0406, the
+ *     fullwidth forms);
+ *   - a character a reader cannot see — combining marks, format controls, the Unicode TAGS
+ *     block — is SKIPPED rather than folded: it is not a way of spelling a letter, it is a way
+ *     of hiding one;
+ *   - the fold preserves LENGTH per character, which is what lets a hit found in the folded
+ *     view map back onto the raw text. toLowerCase() would not: Turkish 'İ' expands into two
+ *     code points, the string grows, and every index after it points one character off.
+ * The scan is linear via indexOf — no backtracking, and therefore no ReDoS.
  */
+const DOLGU = "\u200b"; // zero-width space
+const GORUNMEZ = /[\p{Mn}\p{Me}\p{Cf}]/u;
+const MARKALAR = /[\p{Mn}\p{Me}]/gu;
+
+/**
+ * Look-alikes for the characters a delimiter name is made of (s, i, t, e, v, r and the
+ * hyphen), written as ESCAPES on purpose: on screen most of them are indistinguishable from
+ * the ASCII letters, so a table of literals could not be reviewed by eye at all. Only what
+ * compatibility decomposition cannot already reach is listed here.
+ */
+const BENZEYENLER = {
+  "\u0131": "i", // dotless small i (Turkish)
+  "\u026a": "i", // small capital I
+  "\u0406": "i", // Cyrillic capital Byelorussian-Ukrainian I
+  "\u0456": "i", // Cyrillic small Byelorussian-Ukrainian i
+  "\u0399": "i", // Greek capital iota
+  "\u03b9": "i", // Greek small iota
+  "\u0405": "s", // Cyrillic capital dze
+  "\u0455": "s", // Cyrillic small dze
+  "\ua731": "s", // small capital S
+  "\u0422": "t", // Cyrillic capital te
+  "\u0442": "t", // Cyrillic small te
+  "\u03a4": "t", // Greek capital tau
+  "\u03c4": "t", // Greek small tau
+  "\u1d1b": "t", // small capital T
+  "\u0415": "e", // Cyrillic capital ie
+  "\u0435": "e", // Cyrillic small ie
+  "\u0395": "e", // Greek capital epsilon
+  "\u03b5": "e", // Greek small epsilon
+  "\u1d07": "e", // small capital E
+  "\u0474": "v", // Cyrillic capital izhitsa
+  "\u0475": "v", // Cyrillic small izhitsa
+  "\u03bd": "v", // Greek small nu
+  "\u028b": "v", // v with hook
+  "\u0433": "r", // Cyrillic small ghe (its italic form reads as an r)
+  "\u0280": "r", // small capital R
+  "\u2010": "-", // hyphen
+  "\u2011": "-", // non-breaking hyphen
+  "\u2012": "-", // figure dash
+  "\u2013": "-", // en dash
+  "\u2014": "-", // em dash
+  "\u2015": "-", // horizontal bar
+  "\u2043": "-", // hyphen bullet
+  "\u2212": "-", // minus sign
+};
+
+/** ASCII-only lowering: it preserves length, which toLowerCase() does not for Turkish 'İ'. */
+function asciiKucult(s) {
+  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
+
+/** LENGTH-PRESERVING case and look-alike fold — the twin of ayracKatla in src/siteExtract.ts. */
+function ayracKatla(s) {
+  let cikti = "";
+  for (const ch of s) {
+    const kod = ch.codePointAt(0);
+    if (kod < 0x80) {
+      cikti += kod >= 65 && kod <= 90 ? String.fromCharCode(kod + 32) : ch;
+      continue;
+    }
+    // An invisible character becomes DOLGU, one unit per unit it occupied: that keeps the
+    // ASTRAL invisibles (the TAGS block) invisible to the filter below, which walks code
+    // UNITS and would see a lone surrogate belonging to no category at all.
+    if (GORUNMEZ.test(ch)) {
+      cikti += DOLGU.repeat(ch.length);
+      continue;
+    }
+    const sade = ch.normalize("NFKD").replace(MARKALAR, "");
+    const hedef = BENZEYENLER[sade] ?? asciiKucult(sade);
+    cikti += hedef.length <= ch.length ? hedef.padEnd(ch.length, DOLGU) : ch;
+  }
+  return cikti;
+}
+
+/** The search's view of the folded text: invisibles dropped, plus a map back to the raw indices. */
+function ayracGorunur(katli) {
+  let gorunur = "";
+  const harita = [];
+  for (let i = 0; i < katli.length; i++) {
+    const ch = katli[i];
+    if (GORUNMEZ.test(ch)) continue;
+    gorunur += ch;
+    harita.push(i);
+  }
+  return { gorunur, harita };
+}
+
 export function ayracNotrle(metin, ayracAdi) {
   const kaynak = String(metin ?? "");
-  const kucuk = kaynak.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
-  const aranan = String(ayracAdi).toLowerCase();
+  // The name goes through BOTH steps as well, so a caller's delimiter is compared on the same
+  // terms as the text: unlike src/siteExtract.ts, which searches for one ASCII constant, this
+  // one takes its name from a caller.
+  const aranan = ayracGorunur(ayracKatla(String(ayracAdi))).gorunur;
+  // An empty name would match at every position and never advance the cursor — a hang, not a
+  // cleaning. An unusable delimiter is refused rather than silently ignored.
+  if (!aranan) throw new Error("ayracNotrle: ayraç adı boş olamaz.");
+  const { gorunur, harita } = ayracGorunur(ayracKatla(kaynak));
   let cikti = "";
-  let i = 0;
+  let i = 0; // read cursor in the RAW text
+  let ara = 0; // search cursor in the visible view
   for (;;) {
-    const s = kucuk.indexOf(aranan, i);
+    const s = gorunur.indexOf(aranan, ara);
     if (s < 0) {
       cikti += kaynak.slice(i);
       break;
     }
-    cikti += kaynak.slice(i, s) + "[etiket-temizlendi]";
-    i = s + aranan.length;
+    // The span runs to the NEXT VISIBLE character, so the invisible units that belong to the
+    // match travel with it — otherwise an astral look-alike leaves an orphaned surrogate.
+    cikti += kaynak.slice(i, harita[s]) + "[etiket-temizlendi]";
+    i = harita[s + aranan.length] ?? kaynak.length;
+    ara = s + aranan.length;
   }
   return cikti;
 }

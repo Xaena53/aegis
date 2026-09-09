@@ -48,8 +48,10 @@
  * ALWAYS refuses, as a fail-closed precaution. The one campaign 3/B does not push back is one
  * that --kampanya named while it was ALREADY ENABLED: that is not a write of ours to reverse,
  * and pausing it would stop someone else's live campaign. There the reservation is spoken
- * instead of shouted — an unreadable status is reported as DOĞRULANAMADI, never as "no write
- * happened".
+ * instead of shouted, and it covers BOTH readings that settle nothing: a status that could not
+ * be read, and a status that reads ENABLED — the value the campaign already had, which a
+ * refused write and an applied one leave looking exactly alike. Neither is reported as "no
+ * write happened"; only a reading that COULD have disproved the claim is allowed to make it.
  *
  * Every act first verifies, with READ-ONLY queries, that its candidate can reach the network
  * gate at all: update_campaign_budget answers first on the account's safety ceiling and then
@@ -1522,20 +1524,34 @@ try {
         throw new Error(`GÜVENLİK İHLALİ: ret metnine rağmen kampanya #${aday3.id} durumu "${durumB}" okundu.`);
       }
       /**
-       * "NO WRITE HAPPENED" IS A MEASUREMENT, NOT A DEFAULT.
+       * "NO WRITE HAPPENED" IS A MEASUREMENT, NOT A DEFAULT — and a reading that could not
+       * have come out the other way is not a measurement of anything.
        *
-       * Reaching this line with an UNREADABLE status is possible on exactly one path: a
-       * candidate that was ALREADY ENABLED before the run — only --kampanya can name one — so
-       * `zatenYayindaydi` lifted the live check above. No reversal is owed there, because we
-       * do not pause someone else's live campaign; but no CLAIM is owed either. A status that
-       * could not be read measured NOTHING, and printing "yazma yapılmadı" over it would
-       * report the unmeasured as measured, on stage and in the summary table alike. The screen
-       * says only what the account actually answered.
+       * Two readings reach this line carrying no evidence, and both belong to the ONE
+       * candidate the act does not own: a campaign that --kampanya named while it was ALREADY
+       * ENABLED, whose `zatenYayindaydi` lifted the live check above. No reversal is owed
+       * there — we do not pause someone else's live campaign — but no CLAIM is owed either:
+       *   · the status could not be READ at all, so nothing was measured;
+       *   · the status reads ENABLED, the value it ALREADY HAD before the call. A write the
+       *     gate refused and a write that went through leave the account looking exactly the
+       *     same, so this reading cannot contradict "a write happened" — and a signal that
+       *     cannot contradict the claim cannot vouch for it either.
+       * A reading vouches only where it COULD HAVE DISPROVED the claim: on the act's own
+       * candidate, PAUSED before the run, any status other than ENABLED does exactly that, and
+       * there the honest claim is really made. That is also why the branch is decided by the
+       * READING, not by whether --kampanya was typed. Everywhere else the screen and the
+       * summary table say what the account answered AND that it settles nothing.
        */
+      const geriOkumaCurutebilir = okunabildiB && !(zatenYayindaydi && durumB === "ENABLED");
       yaz(
-        okunabildiB
+        geriOkumaCurutebilir
           ? soluk(`Geri okuma: kampanya #${aday3.id} durumu ${durumB} — yazma yapılmadı.`)
-          : sari(`Geri okuma BAŞARISIZ: kampanya #${aday3.id} durumu ${durumB} — yazma yapılmadığı DOĞRULANAMADI.`)
+          : okunabildiB
+            ? sari(
+                `Geri okuma: kampanya #${aday3.id} durumu ${durumB} — kampanya koşudan ÖNCE de ENABLED'dı; ` +
+                  "bu okuma bir yazmayı ÇÜRÜTEMEZ, yazma yapılmadığı DOĞRULANAMADI."
+              )
+            : sari(`Geri okuma BAŞARISIZ: kampanya #${aday3.id} durumu ${durumB} — yazma yapılmadığı DOĞRULANAMADI.`)
       );
       ozet.push({
         perde: "3/B",
@@ -1543,7 +1559,11 @@ try {
         sim: "degisti",
         karar: "RET (ağ doğrulaması başarısız)",
         istem: "HİÇ gösterilmedi (0)",
-        yazma: okunabildiB ? `yok (geri okundu: ${durumB})` : `DOĞRULANAMADI (${durumB})`,
+        yazma: geriOkumaCurutebilir
+          ? `yok (geri okundu: ${durumB})`
+          : okunabildiB
+            ? "DOĞRULANAMADI (ön durum da ENABLED)"
+            : `DOĞRULANAMADI (${durumB})`,
       });
       await istemci.close();
       istemci = undefined;

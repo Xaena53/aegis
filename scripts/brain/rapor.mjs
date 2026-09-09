@@ -461,7 +461,26 @@ export function raporOlustur({
 
     const kanitlar = Array.isArray(yayinSonucu.kanitSatirlari) ? yayinSonucu.kanitSatirlari : [];
     if (kanitlar.length) {
-      ekle("**Kanıt satırları** _(onay özetine ağ katmanının eklediği satırlar dahil)_:");
+      /**
+       * THE HEADING NAMES WHAT THE BLOCK REALLY HOLDS.
+       *
+       * It used to read "_(onay özetine ağ katmanının eklediği satırlar dahil)_", and that
+       * sentence was MEASURED false: src/approval.ts spreads the network gate evidence
+       * (`ag.kanit`) into `insanSatirlari` — the human elicitation prompt channel alone —
+       * and Growth Brain's client does not advertise elicitation, so the refusal it receives
+       * is built from `ozet.satirlar` only. Measured against the real gate (clean CAMARA
+       * chain, weak client): the three evidence lines it produced ("Ağ doğrulaması: SIM
+       * değişimi yok…", "Cihaz erişilebilirliği…", "Cihaz değişimi…") appear NOWHERE in this
+       * report, while the block printed below the heading carried the approval summary's own
+       * bullets ("Hesap/Kampanya", "Günlük bütçe", "Coğrafi hedef"). A heading promising
+       * CAMARA evidence over an account-and-budget summary is the cheapest possible loss of
+       * trust in a report whose whole claim is auditability.
+       */
+      ekle(
+        "**Kanıt satırları** _(sunucunun AJANA gönderdiği onay özetinin maddeleri; ağ " +
+          "kapısının kanıt satırları bu kanala GELMEZ — onlar yalnız insana gösterilen " +
+          "isteme yazılır)_:"
+      );
       ekle(...maddeListesi(kanitlar));
       ekle("");
     }

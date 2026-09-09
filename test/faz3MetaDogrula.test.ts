@@ -15,12 +15,13 @@
  * (`String(e?.message ?? e).slice(0, 180)`) printed the same thing with no canary at all.
  *
  * NASIL ÖLÇÜLÜR: not by reading the source — by RUNNING it. The script's own bytes are
- * copied to the system temp directory with exactly two harness edits: the
+ * copied into a throwaway directory with exactly two harness edits: the
  * `../src/meta/client.js` specifier is rewritten to an absolute file URL (so the copy still
  * loads THIS repo's client), and a prologue is prepended that sets TEST-ONLY credentials and
- * replaces `fetch`. No network call, no `.env`, no real secret: the copy's `.env` path
- * resolves into the temp directory, where there is none. What runs is the repository's real
- * control flow.
+ * replaces `fetch`. No network call and no real secret: the copy is NESTED so that the
+ * `.env` path the script resolves lands inside that throwaway directory, which holds none —
+ * see the block over `kopyaDizini` and the assertion that measures it. What runs is the
+ * repository's real control flow.
  *
  * BU GÖZCÜ NEDEN VAKUM DEĞİL: three independent ways for it to go red, and one of them fires
  * if the harness itself stops working.
@@ -36,9 +37,9 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const KOK = join(import.meta.dirname, "..");
@@ -65,9 +66,44 @@ const JETON = "TEST-ONLY-EAAB-jeton-kalibi-0123456789";
  * Putting the copy under the repository root makes resolution identical on every platform —
  * it finds THIS project's node_modules, which is the one the script is meant to run against.
  * `.tmp*` is covered by .gitignore, and the directory is removed in `after()` regardless.
+ *
+ * AND ONE DIRECTORY DEEPER THAN THAT — otherwise the run is not hermetic. The script reads
+ * its `.env` from `<own dir>/..`, so a copy written straight into `<repo>/.tmp-…/` resolves
+ * that onto the REPOSITORY ROOT, and the repository root carries a real `.env` with the
+ * operator's live credentials. This docblock used to claim the opposite ("the copy's
+ * `.env` path resolves into the temp directory, where there is none"); measured with a probe,
+ * the flat copy parsed 12 keys out of that file into the child process and the nested copy
+ * parsed 0. The effect was harmless — the prologue sets both AEGIS_* values before dotenv
+ * runs, and dotenv does not overwrite what is already set — but a run that silently loads the
+ * operator's credentials is not the hermetic run this file promises, and a false sentence in
+ * a "BU GÖZCÜ NEDEN VAKUM DEĞİL" docblock is worse than no sentence. Nesting makes it true;
+ * the assertion below keeps it true. `node_modules` is still found by walking up through the
+ * same repository root.
  */
 const gecici = mkdtempSync(join(KOK, ".tmp-metadogrula-"));
+const kopyaDizini = join(gecici, "alt");
+mkdirSync(kopyaDizini);
 after(() => rmSync(gecici, { recursive: true, force: true }));
+
+/**
+ * Hermeticity is ASSERTED, not assumed: lift the copy back up next to the repository root and
+ * this fails here, loudly, instead of quietly loading the operator's `.env` into the child.
+ * The rule mirrors the script's own (`<copy dir>/..`), so it measures the same path the
+ * script will actually read.
+ */
+const cozulenEnvDizini = resolve(kopyaDizini, "..");
+assert.notEqual(
+  cozulenEnvDizini,
+  resolve(KOK),
+  `Kopya, betiğin .env'ini deponun KÖKÜNDEN okuyacağı yere yazılmış; orada operatörün ` +
+    `gerçek .env'i duruyor. Koşum hermetik olmaz ve bu dosyanın "gerçek sır yok" cümlesi ` +
+    `yalan olur. Kopyayı bir dizin daha derine yaz.`
+);
+assert.ok(
+  !existsSync(join(cozulenEnvDizini, ".env")),
+  `Kopyanın çözdüğü dizinde bir .env var (${cozulenEnvDizini}); dotenv onu çocuk sürece ` +
+    `yükler, yani koşum hermetik değil.`
+);
 
 /**
  * The `fetch` replacement. Two shapes, both of them errors that reach the script UNCLEANED:
@@ -104,7 +140,7 @@ const kopyaYolu = (() => {
       `kez geçirmiyor (${parcalar.length - 1} kez). Yönlendirme yapılmadan bu dosyadaki her ` +
       `iddia ölçmediği bir şeyi onaylar; önce düzeneği tazele.`
   );
-  const yol = join(gecici, "metaDogrulaKopya.mts");
+  const yol = join(kopyaDizini, "metaDogrulaKopya.mts");
   writeFileSync(yol, ONYUKLEME + parcalar.join(JSON.stringify(pathToFileURL(ISTEMCI).href)), {
     encoding: "utf8",
   });

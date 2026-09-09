@@ -849,9 +849,18 @@ export function yayinSonucuSinifla(metin, kampanyaAdi) {
  * the operator would take a decision on the server about what may cross to the agent, not a
  * change in this file.
  *
- * The name of the return field (`kanitSatirlari`) and rapor.mjs's heading over the block are
- * older than that server decision and still promise network evidence — see the notes handed
- * back with this fix; rapor.mjs is not this module's to edit.
+ * THE HEADING OVER THE BLOCK NO LONGER CONTRADICTS THAT. rapor.mjs used to print these lines
+ * under "**Kanıt satırları** _(onay özetine ağ katmanının eklediği satırlar dahil)_", which
+ * was measured false: running the real gate (clean CAMARA chain, a client without
+ * elicitation) produced three evidence lines — "Ağ doğrulaması: SIM değişimi yok…", "Cihaz
+ * erişilebilirliği…", "Cihaz değişimi…" — and NONE of them reached the report, while the
+ * block underneath the heading held the approval summary's own bullets. The heading now says
+ * what the block is and states that the gate's evidence does not cross to this channel.
+ *
+ * The return field's NAME (`kanitSatirlari`) is older than that server decision and still
+ * reads like a promise of network evidence. It is kept: renaming it would ripple through
+ * growth-brain.mjs, rapor.mjs and four test files without making a single sentence truer,
+ * and what the operator actually READS is the heading.
  */
 export function kanitSatirlariniAyikla(metin) {
   return maddeSatirlari(metin)

@@ -210,25 +210,32 @@ test("MUTASYON: the blacklist guard is red when the code side shrinks", () => {
   );
 });
 
-/* ── Guard 3: no half-translated line survives in the header ─────────────────── */
+/* ── Guard 3: the leftover clause this phase removed does not come back ──────── */
 
 /** Letters that occur in Turkish and not in English. */
 const TURKCE_HARF = /[ıİşŞğĞçÇöÖüÜ]/;
 /**
- * Turkish function words that cannot appear as standalone English words. They are what
- * catches a leftover clause written entirely in ASCII — "…kara listesi … aynen durur." has
- * no Turkish-specific letter in it at all.
+ * The words of the clause this phase translated — "…kara listesi … aynen durur." — which
+ * has no Turkish-specific letter in it at all, plus a handful of neighbours.
+ *
+ * WHAT THIS LIST IS NOT, measured in phase 5 rather than assumed here: it is not a detector
+ * for Turkish in general. Twelve real Turkish sentences from this repository, folded to
+ * ASCII, were spliced into the header one at a time; ELEVEN of the twelve left this file at
+ * pass 9 / fail 0. The general claim therefore belongs to test/faz5GrowthBrain.test.mjs,
+ * which detects by function-word set AND inflectional suffix and proves it can go red on
+ * every one of those twelve. What survives here is the narrow, still-useful claim below:
+ * the specific clause that was fixed stays fixed.
  */
 const TURKCE_KELIME =
   /\b(ve|ile|bir|bu|ama|gibi|sonra|kadar|aynen|durur|kalir|olur|yolunun|listesi|kurulum|kara|degil|icin|yalniz|hicbir)\b/i;
 
-test("BELGE: every line of the header is English (no half-translated leftovers)", () => {
+test("BELGE: the header keeps no Turkish letter and no word of the clause that was fixed", () => {
   /**
-   * Quoted product strings are exempt and NOTHING ELSE IS: the header quotes user-facing
-   * Turkish verbatim (the "KURU MOD — HİÇBİR YAZMA YAPILMADI" stamp), and that is correct.
-   * The exemption is deliberately narrow — a single-line double-quoted span. A leftover
-   * clause is prose, not a quoted string, so it cannot hide behind this; widening the
-   * exemption to multi-line spans would let a stray pair of quotes swallow one.
+   * Quoted product strings are exempt: the header quotes user-facing Turkish verbatim (the
+   * "KURU MOD — HİÇBİR YAZMA YAPILMADI" stamp), and that is correct. The exemption is a
+   * CLASS — any single-line double-quoted span — and that is its weakness: a leftover put
+   * between quotes is erased along with the stamp (measured; the same input is red in
+   * test/faz5GrowthBrain.test.mjs, which cuts only the exact stamp text and nothing else).
    */
   const suclular = [];
   BASLIK.split("\n").forEach((satir, i) => {
@@ -240,7 +247,8 @@ test("BELGE: every line of the header is English (no half-translated leftovers)"
   assert.deepEqual(
     suclular,
     [],
-    "Turkish left over in the English header of growth-brain.mjs:\n" +
+    "A Turkish letter, or a word of the clause this phase translated, is back in the " +
+      "English header of growth-brain.mjs:\n" +
       suclular.join("\n") +
       "\nA sentence that stops mid-clause is worse than no sentence: the invariant it was " +
       "carrying becomes unreadable exactly where it matters."

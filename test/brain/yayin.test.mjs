@@ -10,7 +10,8 @@
  *  - ağ kapısı reddi 'ag-retti' olarak sınıflanır ve ret metni rapora AYNEN geçer;
  *    rapor bunu BAŞARISIZLIK değil, "güvenlik kapısı çalıştı" olarak sunar,
  *  - ağ TEMİZ geçip sunucu doğrulanmış insan onayı istediğinde bu 'ag-retti' diye
- *    YANLIŞ sunulmaz (kanıt satırındaki AEGIS_NAC_SIMULATE ipucu yanıltmaz),
+ *    YANLIŞ sunulmaz; o retle gelen madde satırları ağ kapısının KANITINI TAŞIMAZ
+ *    (approval.ts `ag.kanit`i yalnız `insanSatirlari`na, yani insan istemine yazar),
  *  - --yayinla yolu DIŞINDA hiçbir yerden ENABLED çağrılmaz (kurulum yolunun kara
  *    listesi aynen durur; growth-brain.mjs'te yayinaAl tek ve korumalı çağrıdır),
  *  - --yayinla, --uygula olmadan Türkçe hatayla reddedilir.
@@ -108,14 +109,23 @@ const CALLFWD_DEGER_TANIMSIZ =
   'karşı burada gösterilmez) — geçerli değerler "kapali" | "acik". Güvenlik gereği ' +
   "anlaşılamayan yapılandırmada harcama artışı uygulanmaz (kapalı arıza).";
 
-/** approval.ts — ağ TEMİZ geçti, elicitation yok, confirm yok: onay kapısı reddi. */
+/**
+ * approval.ts — ağ TEMİZ geçti, elicitation yok, confirm yok: onay kapısı reddi.
+ *
+ * BU FIXTURE'DA AĞ KANITI YOKTUR, ÇÜNKÜ GERÇEĞİNDE DE YOK. Daha önce madde satırları
+ * arasında "Ağ doğrulaması [SİMÜLASYON]: SIM değişimi yok …" duruyordu ve 3. test onu
+ * `kanitSatirlari` içinde ARIYORDU: var olmayan bir davranışı koruyan yeşil bir gözcü.
+ * ÖLÇÜLDÜ (gerçek kapı koşturuldu: temiz CAMARA zinciri + elicitation bildirmeyen istemci):
+ * agDogrula üç kanıt satırı üretti ("Ağ doğrulaması: SIM değişimi yok…", "Cihaz
+ * erişilebilirliği…", "Cihaz değişimi…") ve ÜÇÜ DE bu istemciye gelen ret metninde YOKTU —
+ * approval.ts onları `insanSatirlari`na koyar, ret metni ise `ozet.satirlar`dan kurulur.
+ * Satırlar aşağıda write.ts'in set_campaign_status onay özetinden birebir alınmıştır.
+ */
 const INSAN_ONAYI = [
   'Reddedildi: "GB-20260828-1200 — Deneme" kampanyası YAYINA ALINACAK — bu andan itibaren gerçek para harcanır.',
   "  • Hesap: 1234567890 · Kampanya: 9002",
   "  • Günlük bütçe: 40 (hesabın para biriminde; Google günlük bütçenin katlarını harcayabilir)",
   "  • Coğrafi hedef: 1 konum",
-  "  • Ağ doğrulaması [SİMÜLASYON]: SIM değişimi yok (son 72 saat, +905*******22) — simüle kanal " +
-    "(AEGIS_NAC_SIMULATE=temiz), gerçek ağ sorgusu YAPILMADI",
   "Kullanıcıya bu özeti göster ve açık onayını al; onay geldiyse confirm=true ile tekrar çağır.",
 ].join("\n");
 
@@ -238,8 +248,18 @@ test("ağ TEMİZ geçip onay kapısı reddettiğinde 'ag-retti' diye YANLIŞ sun
   const yayinSonucu = await yayinaAl({ kampanyaId: "9002", musteriId: "1234567890" }, { cagir });
 
   assert.equal(yayinSonucu.durum, "insan-onayi-gerekli");
-  // ağ kanıtı kaybolmaz: onay özetinin madde satırları kanıt olarak taşınır
-  assert.ok(yayinSonucu.kanitSatirlari.some((k) => k.includes("SIM değişimi yok")));
+  // Onay özetinin madde satırları taşınır…
+  assert.deepEqual(yayinSonucu.kanitSatirlari, [
+    "Hesap: 1234567890 · Kampanya: 9002",
+    "Günlük bütçe: 40 (hesabın para biriminde; Google günlük bütçenin katlarını harcayabilir)",
+    "Coğrafi hedef: 1 konum",
+  ]);
+  // …ama ağ kapısının kanıtı bu kanala GELMEZ: gerçek kapıdan ölçülmüş sözleşme
+  // (test/faz5Uygulama.test.mjs bunu approval.ts + networkTrust.ts koşturarak çiviler).
+  assert.ok(
+    !yayinSonucu.kanitSatirlari.some((k) => /SIM değişimi|Cihaz erişilebilirliği|Cihaz değişimi/u.test(k)),
+    "ag.kanit yalnız insanSatirlari kanalına gider — ajana dönen rette görünmemeli"
+  );
 
   const rapor = raporOlustur({ hedef: "test", kuruMod: false, yayinSonucu });
   assert.ok(rapor.includes("DOĞRULANMIŞ İNSAN ONAYI GEREKTİ"));
@@ -354,7 +374,7 @@ test("cagir fırlatırsa 'hata' sınıflanır, fonksiyon fırlatmaz", async () =
 test("kanitSatirlariniAyikla: madde satırlarını alır, gövdeyi almaz", () => {
   assert.deepEqual(kanitSatirlariniAyikla(AG_RETTI), []);
   const kanitlar = kanitSatirlariniAyikla(INSAN_ONAYI);
-  assert.equal(kanitlar.length, 4);
+  assert.equal(kanitlar.length, 3);
   assert.ok(kanitlar[0].startsWith("Hesap:"));
 });
 

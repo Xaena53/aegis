@@ -62,6 +62,14 @@ const DAGITIM_SEMA = Object.freeze({ dagitim: "array" });
  * Shortens an untrusted value for an error message and defuses its control characters — the
  * same rule as guvenliOzet in strateji.mjs. A rejected budget value comes from the model and
  * can carry ANSI escapes, and this message is printed on the operator's terminal.
+ *
+ * U+2028 and U+2029 ARE part of that rule, and they were the half this copy was missing while
+ * the sentence above already claimed the parity. They are not C0/C1 bytes, so a range check
+ * over 0x00-0x9f walks straight past them — and they are LINE SEPARATORS: a rejected amount
+ * of `30<U+2028>ONAY: EVET` opened a SECOND line on the operator's terminal, one that reads
+ * like a verdict of ours. src/approval.ts:147 counts both code points as control characters
+ * for this exact reason. The predicate is kept CHARACTER-FOR-CHARACTER identical to
+ * kontrolKarakteriMi in strateji.mjs, so the two can be compared by eye.
  */
 function guvenliDeger(deger, sinir = 60) {
   let metin;
@@ -77,7 +85,8 @@ function guvenliDeger(deger, sinir = 60) {
   let temiz = "";
   for (const ch of metin) {
     const kod = ch.codePointAt(0);
-    temiz += kod < 0x20 || kod === 0x7f || (kod >= 0x80 && kod <= 0x9f) ? "·" : ch;
+    temiz +=
+      kod <= 0x1f || (kod >= 0x7f && kod <= 0x9f) || kod === 0x2028 || kod === 0x2029 ? "·" : ch;
   }
   return temiz.length > sinir ? `${temiz.slice(0, sinir)}…` : temiz;
 }
@@ -106,29 +115,37 @@ export function dagitimDogrula(dagitim, toplamButce, kanallar) {
 
   for (const pay of dagitim) {
     const kanal = String(pay?.kanal ?? "").trim().toLowerCase();
+    /**
+     * The CHANNEL NAME is model output too, and it reaches the operator's terminal by the
+     * same road as the amount. It used to be interpolated raw: a share named
+     * `goo<ESC>[2Jgle<U+2028>ONAY: EVET` cleared the screen and opened a second line that
+     * reads like a verdict of ours. Every message below therefore prints the CLEANED name —
+     * cleaned once, here, so a message added later cannot forget it.
+     */
+    const kanalYazi = guvenliDeger(kanal, 40);
     if (!kanallar.includes(kanal)) {
       throw new Error(
-        `Bütçe dağıtımında yapılandırılmamış kanal: "${kanal}". ` +
-          `Kullanılabilir kanallar: ${kanallar.join(", ")}. ` +
+        `Bütçe dağıtımında yapılandırılmamış kanal: "${kanalYazi}". ` +
+          `Kullanılabilir kanallar: ${guvenliDeger(kanallar.join(", "), 200)}. ` +
           `Yapılandırılmamış bir kanala pay ayırmak, çalışmayacak bir planı öneri diye sunmaktır.`
       );
     }
     if (gorulen.has(kanal)) {
-      throw new Error(`Bütçe dağıtımında "${kanal}" kanalı birden çok kez geçiyor.`);
+      throw new Error(`Bütçe dağıtımında "${kanalYazi}" kanalı birden çok kez geçiyor.`);
     }
     gorulen.add(kanal);
 
     const tutar = pay?.gunlukButce;
     if (!(typeof tutar === "number" && Number.isFinite(tutar) && tutar > 0)) {
       throw new Error(
-        `"${kanal}" kanalının günlük bütçesi geçersiz: ${guvenliDeger(tutar)} ` +
+        `"${kanalYazi}" kanalının günlük bütçesi geçersiz: ${guvenliDeger(tutar)} ` +
           `(tür: ${tutar === null ? "null" : typeof tutar}). Para tutarı SAYI olarak gelmeli; ` +
           `"30" gibi bir dizeyi ya da true'yu sayıya çevirmek sessiz onarımdır.`
       );
     }
     if (!String(pay?.gerekce ?? "").trim()) {
       throw new Error(
-        `"${kanal}" kanalına pay verilmiş ama GEREKÇE yok. ` +
+        `"${kanalYazi}" kanalına pay verilmiş ama GEREKÇE yok. ` +
           `Gerekçesiz dağıtım denetlenemez: kullanıcı neden o kanala o parayı koyduğumuzu göremez.`
       );
     }
