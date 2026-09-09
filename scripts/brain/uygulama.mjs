@@ -669,9 +669,10 @@ const YAYIN_BASARI_IZI = /YAYINDA \(ENABLED\)/;
 const INSAN_KAPISI_IZLERI = [/confirm=true ile tekrar çağır/i, /^İşlem yapılmadı:/mu];
 
 /**
- * The refusal signatures of the network gate — networkTrust.ts plus approval.ts's risk
- * branch. The list is deliberately narrow: with no match we do NOT CLAIM "the network
- * refused", and the refusal is honestly classified as "the server refused".
+ * The refusal signatures of the network gate — networkTrust.ts, plus approval.ts's risk
+ * branch AND its step-up branch. The list is deliberately narrow: with no match we do NOT
+ * CLAIM "the network refused", and the refusal is honestly classified as "the server
+ * refused".
  */
 const AG_KAPISI_IZLERI = [
   /AĞ DOĞRULAMASI BAŞARISIZ/u,
@@ -686,6 +687,20 @@ const AG_KAPISI_IZLERI = [
   // looked like an ordinary server refusal.
   /CİHAZ DEĞİŞİMİ SAPTANDI/u,
   /ÇAĞRI YÖNLENDİRME AÇIK/u,
+  // THE STEP-UP REFUSAL'S OWN HEADINGS — the same omission as the two lines above, one
+  // layer higher. With AEGIS_STEPUP on, a degraded signal that a clean real link can vouch
+  // for is no longer refused by networkTrust.ts; it is handed to approval.ts as an
+  // escalation, and on a client that cannot show a human prompt — Growth Brain's only
+  // client — approval.ts refuses it with kanal:"ag". Measured: that refusal text carries
+  // NO link heading and NO AEGIS_* variable name. Its own wording is all there is ("⚠ AĞ
+  // SİNYALİ BOZUK — onaylayıcının SIM kartı yakın zamanda değişmiş."), the link's detection
+  // sentence sits in prose the patterns below do not match ("cihaz erişilebilirlik
+  // kontrolünden…" is not "cihaz erişilebilirliği kontrolü"), so a real SIM change caught by
+  // the CAMARA chain came out as 'reddedildi' and the report skipped its "GÜVENLİK KAPISI
+  // ÇALIŞTI" block. Both strings are produced ONLY in approval.ts's step-up branch, so
+  // neither can dress an ordinary server refusal up as a network refusal.
+  /AĞ SİNYALİ BOZUK/u,
+  /BU İSTEMCİDE YÜKSELTME YAPILAMAZ/u,
   /ağ doğrulaması tamamlanamadı/iu,
   /ağ doğrulaması yapılandırması eksik/iu,
   /ağ doğrulama yapılandırması onay kapısına ulaşmadı/iu,
@@ -745,7 +760,12 @@ function adAdaylari(kampanyaAdi) {
 /**
  * Classifies the ENABLED response honestly:
  *  'basarili'            — the campaign really was taken live,
- *  'ag-retti'            — the network gate refused; the demo's showcase, security worked,
+ *  'ag-retti'            — the network gate refused; the demo's showcase, security worked.
+ *                          It covers the STEP-UP refusal too (AEGIS_STEPUP on, degraded
+ *                          signal, no prompt showable here): approval.ts returns that one on
+ *                          kanal "ag" and its cause is a signal networkTrust.ts really
+ *                          measured, so calling it an ordinary server refusal would hide the
+ *                          gate's work,
  *  'insan-onayi-gerekli' — the network passed or was off, and the server refused for want of
  *                          VERIFIED human approval, which this client structurally cannot
  *                          fabricate,

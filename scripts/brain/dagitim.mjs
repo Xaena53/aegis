@@ -14,8 +14,7 @@
  * 1) ONLY A CONFIGURED CHANNEL GETS A SHARE. Without a Meta token, Meta is not an option;
  *    telling the model "allocate to Meta as well if you like" would produce a plan that
  *    cannot run and then present it to the user as a recommendation. The set of usable
- *    channels comes from the environment
- *    OKUNUR, modele sorulmaz.
+ *    channels is READ from the environment; it is never asked of the model.
  *
  * 2) THE TOTAL CANNOT EXCEED THE NUMBER THE OPERATOR GAVE. This matters more than it looks:
  *    the server's budget ceiling is PER CAMPAIGN. On an account with a 50-lira ceiling, an

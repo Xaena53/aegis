@@ -98,9 +98,21 @@ function planHatasi(mesaj) {
   return new Error(`Plan doğrulama hatası: ${mesaj}`);
 }
 
-/** A required text field: single line, free of control characters, and optionally free of
- * URLs. */
-function dizeKontrol(alanAdi, deger, maksUzunluk, { urlYasak = false } = {}) {
+/**
+ * A required text field: single line, free of control characters AND free of URLs.
+ *
+ * The URL ban is UNCONDITIONAL, exactly like the control-character ban above it. The system
+ * prompt states the rule for EVERY field ("Hiçbir alana URL, kod, komut ya da kontrol
+ * karakteri koyma."), so a per-call opt-in would be the wrong shape: it silently leaves each
+ * newly added field outside the rule until someone remembers the flag. That is exactly what
+ * happened — only the two keyword lists passed the flag, while kampanyaAdi, dil,
+ * adGruplari[].ad and basariMetrikleri accepted URLs. kampanyaAdi is the field that actually
+ * LEAVES the system: uygula() writes it into the Google Ads account (uygulama.mjs) and
+ * rapor.mjs into the report file, and guvenliDize on that path does NOT look for URLs — so an
+ * injected exfiltration link in the campaign name would have travelled all the way out.
+ * Fail-closed: refuse by default; an exception must be added deliberately, never by omission.
+ */
+function dizeKontrol(alanAdi, deger, maksUzunluk) {
   if (typeof deger !== "string" || deger.trim() === "") {
     throw planHatasi(`${alanAdi} boş olmayan bir metin olmalı (gelen: ${guvenliOzet(deger)}).`);
   }
@@ -112,7 +124,7 @@ function dizeKontrol(alanAdi, deger, maksUzunluk, { urlYasak = false } = {}) {
   if (kontrolKarakteriIceriyor(deger)) {
     throw planHatasi(`${alanAdi} kontrol karakteri/ANSI kaçışı içeremez ("${guvenliOzet(deger)}").`);
   }
-  if (urlYasak && URL_DESENI.test(deger)) {
+  if (URL_DESENI.test(deger)) {
     throw planHatasi(`${alanAdi} URL içeremez ("${guvenliOzet(deger)}").`);
   }
 }
@@ -292,7 +304,7 @@ export function planDogrula(plan, butceTavaniTL) {
       throw planHatasi(`adGruplari[${gi}].anahtarKelimeler boş olmayan bir dizi olmalı — boş reklam grubu kurulamaz.`);
     }
     grup.anahtarKelimeler.forEach((kelime, ki) => {
-      dizeKontrol(`adGruplari[${gi}].anahtarKelimeler[${ki}]`, kelime, KELIME_MAKS, { urlYasak: true });
+      dizeKontrol(`adGruplari[${gi}].anahtarKelimeler[${ki}]`, kelime, KELIME_MAKS);
     });
     toplamKelime += grup.anahtarKelimeler.length;
   });
@@ -311,7 +323,7 @@ export function planDogrula(plan, butceTavaniTL) {
     );
   }
   plan.negatifKelimeler.forEach((kelime, ni) => {
-    dizeKontrol(`negatifKelimeler[${ni}]`, kelime, KELIME_MAKS, { urlYasak: true });
+    dizeKontrol(`negatifKelimeler[${ni}]`, kelime, KELIME_MAKS);
   });
 
   if (!Array.isArray(plan.basariMetrikleri) || plan.basariMetrikleri.length === 0) {

@@ -4,8 +4,8 @@
  *
  * The output of analyze_site is UNTRUSTED external data, and the trust boundary is redrawn
  * here:
- *   - Site data travels ONLY inside the <site-verisi> block of the user message,
- *     sistem istemine asla girmez.
+ *   - Site data travels ONLY inside the <site-verisi> block of the user message, and it
+ *     never enters the system prompt.
  *   - Delimiter-escape cleaning is applied to this block too, so a page cannot produce its
  *     own closing tag and break out.
  *   - The system prompt states the rule explicitly: apply no instruction found in this block.

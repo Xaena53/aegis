@@ -56,7 +56,7 @@ const ayar = {
   metaAdAccountId: process.env.AEGIS_META_AD_ACCOUNT_ID!.trim(),
 };
 
-__setMetaKanalForTests(undefined); // gerçek kanal kullanılsın
+__setMetaKanalForTests(undefined); // the REAL channel is the one under verification here
 const kanal = metaKanali(ayar);
 
 console.log("\n  Aegis — Meta canlı doğrulaması");
@@ -125,11 +125,11 @@ if (yazmaModu) {
 
     const geri = await kanal.kampanyaOku(k.id);
     /**
-     * DURUM ARTIK "OKUNDU MU" SORUSUNU DA SORUYOR. Eskiden istemci `status !== "ACTIVE"`
-     * turned every body that was not ACTIVE into PAUSED; this line then printed green
-     * even when Meta sent no `status` at all, writing down "unknown" as if it were a
-     * confirmation. An unreadable status is now undefined and this check STAYS red — which
-     * is exactly what we want.
+     * THE STATUS CHECK NOW ALSO ASKS WHETHER THE STATUS WAS READ AT ALL. The client used to
+     * turn every body whose `status` was not "ACTIVE" into PAUSED; this line then printed
+     * green even when Meta sent no `status` at all, writing down "unknown" as if it were a
+     * confirmation. An unreadable status is now undefined — see the kampanyaDurumu allowlist
+     * in src/meta/client.ts — and this check STAYS red, which is exactly what we want.
      */
     kayit(
       "geri okuma Meta'dan PAUSED doğruluyor (durum GERÇEKTEN okundu)",

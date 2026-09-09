@@ -15,9 +15,14 @@
  *   - The report carries the "KURU MOD — HİÇBİR YAZMA YAPILMADI" stamp.
  *
  * THE --uygula MODE, the second belt on the client side:
- *   - The aegis://accounts/{id}/limits resource is read, the effective ceiling is COLLAPSED
- *     to min(the CLI ceiling, the server's ceiling), and that value is what reaches
- *     planDogrula.
+ *   - The aegis://accounts/{id}/limits resource is read and the effective ceiling is
+ *     COLLAPSED to min(the CLI ceiling, the server's ceiling). That ceiling is the TOTAL
+ *     THAT GETS SPLIT, not the number the plan is checked against: butceDagit shares it
+ *     out over the configured channels, and what reaches planDogrula is kanalButcesi —
+ *     the share of UYGULANAN_KANAL, the one channel the creation path actually writes to.
+ *     With a single configured channel the two figures are equal, which is why the
+ *     difference only shows on a multi-channel run; the approval screen prints the
+ *     effective ceiling as the SPLIT TOTAL beside that share.
  *   - Before the first write, the full summary of the plan is shown in the terminal and
  *     approval is asked for: unless 'Evet' is typed, no write call happens.
  *   - mcpBaglan DOES NOT ADVERTISE elicitation, and no tool is sent confirm: operations that
@@ -36,7 +41,10 @@
  *     to go live is the SERVER's under every condition; this client cannot fabricate an
  *     approval.
  *   - The ENABLED call leaves ONLY through the yayinaAl() function in brain/uygulama.mjs;
- *     kurulum yolunun kara listesi (set_campaign_status/update_campaign_budget) aynen durur.
+ *     the creation path's blacklist (KARA_LISTE = set_campaign_status /
+ *     update_campaign_budget) stays exactly as it is. Two belts, not one: uygula() can
+ *     never take a campaign live or raise a budget, and the single ENABLED call has its
+ *     own caller with its own approval.
  *
  * Secret hygiene: every catch prints e?.message only, and environment values reach neither
  * the output nor a prompt.

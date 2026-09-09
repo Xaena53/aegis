@@ -85,8 +85,8 @@ import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotoc
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DEMO_TELEFON = "+905550001122"; // the approver's DEMO number, passed to the server in
-// the spawn environment
+// The approver's DEMO number, passed to the server in the spawn environment.
+const DEMO_TELEFON = "+905550001122";
 
 /* ── CLI ─────────────────────────────────────────────────────────────────────── */
 
@@ -1380,7 +1380,7 @@ try {
           });
         } else if (perde3aIstemSayisi > 0 && !perde3OperatorOnayi) {
           // The operator did not type 'Evet': no write was applied — that is not a demo
-      // failure, it is a real decision.
+          // failure, it is a real decision.
           yaz(sari(`Operatör onay vermedi — sunucu kampanyayı yayına almadı. Sunucu yanıtı: ${metin3}`));
           ozet.push({
             perde: "3/A",
