@@ -473,6 +473,43 @@ async function graf(
 }
 
 /**
+ * DID THE WRITE COME BACK ACKNOWLEDGED? A 200 ON ITS OWN IS NOT AN ACKNOWLEDGEMENT.
+ *
+ * `kampanyaOlustur` already refuses a response without an id — "a response without an id
+ * is not a success". The other two writes never applied that discipline: both threw the
+ * body `graf` returned away, so a 200 with an EMPTY body (`graf` turns that into `{}`) or
+ * a body that says `{"success": false}` was reported to the operator as "durumu: ACTIVE".
+ * An intermediary that answers 200 without ever reaching Meta produces exactly that shape,
+ * and so does an emergency pause that did not take: the tool then says PAUSED while the
+ * campaign keeps spending.
+ *
+ * WHAT COUNTS AS EVIDENCE: Meta answers these edges with `{"success": true}`; some Graph
+ * edges answer with the node's id instead, so an id is accepted too. Nothing else is.
+ *
+ * WHAT THE REFUSAL SAYS: the outcome is UNKNOWN, not failed. Meta answered, so the request
+ * certainly arrived and may well have been applied — "başarısız" would invite the retry
+ * that changes the budget a second time.
+ */
+function yazmaTeyidi(cevap: any, ne: string): void {
+  if (cevap?.success === true) return;
+  const kimlik = cevap?.id;
+  if (
+    cevap?.success === undefined &&
+    (typeof kimlik === "string" || typeof kimlik === "number") &&
+    String(kimlik).trim() !== ""
+  ) {
+    return;
+  }
+  throw new MetaBelirsizSonuc(
+    `Meta ${ne} YAZMASININ SONUCU BİLİNMİYOR: Meta 200 döndürdü ama yanıt gövdesi işlemin ` +
+      `uygulandığına dair kanıt taşımıyor (success: ` +
+      `${cevap?.success === false ? "false" : gorunurDeger(cevap?.success)}, id: ` +
+      `${gorunurDeger(cevap?.id)}). TEKRAR DENEME; önce Meta Ads Manager'dan kampanyanın ` +
+      `güncel durumunu ve bütçesini doğrula.`
+  );
+}
+
+/**
  * The most ad sets to read in one call. Beyond it the total would be INCOMPLETE, and an
  * incomplete total lets a campaign through the ceiling by mistake — so a page overflow is not
  * silently truncated, it is REFUSED.
@@ -559,11 +596,27 @@ async function reklamSetiButcesi(
     }
     if (durum === "ACTIVE") aktif.push(r);
   }
+  /**
+   * NO ACTIVE AD SET IS A REFUSAL — BUT IT IS NOT A DELIVERY GATE, AND IT USED TO SAY IT
+   * WAS.
+   *
+   * This note described itself as "the Meta equivalent of the Google side's 'no
+   * deliverable ad' rule". It is not one, and the claim hid a hole rather than closing it:
+   * the check is reached ONLY while the ad-set budgets are being summed, that is only when
+   * the campaign carries NO campaign-level daily_budget. A CBO campaign returns from
+   * `kampanyaOku` before the ad sets are ever listed, so it can be taken live without a
+   * single delivery observation; and the ad level is never looked at on either path, while
+   * the Google twin (tools/write.ts, set_campaign_status) demands an ENABLED ad inside an
+   * ENABLED ad group on EVERY go-live, independently of where the budget lives.
+   *
+   * The refusal stays — a campaign with no spending set has no ad-set total to verify —
+   * but it is now described for what it is. The real equivalent has to sit on the go-live
+   * path in tools/meta.ts, where the Google one sits; a guard reachable only through one
+   * branch of a budget read cannot be it.
+   */
   if (!aktif.length) {
     return {
-      not:
-        "kampanyada ACTIVE reklam seti yok — yayına alınsa da gösterim yapamaz " +
-        "(Google tarafındaki 'yayınlanabilir reklam yok' kuralının Meta karşılığı)",
+      not: "kampanyada ACTIVE reklam seti yok — yayına alınsa da gösterim yapamaz",
     };
   }
 
@@ -755,6 +808,12 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
 
       const kampanyaDuzeyi = minorTutar(c?.daily_budget);
       if (kampanyaDuzeyi !== undefined) {
+        /**
+         * CBO: the total is complete at campaign level, so the ad sets are NOT listed —
+         * and no delivery is observed here. This return vouches for a budget and for
+         * nothing else. See reklamSetiButcesi's "no ACTIVE ad set" note for why that
+         * refusal is not a delivery gate and where a real one belongs.
+         */
         return { ...temel, gunlukButce: minorUnitTers(kampanyaDuzeyi, carpan), butceKaynagi: "kampanya" };
       }
       /**
@@ -787,10 +846,16 @@ export function metaKanali(ayar: MetaAyar): MetaKanali {
       // On the write path too, the multiplier is read first; if it cannot be read, the
       // request is NEVER sent.
       const { carpan } = await paraBirimiAl();
-      await graf(ayar, kampanyaId, { daily_budget: String(minorUnit(gunlukButce, carpan)) });
+      const cevap = await graf(ayar, kampanyaId, {
+        daily_budget: String(minorUnit(gunlukButce, carpan)),
+      });
+      // The request has already gone out; what is refused here is the CLAIM that it took
+      // effect, not the write itself.
+      yazmaTeyidi(cevap, "bütçe");
     },
     async durumDegistir(kampanyaId, durum) {
-      await graf(ayar, kampanyaId, { status: durum });
+      const cevap = await graf(ayar, kampanyaId, { status: durum });
+      yazmaTeyidi(cevap, "durum");
     },
   };
   gercekKanalAnahtari = anahtar;

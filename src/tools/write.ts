@@ -56,13 +56,19 @@ function budgetGuardFor(ctx: { config: { maxDailyBudget: number } }, amount: num
  */
 async function liveCampaignGuard(
   server: McpServer,
-  ctx: any,
+  /**
+   * THE PROVIDER, NOT A SNAPSHOT. The clamp has to be readable AGAIN after the approval
+   * (see the end of this function), and a context captured by the caller before the prompt
+   * cannot show a settings change made while the prompt was open.
+   */
+  getCtx: ContextProvider,
   customerId: string,
   where: { adGroupId?: string; campaignId?: string },
   confirm: boolean | undefined,
   eylem: string,
   ayrinti: string[]
 ): Promise<string | null> {
+  const ctx: any = getCtx();
   const filter = where.adGroupId
     ? `ad_group.id = ${Number(cleanId(where.adGroupId))}`
     : `campaign.id = ${Number(cleanId(where.campaignId!))}`;
@@ -154,7 +160,27 @@ async function liveCampaignGuard(
     },
     confirm
   );
-  return onay.onaylandi ? null : onay.mesaj!;
+  if (!onay.onaylandi) return onay.mesaj!;
+  /**
+   * THE CLAMP IS READ ONE LAST TIME, exactly as on the going-live and budget-raising paths
+   * (set_campaign_status, update_campaign_budget, and their Meta twins).
+   *
+   * This gate belongs to the SAME CLASS as those: the code's own risk model tags it "high"
+   * and both callers are marked WRITE_DESTRUCTIVE, because adding an ad or a keyword to a
+   * serving campaign starts spending immediately. The clamp was read before the prompt, and
+   * that prompt can stay open for ten minutes; measured before this line existed, an owner
+   * who switched writes off from the settings page during that window still had the keywords
+   * written to the live campaign the moment the human clicked approve.
+   *
+   * NO DAILY AMOUNT IS PASSED, and that is deliberate. The ceiling half of
+   * onaySonrasiKelepce compares THIS OPERATION's daily amount against the ceiling; the
+   * budget read above is the campaign's ALREADY-RUNNING daily spend, which this path never
+   * checked against the ceiling before the prompt either. Feeding it in would invent a gate
+   * that never existed rather than re-checking one that did. The write switch, on the other
+   * hand, is unconditional: it is the operator's kill switch and it outranks a granted
+   * approval.
+   */
+  return onaySonrasiKelepce(getCtx().config, undefined);
 }
 
 // Write tools hit an external API, so they are openWorld and never idempotent.
@@ -355,7 +381,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
           `Reddedildi: tekrarlar ayıklanınca ${ud.length} benzersiz açıklama kaldı — en az 2 FARKLI açıklama gerekli.`
         );
       try {
-        const live = await liveCampaignGuard(server, ctx, customerId, { adGroupId }, confirm, "reklam eklemek", [
+        const live = await liveCampaignGuard(server, getCtx, customerId, { adGroupId }, confirm, "reklam eklemek", [
           `Hedef sayfa: ${finalUrl}`,
           `Başlıklar: ${uh.join(" | ")}`,
           `Açıklamalar: ${ud.join(" | ")}`,
@@ -433,8 +459,8 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
          * as "campaign-specific", and the ceiling of other campaigns using the same budget
          * could be quietly lowered (the lowering path does not even ask for approval).
          *
-         * The `amount_micros` read two lines below was already written with this discipline,
-         * and sharedness is no less important: only an explicit `false` means
+         * The `amount_micros` read further down follows the same discipline (it goes through
+         * `mikrodanTutar`), and sharedness is no less important: only an explicit `false` means
          * "campaign-specific", while any non-boolean value is "unknown" and is refused.
          */
         const paylasimli = row.campaign_budget?.explicitly_shared;
@@ -448,15 +474,27 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             `Reddedildi: "${row.campaign.name}" PAYLAŞIMLI bir bütçe kullanıyor — değişiklik bu bütçeyi kullanan TÜM kampanyaları etkiler. Kullanıcıya durumu bildir; isterse Google Ads arayüzünden kampanyaya özel bütçe atansın.`
           );
         }
-        const oldBudget = Number(row.campaign_budget?.amount_micros) / 1e6;
         /**
-         * Fail closed. A missing `amount_micros` makes oldBudget NaN, and
-         * `new > NaN` is always false, which would silently skip the increase
-         * approval entirely. If the current budget is unknown we cannot tell
-         * whether this is an increase, so we ask.
+         * Fail closed. If the current budget is unknown we cannot tell whether this is an
+         * increase, so we ask — and we say "OKUNAMADI" rather than naming a number.
+         *
+         * THE READ GOES THROUGH `mikrodanTutar`, NOT `Number(...)`. It was written as
+         * `Number(row.campaign_budget?.amount_micros) / 1e6`, and `Number(null)` and
+         * `Number("")` are not NaN — they are 0. So the two most common shapes of an
+         * unreadable field (both of which read.ts already treats as unreadable) slipped
+         * through as a CONFIRMED ZERO: the human was shown "Mevcut: 0 → Yeni: 120 (günlük
+         * artış: +120.00)" for a campaign really running at 500, and the agent read "the old
+         * budget was 0" out of the tool's answer. `Number(true)` had the same shape, at
+         * 0.000001. That is exactly the `?? 0` sin `mikrodanTutar` exists to end, and
+         * set_campaign_status refuses the same field explicitly a few hundred lines below.
+         *
+         * `mikrodanTutar` returns undefined for every unreadable shape (and for a negative
+         * reading, which Google never sends), so "unknown" stays unknown all the way into
+         * the prompt and into the tool's own answer.
          */
-        const eskiBilinmiyor = !Number.isFinite(oldBudget);
-        if (eskiBilinmiyor || newDailyBudget > oldBudget) {
+        const oldBudget = mikrodanTutar(row.campaign_budget?.amount_micros);
+        const eskiBilinmiyor = oldBudget === undefined;
+        if (eskiBilinmiyor || newDailyBudget > oldBudget!) {
           const onay = await onayAl(
             server,
             {
@@ -465,7 +503,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
                 `Hesap: ${normalizeCustomerId(customerId)}`,
                 eskiBilinmiyor
                   ? `Mevcut bütçe OKUNAMADI → Yeni: ${newDailyBudget} (güvenlik gereği onay isteniyor)`
-                  : `Mevcut: ${oldBudget} → Yeni: ${newDailyBudget} (günlük artış: +${(newDailyBudget - oldBudget).toFixed(2)})`,
+                  : `Mevcut: ${oldBudget} → Yeni: ${newDailyBudget} (günlük artış: +${(newDailyBudget - oldBudget!).toFixed(2)})`,
                 `Hesap güvenlik tavanı: ${ctx.config.maxDailyBudget}`,
                 `Tutarlar hesabın kendi para birimindedir.`,
               ],
@@ -494,8 +532,14 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
             amount_micros: toMicrosInt(newDailyBudget),
           },
         ]));
+        /**
+         * The answer the AGENT reads must carry the same admission as the human's prompt: an
+         * old budget that could not be read is written as OKUNAMADI, never as a number. It
+         * used to print "0 → 120" (or "NaN → 120"), and an agent that believes the old budget
+         * was zero will happily report a raise it cannot possibly have measured.
+         */
         return text(
-          `"${row.campaign.name}" bütçesi güncellendi: ${oldBudget} → ${newDailyBudget} (günlük).`
+          `"${row.campaign.name}" bütçesi güncellendi: ${eskiBilinmiyor ? "OKUNAMADI" : oldBudget} → ${newDailyBudget} (günlük).`
         );
       } catch (e) {
         return err(e);
@@ -548,7 +592,7 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
       try {
         // Negative keywords reduce spend, so they need no approval; positive ones increase it.
         if (!negative) {
-          const live = await liveCampaignGuard(server, ctx, customerId, { adGroupId }, confirm, "anahtar kelime eklemek", [
+          const live = await liveCampaignGuard(server, getCtx, customerId, { adGroupId }, confirm, "anahtar kelime eklemek", [
             `Eşleme türü: ${matchType ?? "PHRASE"}`,
             `Kelimeler (${unique.length}): ${unique.join(", ")}`,
           ]);
@@ -730,11 +774,25 @@ export function registerWriteTools(server: McpServer, getCtx: ContextProvider) {
               agAyar: ctx.config,
               hesapId: normalizeCustomerId(customerId),
               /**
-               * The amount at risk is the campaign's daily budget — but ONLY when it could
-               * be read. The `daily` above turns an unreadable budget into 0 (the ceiling
-               * check refuses it anyway); that 0 must NOT enter the audit record, because
-               * "unknown" and "zero" are not the same thing. Hence the raw field is read
-               * separately.
+               * The amount at risk is the campaign's daily budget. At this point `daily` has
+               * already been read and is finite — the gate a few lines up returns outright on
+               * an unreadable `amount_micros`, so nothing unreadable can reach here.
+               *
+               * The raw field is nevertheless read a SECOND time, through `mikrodanTutar`,
+               * because of what the audit record has to be able to say. `mikrodanTutar`
+               * carries "could not be read" as `undefined`, and an undefined `tutar` makes
+               * the field absent from the record instead of present with an invented number;
+               * `daily`, being a plain number, cannot carry that distinction. Writing
+               * `tutar: daily` would look identical today and would silently drop the
+               * "not measured ⇒ not written" contract the moment the gate above changes.
+               * The Meta twin says the same thing at tools/meta.ts.
+               *
+               * An earlier version of this comment described a `daily` that could be produced
+               * from a budget nobody had managed to read, and leaned on the ceiling test
+               * below to catch it. Both halves described the code as it stood before `?? 0`
+               * was removed; the flow now returns before either of those lines runs, and the
+               * sibling comment twelve lines up ("`?? 0` was REMOVED here") had been
+               * contradicting them ever since.
                */
               tutar: mikrodanTutar(row.campaign_budget?.amount_micros),
             },

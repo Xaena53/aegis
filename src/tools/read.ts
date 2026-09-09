@@ -92,10 +92,19 @@ const HESAP_SEMASI = {
  */
 const OLCUM_NOTU = "Değer okunamadıysa bu alan HİÇ YAZILMAZ — yokluğu 'bilinmiyor' demektir, 0 demek değildir";
 
+/**
+ * Rows the API returned in a shape this tool cannot read are DROPPED from the table — but
+ * dropping them silently makes the list look complete when it is not, which is the same
+ * error truncation makes. The count is announced so the agent knows the table is short.
+ */
+const BOZUK_SATIR_NOTU =
+  "Bu araçın okuyamayacağı ŞEKİLDE gelip tablodan DÜŞEN satır sayısı — >0 ise liste EKSİKTİR, 'listede yok = yok' sonucuna varma";
+
 const KAMPANYA_SEMASI = {
   pencereGun: z.number(),
   kesildi: z.boolean().describe("true ise liste satır tavanına takıldı: rapor edilmeyen kampanyalar var"),
   satirTavani: z.number().describe("Tek çağrıda dönebilecek en fazla satır"),
+  sekliBozukSatir: z.number().optional().describe(BOZUK_SATIR_NOTU),
   kampanyalar: z.array(
     z.object({
       id: z.string(),
@@ -121,10 +130,21 @@ const KELIME_SEMASI = {
   pencereGun: z.number(),
   kesildi: z.boolean().describe("true ise liste satır tavanına takıldı: rapor edilmeyen kelimeler var"),
   satirTavani: z.number().describe("Tek çağrıda dönebilecek en fazla satır"),
+  sekliBozukSatir: z.number().optional().describe(BOZUK_SATIR_NOTU),
   kelimeler: z.array(
     z.object({
       kelime: z.string(),
       eslemeTuru: z.string(),
+      /**
+       * The query has always SELECTed `ad_group_criterion.status`; not reporting it let a
+       * REMOVED or PAUSED keyword sit in the table looking exactly like a live one that is
+       * burning money today. Unreadable status is NOT written — an absent status must never
+       * be taken for ENABLED.
+       */
+      durum: z
+        .string()
+        .optional()
+        .describe("Kelimenin durumu (ENABLED/PAUSED/REMOVED). Okunamadıysa HİÇ YAZILMAZ — ETKİN varsayma"),
       kampanya: z.string(),
       reklamGrubu: z.string(),
       maliyet: z.number().optional().describe(OLCUM_NOTU),
@@ -158,16 +178,22 @@ const ARAMA_TERIMI_SEMASI = {
     .optional()
     .describe("Maliyeti/dönüşümü OKUNAMADIĞI için toplamlara ve israf değerlendirmesine alınmayan terim sayısı"),
   /**
-   * When the list is truncated, or when some rows could not be measured, no ratio is
-   * PRODUCED — and 0 is not written either. A percentage computed from a cut or incomplete
-   * list was being read as the account's real waste rate: on an account with 44% waste the
-   * tool could say 10%, and the agent concluded "no serious waste here".
+   * A row dropped for being malformed is spend that the API DID return and that
+   * `toplamMaliyet` does NOT contain — so the ratio's denominator is not the returned data.
+   * It is counted here and, exactly like truncation, it withholds `israfYuzde` entirely.
+   */
+  sekliBozukSatir: z.number().optional().describe(BOZUK_SATIR_NOTU),
+  /**
+   * When the list is truncated, or when some rows could not be measured or read at all, no
+   * ratio is PRODUCED — and 0 is not written either. A percentage computed from a cut or
+   * incomplete list was being read as the account's real waste rate: on an account with 44%
+   * waste the tool could say 10%, and the agent concluded "no serious waste here".
    */
   israfYuzde: z
     .number()
     .optional()
     .describe(
-      "Yalnız liste TAM ve her satır ÖLÇÜLEBİLİR iken yazılır; yoksa oran bilinmiyor demektir ve hiç yazılmaz"
+      "Yalnız liste TAM, hiçbir satır düşmemiş ve her satır ÖLÇÜLEBİLİR iken yazılır; yoksa oran bilinmiyor demektir ve hiç yazılmaz"
     ),
   terimler: z.array(
     z.object({
@@ -186,7 +212,22 @@ const ARAMA_TERIMI_SEMASI = {
         .boolean()
         .optional()
         .describe("true ise maliyet/dönüşüm okunamadı: bu terim israf açısından DEĞERLENDİRİLMEDİ"),
-      zatenDislanmis: z.boolean(),
+      /**
+       * FAIL CLOSED ON THE FLAG THAT STEERS A WRITE. `search_term_view.status` can arrive
+       * missing or in a shape this SDK does not recognise; writing `false` then is a
+       * positive claim — "this term is NOT excluded yet" — built on an unknown, and it is
+       * the flag the NEXT STEP instruction reads before proposing a negative keyword. When
+       * the status cannot be read the flag is not written at all and the unknown is
+       * announced through `dislanmaDurumuBilinmiyor` instead.
+       */
+      zatenDislanmis: z
+        .boolean()
+        .optional()
+        .describe("Dışlanma durumu OKUNAMADIYSA hiç yazılmaz — yokluğu 'dışlanmamış' demek DEĞİLDİR"),
+      dislanmaDurumuBilinmiyor: z
+        .boolean()
+        .optional()
+        .describe("true ise terimin zaten dışlanmış olup olmadığı okunamadı: bu terim için negatif kelime ÖNERME"),
     })
   ),
 };
@@ -553,7 +594,16 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           });
         const kesildi = rows.length > TAVAN;
 
-        const kampanyalar = rows.slice(0, TAVAN).filter((r: any) => r?.campaign).map((r: any) => {
+        /**
+         * A row the API returned without the `campaign` object cannot be reported, so it is
+         * dropped — but the DROP IS COUNTED. Silently shrinking the table makes a campaign
+         * that is missing from the list look as though it does not exist, which is exactly
+         * the error truncation makes and which this tool already announces.
+         */
+        const gorunenSatirlar = rows.slice(0, TAVAN);
+        const saglamSatirlar = gorunenSatirlar.filter((r: any) => r?.campaign);
+        const sekliBozukSatir = gorunenSatirlar.length - saglamSatirlar.length;
+        const kampanyalar = saglamSatirlar.map((r: any) => {
           const m = r.metrics ?? {};
           /**
            * Every money and metric field is read INDIVIDUALLY, and a field that cannot be
@@ -603,10 +653,15 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         const uyari = kesildi
           ? `\n\nUYARI: liste en pahalı ${TAVAN} kampanyada KESİLDİ — daha fazlası var, görünmeyenler bu tabloda yok.`
           : "";
-        return ikili(`Son ${d} gün, ${kampanyalar.length} kampanya:\n\n` + lines.join("\n") + uyari, {
+        const bozukUyari = sekliBozukSatir
+          ? `\n\nUYARI: ${sekliBozukSatir} satır okunamayacak ŞEKİLDE geldi ve tablodan DÜŞTÜ. Liste EKSİKTİR; ` +
+            `düşen kampanyalar hakkında hiçbir şey bilinmiyor, "listede yok = yok" SONUCUNA VARMA.`
+          : "";
+        return ikili(`Son ${d} gün, ${kampanyalar.length} kampanya:\n\n` + lines.join("\n") + uyari + bozukUyari, {
           pencereGun: d,
           kesildi,
           satirTavani: TAVAN,
+          ...(sekliBozukSatir ? { sekliBozukSatir } : {}),
           kampanyalar,
         });
       } catch (e) {
@@ -679,7 +734,21 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         let totalCost = 0;
         let wastedCost = 0;
         let olculemeyenSatir = 0;
-        const terimler = rows.slice(0, TAVAN).filter((r: any) => r?.campaign && r?.ad_group && r?.search_term_view).map((r: any) => {
+        /**
+         * A row that arrived without campaign / ad_group / search_term_view cannot be
+         * reported, so it is dropped — and the DROP IS COUNTED. Its cost was real spend the
+         * API did return, so leaving it out of `totalCost` silently would make the waste
+         * RATIO a fraction of a base that is not the returned data: three rows where the
+         * dropped one carried 900 of 950 units read out as "waste 50%" while the returned
+         * data says 97%. A dropped row therefore withholds the ratio exactly as truncation
+         * does — see `israfYuzde` below.
+         */
+        const gorunenSatirlar = rows.slice(0, TAVAN);
+        const saglamSatirlar = gorunenSatirlar.filter(
+          (r: any) => r?.campaign && r?.ad_group && r?.search_term_view
+        );
+        const sekliBozukSatir = gorunenSatirlar.length - saglamSatirlar.length;
+        const terimler = saglamSatirlar.map((r: any) => {
           const m = r.metrics ?? {};
           /**
            * A WASTE VERDICT IS ONLY REACHED ON A ROW THAT COULD BE MEASURED. Under the
@@ -702,6 +771,19 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           // The real enum name is ADDED_EXCLUDED; there is no 'EXCLUDED_AND_ADDED' value.
           // Match the exact names, otherwise already-excluded terms keep coming back as
           // waste candidates.
+          /**
+           * The reverse enum lookup yields a STRING only for a status this SDK recognises.
+           * Anything else — a missing `status`, or a value outside the enum — leaves a
+           * non-string here, and that is an UNKNOWN, not a "no". Writing
+           * `zatenDislanmis: false` from an unknown is a positive claim on the one flag
+           * that steers a write: the NEXT STEP instruction reads it and sends the agent to
+           * add_campaign_negative_keywords, spending a human approval on a term that may
+           * already be excluded. The flag is withheld and the unknown is announced instead.
+           */
+          const dislanmaBilinmiyor = typeof stName !== "string";
+          const dislanma: { zatenDislanmis?: boolean; dislanmaDurumuBilinmiyor?: boolean } = dislanmaBilinmiyor
+            ? { dislanmaDurumuBilinmiyor: true }
+            : { zatenDislanmis: stName === "EXCLUDED" || stName === "ADDED_EXCLUDED" };
           return {
             terim: String(r.search_term_view.search_term),
             kampanyaId: String(r.campaign.id),
@@ -711,7 +793,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             ...tanimliAlanlar({ maliyet: cost, tiklama: sayiOku(m.clicks), donusum: conv }),
             israfAdayi,
             ...(olculemedi ? { olculemedi: true } : {}),
-            zatenDislanmis: stName === "EXCLUDED" || stName === "ADDED_EXCLUDED",
+            ...dislanma,
           };
         });
 
@@ -721,7 +803,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             `dönüşüm: ${sayiMetni(t.donusum)} (${t.kampanya} [kmp:${t.kampanyaId}] / ${t.reklamGrubu}, ag:${t.reklamGrubuId})` +
             `${t.israfAdayi ? " 🔥 boşa-harcama-adayı" : ""}` +
             `${t.olculemedi ? " ⚠ ÖLÇÜLEMEDİ — maliyet/dönüşüm okunamadı, israf değerlendirmesi YAPILMADI, negatif kelime önerme" : ""}` +
-            `${t.zatenDislanmis ? " [zaten dışlanmış]" : ""}`
+            `${t.zatenDislanmis ? " [zaten dışlanmış]" : ""}` +
+            `${t.dislanmaDurumuBilinmiyor ? " ⚠ DIŞLANMA DURUMU OKUNAMADI — bu terim zaten dışlanmış OLABİLİR, negatif kelime önerme" : ""}`
         );
         /**
          * If the list was cut, NO RATIO IS PRODUCED. The totals cover only the most
@@ -731,10 +814,11 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
          */
         // The ratio is written only when it can be MEASURED: if the list is cut the totals
         // are not the whole account; if total cost is 0 the ratio is 0/0; if some rows could
-        // not be measured the denominator is incomplete. All three mean "unknown" — and
-        // writing 0 would be a declaration that there is no waste.
+        // not be measured the denominator is incomplete; if a row was dropped for being
+        // malformed the denominator is not even the data that came back. All four mean
+        // "unknown" — and writing 0 would be a declaration that there is no waste.
         const israfYuzde =
-          kesildi || totalCost <= 0 || olculemeyenSatir > 0
+          kesildi || totalCost <= 0 || olculemeyenSatir > 0 || sekliBozukSatir > 0
             ? undefined
             : Number(((wastedCost / totalCost) * 100).toFixed(0));
         const kapsam = kesildi
@@ -748,10 +832,18 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             `israf değerlendirmesine ALINMADI; bu yüzden israf oranı hesaplanmadı. Ölçülemeyen terimler için ` +
             `"dönüşüm getirmedi" SONUCUNA VARMA.\n`
           : "";
+        // A dropped row is spend that came back from the API and is missing from the totals
+        // below, so it is named here for the same reason truncation is.
+        const bozukNotu = sekliBozukSatir
+          ? `\nUYARI: ${sekliBozukSatir} satır okunamayacak ŞEKİLDE geldi ve tablodan DÜŞTÜ. Onların maliyeti ` +
+            `aşağıdaki toplamlarda YOK; bu yüzden israf oranı hesaplanmadı. Görünen israf, gerçek israfın ` +
+            `ALTINDA olabilir.\n`
+          : "";
         const olculen = terimler.length - olculemeyenSatir;
         return ikili(
           kapsam +
             olcumNotu +
+            bozukNotu +
             `Son ${d} gün, ${terimler.length} arama terimi (${olculen} tanesi ölçülebildi). ` +
             `${kesildi ? "Listelenen ölçülebilir terimlerin toplam maliyeti" : "Ölçülebilir terimlerin toplam maliyeti"}: ${totalCost.toFixed(2)}, ` +
             `dönüşümsüz terim maliyeti: ${wastedCost.toFixed(2)}${israfYuzde === undefined ? "" : ` (%${israfYuzde})`}.\n\n` +
@@ -767,6 +859,7 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
             toplamMaliyet: totalCost,
             israfMaliyet: wastedCost,
             ...(olculemeyenSatir ? { olculemeyenSatir } : {}),
+            ...(sekliBozukSatir ? { sekliBozukSatir } : {}),
             ...(israfYuzde === undefined ? {} : { israfYuzde }),
             terimler,
           }
@@ -824,7 +917,12 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           });
         const kesildi = rows.length > TAVAN;
 
-        const kelimeler = rows.slice(0, TAVAN).filter((r: any) => r?.campaign && r?.ad_group).map((r: any) => {
+        // A row without campaign / ad_group cannot be reported, so it is dropped — and the
+        // DROP IS COUNTED, for the same reason truncation is announced.
+        const gorunenSatirlar = rows.slice(0, TAVAN);
+        const saglamSatirlar = gorunenSatirlar.filter((r: any) => r?.campaign && r?.ad_group);
+        const sekliBozukSatir = gorunenSatirlar.length - saglamSatirlar.length;
+        const kelimeler = saglamSatirlar.map((r: any) => {
           const kw = r.ad_group_criterion?.keyword ?? {};
           const m = r.metrics ?? {};
           // The same contract holds on the keyword surface: turning an unreadable cost or
@@ -839,9 +937,21 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
           const okunamayanAlanlar = Object.entries(alanlar)
             .filter(([, v]) => v === undefined)
             .map(([k]) => k);
+          /**
+           * The status this query has always SELECTed is finally reported. Without it a
+           * REMOVED or PAUSED keyword sat in the table indistinguishable from a live one,
+           * and the tool's own description sends the agent here to hunt "dead keywords" —
+           * so it read a 30-day-old removed keyword's historical cost as money burning
+           * today. The reverse enum lookup yields a string only for a status this SDK
+           * knows; anything else is UNKNOWN and the field is not written, because an
+           * absent status must never be taken for ENABLED.
+           */
+          const durumAdi = (enums.AdGroupCriterionStatus as any)[r.ad_group_criterion?.status];
+          const durum = typeof durumAdi === "string" ? durumAdi : undefined;
           return {
             kelime: String(kw.text ?? ""),
             eslemeTuru: String((enums.KeywordMatchType as any)[kw.match_type] ?? kw.match_type ?? ""),
+            ...(durum === undefined ? {} : { durum }),
             kampanya: String(r.campaign.name),
             reklamGrubu: String(r.ad_group.name),
             ...tanimliAlanlar(alanlar),
@@ -850,7 +960,8 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         });
         const lines = kelimeler.map(
           (k) =>
-            `"${k.kelime}" [${k.eslemeTuru}] (${k.kampanya} / ${k.reklamGrubu}) — maliyet: ${sayiMetni(k.maliyet, 2)}, tıklama: ${sayiMetni(k.tiklama)}, dönüşüm: ${sayiMetni(k.donusum)}` +
+            `"${k.kelime}" [${k.eslemeTuru}] (${k.kampanya} / ${k.reklamGrubu}) ` +
+            `[durum: ${k.durum ?? "OKUNAMADI — ETKİN varsayma"}] — maliyet: ${sayiMetni(k.maliyet, 2)}, tıklama: ${sayiMetni(k.tiklama)}, dönüşüm: ${sayiMetni(k.donusum)}` +
             (k.okunamayanAlanlar
               ? ` ⚠ OKUNAMAYAN ALAN: ${k.okunamayanAlanlar.join(", ")} — 0 varsayma`
               : "")
@@ -860,10 +971,15 @@ export function registerReadTools(server: McpServer, getCtx: ContextProvider) {
         const uyari = kesildi
           ? `\n\nUYARI: liste en pahalı ${TAVAN} kelimede KESİLDİ — daha fazlası var, görünmeyenler bu tabloda yok.`
           : "";
-        return ikili(`Son ${d} gün, ${kelimeler.length} anahtar kelime:\n` + lines.join("\n") + uyari, {
+        const bozukUyari = sekliBozukSatir
+          ? `\n\nUYARI: ${sekliBozukSatir} satır okunamayacak ŞEKİLDE geldi ve tablodan DÜŞTÜ. Liste EKSİKTİR; ` +
+            `düşen kelimeler hakkında hiçbir şey bilinmiyor, "listede yok = yok" SONUCUNA VARMA.`
+          : "";
+        return ikili(`Son ${d} gün, ${kelimeler.length} anahtar kelime:\n` + lines.join("\n") + uyari + bozukUyari, {
           pencereGun: d,
           kesildi,
           satirTavani: TAVAN,
+          ...(sekliBozukSatir ? { sekliBozukSatir } : {}),
           kelimeler,
         });
       } catch (e) {
