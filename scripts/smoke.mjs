@@ -288,6 +288,14 @@ try {
    * The test is not removed: live proof of the gates is this product's central claim and
    * simulation cannot stand in for it. What is bounded instead is the BLAST RADIUS — the
    * rollback moves spending DOWN, so it never meets the approval gate and can always run.
+   *
+   * Two things that bound holds on, both learned the hard way:
+   *   - The rollback needs a TARGET, so the prior value must have been measured. A baseline
+   *     that could not be read is not a baseline (see the precondition below).
+   *   - Damage control runs BEFORE the verdict. Asserting the refusal message first made the
+   *     rollback unreachable in the only case it exists for: when the gate falls the message
+   *     reads "güncellendi", the assertion throws, and the check would end leaving the
+   *     forbidden value live on the account.
    */
   async function geriAl(ne, cagri) {
     const g = await arac(mcp, cagri.ad, cagri.arg);
@@ -314,36 +322,72 @@ try {
     });
   } else {
     const kampanyaId = String(ilk.campaign.id);
-    const butceOnce = Number(ilk.campaign_budget?.amount_micros ?? 0);
 
-    await kontrol("Tavan üstü bütçe reddedilir", "update_campaign_budget (tavan üstü)", async () => {
-      const r = await arac(mcp, "update_campaign_budget", {
-        customerId: CID, campaignId: kampanyaId, newDailyBudget: 9_999_999, confirm: true,
+    /**
+     * FAIL-CLOSED PRECONDITION for the ceiling check below.
+     *
+     * The prior budget used to be read as `?? 0` — the pattern this repo removes on sight,
+     * because it turns "could not be read" into the number zero. A shared budget, a partial
+     * row or a permission-limited field returns no `amount_micros`, so the baseline silently
+     * became 0; the rollback was then skipped by its own `> 0` guard, and a regressed ceiling
+     * gate would have left a 9,999,999 daily budget standing on a LIVE account with no
+     * warning printed. Zero is no better a baseline: no live budget is zero, and zero is not
+     * a value the rollback could write back.
+     *
+     * So the measurement is a precondition, not a default. Without it the forbidden call is
+     * NOT made at all and the check reports itself unverified — refusing to measure the gate
+     * is a worse outcome than a red line in the report, but it is a far better one than
+     * becoming the damage the gate exists to prevent.
+     */
+    const hamButce = ilk.campaign_budget?.amount_micros;
+    const butceOnce = hamButce === undefined || hamButce === null ? NaN : Number(hamButce);
+    const butceOlculdu = Number.isFinite(butceOnce) && butceOnce > 0;
+
+    if (!butceOlculdu) {
+      sonuclar.push({
+        soz: "Tavan üstü bütçe reddedilir", ad: "update_campaign_budget (tavan üstü)", gecti: false, ms: 0,
+        not:
+          "kampanyanın eski bütçesi okunamadı (paylaşımlı bütçe ya da kısmi satır) — geri alma " +
+          "hedefi yok, yarıçap sınırlanamaz: tavan üstü yazma DENENMEDİ",
       });
-      dogrula(/Reddedildi/i.test(r.metin), `reddedilmedi: ${r.metin.slice(0, 200)}`);
-      // A refusal message alone is not proof; confirm the live budget is untouched.
-      const sonra = await arac(mcp, "run_gaql", {
-        customerId: CID,
-        query: `SELECT campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${kampanyaId}`,
-      });
-      const butceSonra = Number((sonra.yapisal?.satirlar ?? [])[0]?.campaign_budget?.amount_micros ?? -1);
-      if (butceSonra !== butceOnce && butceOnce > 0) {
-        // LOWERING a budget needs no approval: the rollback can always get through.
-        await geriAl(`bütçe ${butceOnce / 1e6} değerine`, {
-          ad: "update_campaign_budget",
-          arg: { customerId: CID, campaignId: kampanyaId, newDailyBudget: butceOnce / 1e6 },
+    } else {
+      await kontrol("Tavan üstü bütçe reddedilir", "update_campaign_budget (tavan üstü)", async () => {
+        const r = await arac(mcp, "update_campaign_budget", {
+          customerId: CID, campaignId: kampanyaId, newDailyBudget: 9_999_999, confirm: true,
         });
-      }
-      dogrula(butceSonra === butceOnce, `bütçe DEĞİŞTİ: ${butceOnce} → ${butceSonra}`);
-      return "reddedildi ve bütçe değişmedi";
-    });
+        // The verdict is computed here but asserted LAST: a throw before the rollback would
+        // leave the forbidden budget live. A refusal message alone is not proof anyway —
+        // what settles it is the live value afterwards.
+        const reddedildi = /Reddedildi/i.test(r.metin);
+        const sonra = await arac(mcp, "run_gaql", {
+          customerId: CID,
+          query: `SELECT campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${kampanyaId}`,
+        });
+        const butceSonra = Number((sonra.yapisal?.satirlar ?? [])[0]?.campaign_budget?.amount_micros ?? -1);
+        if (butceSonra !== butceOnce) {
+          // LOWERING a budget needs no approval: the rollback can always get through. An
+          // unreadable after-value (-1) also lands here, and putting the measured baseline
+          // back is the right move when the live value is unknown.
+          await geriAl(`bütçe ${butceOnce / 1e6} değerine`, {
+            ad: "update_campaign_budget",
+            arg: { customerId: CID, campaignId: kampanyaId, newDailyBudget: butceOnce / 1e6 },
+          });
+        }
+        dogrula(reddedildi, `reddedilmedi: ${r.metin.slice(0, 200)}`);
+        dogrula(butceSonra === butceOnce, `bütçe DEĞİŞTİ: ${butceOnce} → ${butceSonra}`);
+        return "reddedildi ve bütçe değişmedi";
+      });
+    }
 
     await kontrol("Onaysız yayına alma reddedilir", "set_campaign_status ENABLED (onaysız)", async () => {
       const durumOnce = String(ilk.campaign.status);
       const r = await arac(mcp, "set_campaign_status", {
         customerId: CID, campaignId: kampanyaId, status: "ENABLED",
       });
-      dogrula(/Reddedildi|İşlem yapılmadı/i.test(r.metin), `reddedilmedi: ${r.metin.slice(0, 200)}`);
+      // Asserted LAST, for the same reason as the budget check above: when the gate falls
+      // the message is a success message, and throwing on it here would skip the rollback
+      // and leave a campaign SPENDING on a live account.
+      const reddedildi = /Reddedildi|İşlem yapılmadı/i.test(r.metin);
       const sonra = await arac(mcp, "run_gaql", {
         customerId: CID,
         query: `SELECT campaign.status FROM campaign WHERE campaign.id = ${kampanyaId}`,
@@ -356,6 +400,7 @@ try {
           arg: { customerId: CID, campaignId: kampanyaId, status: "PAUSED" },
         });
       }
+      dogrula(reddedildi, `reddedilmedi: ${r.metin.slice(0, 200)}`);
       dogrula(durumSonra === durumOnce, `durum DEĞİŞTİ: ${durumOnce} → ${durumSonra}`);
       return "reddedildi ve durum değişmedi";
     });

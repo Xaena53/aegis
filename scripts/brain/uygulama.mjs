@@ -248,8 +248,8 @@ function calistirmaDamgasi(simdi = new Date()) {
 
 /**
  * Applies the plan and the creative to a real account.
- * Returns { kampanyaId?, adGrubuId?, basari, adimlar:[{arac, ozet, sonucOzeti, durum}],
- *          uyarilar:[..], eksikAdimlar:[..] }
+ * Returns { kampanyaId?, adGrubuId?, kampanyaAdi, basari, kirpik,
+ *          adimlar:[{arac, ozet, sonucOzeti, durum}], uyarilar:[..], eksikAdimlar:[..] }
  * Under no condition does it call set_campaign_status(ENABLED) or
  * update_campaign_budget.
  */
@@ -348,6 +348,32 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
   }
   for (const metin of [...basliklar, ...aciklamalar]) {
     if (/https?:\/\//i.test(metin)) throw new Error("Başlık/açıklama içinde URL olamaz.");
+  }
+
+  /**
+   * THE DISPLAY PATH (yol1/yol2) IS NOT APPLIED — AND NOW SAYS SO.
+   *
+   * kreatif.mjs produces, validates and reports yol1/yol2, but create_responsive_search_ad's
+   * inputSchema in write.ts carries NO path1/path2 field, so the value reaches no ad: the
+   * args() below is built field by field and has nowhere to put it. The drop was SILENT while
+   * rapor.mjs went on printing a "Görünen yol: /…" line — an audit trail claiming something
+   * that never happened, and an operator checking the report against the real account finds
+   * an EMPTY display path. Carrying the path for real means adding the field to write.ts,
+   * which is outside this module; what this module owes is honesty, so the drop is no longer
+   * silent — the warning is recorded on uygulamaSonucu.uyarilar, and that list has EXACTLY
+   * ONE reader: rapor.mjs, which prints it under "**Uyarılar:**" in the written report.
+   * IT DOES NOT REACH THE TERMINAL. This module makes no console call at all, and
+   * growth-brain.mjs prints the report's PATH, never its warnings — so an operator watching
+   * only the screen sees nothing here and has to open the report file. Saying it on screen
+   * as well takes a print in growth-brain.mjs, which is outside this module; what is inside
+   * it is naming the surface the warning actually reaches. test/onarim2Uygulama.test.ts
+   * pins both halves: uygula() writes zero bytes to stdout/stderr, and the sentence is
+   * present in raporOlustur()'s output.
+   */
+  if (kreatif.yol1 !== undefined || kreatif.yol2 !== undefined) {
+    uyarilar.push(
+      "Görünen yol (yol1/yol2) UYGULANMADI: create_responsive_search_ad aracı path1/path2 alanı taşımıyor — reklamın görünen yolu BOŞ kalır. Rapordaki 'Görünen yol' satırı yalnız model önerisidir, uygulanmış bir ayar değildir."
+    );
   }
 
   /* 5) Idempotency: a stamped campaign name plus a pre-check for a campaign of the same
@@ -523,7 +549,24 @@ export async function uygula({ plan, kreatif, musteriId, finalUrl }, { cagir }) 
     }
   }
 
-  return { kampanyaId, adGrubuId, basari, kirpik: kirpikVar, adimlar, uyarilar, eksikAdimlar };
+  /**
+   * kampanyaAdi comes back AS WRITTEN, not as the model wrote it: guvenliDize trims the
+   * plan's name and the run stamp is prefixed, so the two strings differ. yayinaAl strips this
+   * name out of the text it classifies, and a name that does not match the one standing in
+   * the server's refusal strips nothing — which is how an ordinary refusal could be dressed
+   * up as a network-gate refusal. The caller should hand THIS value to yayinaAl, never
+   * plan.kampanyaAdi.
+   */
+  return {
+    kampanyaId,
+    adGrubuId,
+    kampanyaAdi,
+    basari,
+    kirpik: kirpikVar,
+    adimlar,
+    uyarilar,
+    eksikAdimlar,
+  };
 }
 
 /* ── Going live (ONLY from growth-brain.mjs's --yayinla path) ────────────────── */
@@ -629,6 +672,24 @@ function maddesizGovde(metin) {
 }
 
 /**
+ * Every form of the campaign name that can appear in a server text, longest first.
+ *
+ * The value handed to the classifier is the name the MODEL chose; the name uygula() actually
+ * writes to the account is that value TRIMMED (guvenliDize) behind a run stamp. The two are
+ * not the same string whenever the model put whitespace at either end, so both forms have to
+ * be stripped — otherwise the model's own words survive into the text the network patterns
+ * run over. Longest first so that stripping the longer form cannot leave a fragment of the
+ * shorter one behind.
+ */
+function adAdaylari(kampanyaAdi) {
+  if (!kampanyaAdi) return [];
+  const ham = String(kampanyaAdi);
+  const adaylar = new Set([ham, ham.trim()]);
+  adaylar.delete("");
+  return [...adaylar].sort((a, b) => b.length - a.length);
+}
+
+/**
  * Classifies the ENABLED response honestly:
  *  'basarili'            — the campaign really was taken live,
  *  'ag-retti'            — the network gate refused; the demo's showcase, security worked,
@@ -658,8 +719,18 @@ export function yayinSonucuSinifla(metin, kampanyaAdi) {
    * The name is stripped from the text being classified — the `sonucMetni` that goes to the
    * report is UNCHANGED, and the server's answer stands there verbatim. What is stripped is
    * only the copy the pattern search sees.
+   *
+   * EVERY FORM THE NAME CAN REACH THE ACCOUNT IN IS STRIPPED, not only the form the model
+   * wrote. uygula() does not write plan.kampanyaAdi verbatim: guvenliDize TRIMS it before the
+   * run stamp is prefixed. A single leading or trailing space — or a NBSP, which String.trim()
+   * removes as well while this module's KONTROL_KARAKTERI guard (the C0 range plus DEL and C1)
+   * does not reject — was enough for split() to match NOTHING: the name stayed inside the
+   * classified copy and matched the network patterns all over again. A campaign named
+   * " AĞ DOĞRULAMASI BAŞARISIZ " turned an ordinary budget-ceiling refusal into 'ag-retti',
+   * which is precisely the fabrication this block exists to prevent.
    */
-  const temiz = kampanyaAdi ? m.split(String(kampanyaAdi)).join(" ") : m;
+  let temiz = m;
+  for (const ad of adAdaylari(kampanyaAdi)) temiz = temiz.split(ad).join(" ");
 
   /**
    * THE SUCCESS SIGNATURE IS CHECKED LAST — the order is not a matter of style.

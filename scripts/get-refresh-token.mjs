@@ -73,9 +73,24 @@ const server = http.createServer(async (req, res) => {
         grant_type: "authorization_code",
       }),
     });
-    const tokens = await tokenRes.json();
-    if (!tokens.refresh_token) {
-      throw new Error("refresh_token dönmedi: " + JSON.stringify(tokens));
+    // The response body NEVER leaves this scope. A 200 that carries no refresh_token still
+    // carries a LIVE, adwords-scoped access_token, so stringifying the body would print a
+    // working credential to the terminal - and into whatever the user pastes into a bug
+    // report. Only the server's own error fields are quoted, which is the same rule
+    // handleCallback in src/http.ts already follows. A body that is not JSON is not quoted
+    // either: the parser writes a raw excerpt of it into its own message.
+    let tokens;
+    try {
+      tokens = await tokenRes.json();
+    } catch {
+      throw new Error(`Token yanıtı okunamadı (HTTP ${tokenRes.status}): gövde JSON değil.`);
+    }
+    // Fail closed on every doubtful shape: a non-2xx status, a missing token, or a
+    // refresh_token that is not a string (which used to be written into .env as
+    // "[object Object]" - an unusable credential silently saved as a real one).
+    if (!tokenRes.ok || typeof tokens?.refresh_token !== "string" || !tokens.refresh_token) {
+      const neden = String(tokens?.error_description ?? tokens?.error ?? "sunucu bir hata alanı göndermedi");
+      throw new Error(`refresh_token alınamadı (HTTP ${tokenRes.status}: ${neden}) — prompt=consent ile tekrar dene.`);
     }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end("<h2>Tamam! Terminale dönebilirsin, bu sekmeyi kapat.</h2>");

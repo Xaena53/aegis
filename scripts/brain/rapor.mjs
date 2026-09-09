@@ -27,6 +27,10 @@
  *    maxDailyBudget)
  *  - tavanKaynagi: which source the binding ceiling came from, e.g. the server's limits
  *    resource
+ *  - uygulananKanal: the name of the channel the campaign was actually created on. The
+ *    allocation table stamps its row "bu koşuda planlandı" and every other row
+ *    "ÖNERİ"; without it the default below is used, and a channel that is not in the
+ *    allocation stamps NO row as applied (see VARSAYILAN_UYGULANAN_KANAL).
  *  - yayinSonucu: the outcome of the --yayinla path, as returned by yayinaAl in
  *    uygulama.mjs. Without it the "Yayına Alma Denemesi" section is not produced AT ALL. A
  *    refusal by the network gate is presented in that section not as a FAILURE but as the
@@ -142,6 +146,25 @@ const YAYIN_ETIKETI = {
   atlandi: "ATLANDI — kurulum tamamlanmadığı için denenmedi",
 };
 
+/**
+ * The channel the campaign-creation path writes to when the caller does not name one.
+ *
+ * WHICH CHANNEL WAS APPLIED IS A FACT OF THE RUN, so raporOlustur takes it as
+ * `uygulananKanal`; this default only covers callers that do not pass it yet. It is not
+ * imported from growth-brain.mjs — this module's independence is deliberate (see the note on
+ * YAYIN_ETIKETI) — and the guard in the allocation table is what stops the copy from lying:
+ * a channel that is NOT in the allocation stamps NO row as applied.
+ *
+ * IF THE CREATION PATH EVER WRITES TO ANOTHER CHANNEL, THE CALLER MUST PASS
+ * `uygulananKanal`; otherwise the table would name the channel this constant remembers.
+ */
+const VARSAYILAN_UYGULANAN_KANAL = "google";
+
+/** Compares channel names normalised — dagitimDogrula already trims and lowercases them. */
+function kanalEsit(kanal, hedef) {
+  return String(kanal ?? "").trim().toLowerCase() === hedef;
+}
+
 /** Turns refusal text into a quote block, cleaning and escaping each line
  * separately. */
 function alintiSatirlari(metin) {
@@ -168,6 +191,7 @@ export function raporOlustur({
   tavanKaynagi,
   yayinSonucu,
   dagitim,
+  uygulananKanal,
 } = {}) {
   const satirlar = [];
   const ekle = (...s) => satirlar.push(...s);
@@ -236,18 +260,47 @@ export function raporOlustur({
      * path goes through a single channel. Showing both in one table without separating
      * them makes an unapplied share read as an applied one — this is the single easiest
      * place for the report to lie.
+     *
+     * THE STAMP FOLLOWS THE CHANNEL'S NAME, NOT ITS POSITION IN THE ARRAY. It used to be
+     * `i === 0`, while the campaign is created from the share picked BY NAME
+     * (uygulanacakPay(dagitim, "google")). The ordering belongs to the MODEL: with
+     * `[{kanal:"meta",...},{kanal:"google",...}]` this table marked Meta — a platform not one
+     * call was made to — as "planned in this run", and marked Google, where the PAUSED
+     * campaign really was created, as "not applied". The report is a permanent audit
+     * artifact, so that is a false record, not a cosmetic slip.
+     *
+     * Fail closed: if the applied channel is not in the allocation at all, NO row is stamped
+     * as applied. "Which channel got the money is unknown" is not "the first row got it".
      */
+    const hedefKanal =
+      typeof uygulananKanal === "string" && uygulananKanal.trim() !== ""
+        ? uygulananKanal.trim().toLowerCase()
+        : VARSAYILAN_UYGULANAN_KANAL;
+    const uygulananSatirVar = dagitim.some((pay) => kanalEsit(pay?.kanal, hedefKanal));
     ekle("| Kanal | Günlük bütçe | Durum | Gerekçe |", "|---|---|---|---|");
-    dagitim.forEach((pay, i) => {
-      const durum = i === 0 ? "bu koşuda planlandı" : "ÖNERİ — bu koşuda uygulanmadı";
-      ekle(`| ${guvenli(pay.kanal)} | ${guvenli(String(pay.gunlukButce))} | ${durum} | ${guvenli(pay.gerekce)} |`);
-    });
-    ekle("");
-    if (dagitim.length > 1) {
+    for (const pay of dagitim) {
+      const durum = !uygulananSatirVar
+        ? "BELİRSİZ — uygulandığı DOĞRULANMADI"
+        : kanalEsit(pay?.kanal, hedefKanal)
+          ? "bu koşuda planlandı"
+          : "ÖNERİ — bu koşuda uygulanmadı";
       ekle(
-        "> Yalnız ilk satırdaki kanal için kampanya kuruldu/planlandı. Diğer kanalların payı " +
-          "bir ÖNERİDİR: o platformda kampanya açılmadı, hiçbir çağrı yapılmadı. Uygulamak " +
-          "için o kanalın kendi araçları ayrıca çalıştırılmalıdır.",
+        `| ${guvenli(pay?.kanal)} | ${guvenli(String(pay?.gunlukButce))} | ${durum} | ${guvenli(pay?.gerekce)} |`
+      );
+    }
+    ekle("");
+    if (!uygulananSatirVar) {
+      ekle(
+        `> ⚠ HANGİ KANALA UYGULANDIĞI BU RAPORDAN OKUNAMAZ: kampanyanın kurulduğu kanal ` +
+          `('${guvenli(hedefKanal)}') yukarıdaki dağıtımda yok. Satırların HİÇBİRİ uygulanmış ` +
+          "SAYILMAZ; hangi platforma yazıldığı hesaptan doğrulanmalıdır.",
+        ""
+      );
+    } else if (dagitim.length > 1) {
+      ekle(
+        `> Yalnız '${guvenli(hedefKanal)}' kanalı için kampanya kuruldu/planlandı. Diğer ` +
+          "kanalların payı bir ÖNERİDİR: o platformda kampanya açılmadı, hiçbir çağrı " +
+          "yapılmadı. Uygulamak için o kanalın kendi araçları ayrıca çalıştırılmalıdır.",
         ""
       );
     }

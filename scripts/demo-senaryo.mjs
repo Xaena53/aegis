@@ -25,21 +25,36 @@
  *
  * The default mode is DRY: in Act 1 and Act 3/A the real write tool is NOT CALLED — the
  * script stops immediately before the tool call and prints "[kuru] araç çağrısı atlandı".
- * With the --canli flag it really is called, as a small increase of one unit, and after the
- * approval the budget is returned to its old value, since a decrease needs no approval. Under
- * --canli the approval decision is NOT the script's: it belongs to a real operator typing
- * 'Evet' at the keyboard, through readline.
+ * With the --canli flag it really is called, as a small increase of one unit, and the budget is
+ * returned to its old value, since a decrease needs no approval. Whether it really came back is
+ * decided by READING THE BUDGET BACK from the account, not by the tool's answer — and the same
+ * read-back is what says whether a write happened at all, because "the operator declined" is
+ * not by itself proof that nothing was written. Under --canli the approval decision is NOT the
+ * script's: it belongs to a real operator typing 'Evet' at the keyboard, through readline.
  *
  * Act 3's live rehearsal is performed ONLY on a TEST campaign that is PAUSED and named
  * explicitly with --kampanya: the campaign really is set to ENABLED, returned to PAUSED the
- * moment the scene ends, and the status is verified BY READING IT BACK. If that reversal
- * cannot be verified, the script SHOUTS — a red emergency box and exit code 1 — because a
- * campaign left live spends real money.
+ * moment the scene ends, and the status is verified BY READING IT BACK. If a reversal cannot
+ * be verified — a budget raise's (Act 1's or Act 2's) or Act 3's status — the script SHOUTS: a
+ * red emergency box and exit code 1, because a raised budget and a campaign left live both
+ * spend real money. And while such a write is still standing, no later act starts a new one.
  *
- * The calls in Act 2 and Act 3/B are safe in dry mode too: the network gate refuses BEFORE
- * any write. If the expected refusal does not arrive, or the prompt is shown even once, the
- * demo ends in an ERROR; the elicitation handler for those acts ALWAYS refuses, as a
- * fail-closed precaution.
+ * Acts 2 and 3/B REALLY CALL the write tool, in dry mode too: what stands between them and a
+ * write is the NETWORK GATE refusing. "Expected to refuse" is not "verified", so both acts
+ * READ THE ACCOUNT BACK after the call, push back whatever they find changed and, when that
+ * cannot be proven, shout through the same interlock — an unreadable answer counting as
+ * changed. Only after the account is back where it belongs may the missing refusal, or a
+ * prompt shown even once, end the demo in an ERROR; the elicitation handler for those acts
+ * ALWAYS refuses, as a fail-closed precaution.
+ *
+ * Every act first verifies, with READ-ONLY queries, that its candidate can reach the network
+ * gate at all: update_campaign_budget answers first on the account's safety ceiling and then
+ * on whether the budget is SHARED, and set_campaign_status on the ceiling and on having a
+ * servable ad — all of them BEFORE the network gate, and each with a text of its own. On a
+ * candidate that trips one of those, the act is SKIPPED with the reason on screen instead of
+ * being played, because there the network evidence cannot exist. Sharedness that the response
+ * does not carry cannot be checked in advance; the refusal it produces is then reported as
+ * what it is — an earlier gate's answer, never the network's.
  *
  * If AEGIS_NV_SIMULATE is defined — this script DOES NOT SET its value, it only passes it
  * through to the server processes as-is — Act 3 also highlights the evidence line of the
@@ -48,12 +63,14 @@
  * Usage:
  *   npm run demo -- --musteri <customer-id> [--kampanya <campaign-id>] [--canli]
  *   The default is DRY mode with no writes at all; --canli applies a real, small, reverted
- *   budget increase, and with --kampanya it takes the TEST campaign live briefly.
+ *   budget increase, and ONLY TOGETHER WITH --kampanya does it take that named TEST campaign
+ *   live briefly. A campaign id must be digits only: an unreadable value is an error, never a
+ *   silently trimmed one, because a trimmed id names a DIFFERENT campaign.
  *
  *   node scripts/demo-senaryo.mjs --kendini-sina   (hidden; needs no customer and no dist)
  *   This DOES NOT PLAY the scenario: it only proves that the safety interlock above — the
- *   "the reversal could not be verified" flag — really does print the red emergency box and
- *   set the exit code to 1. The interlock itself is called, not a copy of it.
+ *   "the reversal could not be verified" flags, both of them — really does print the red
+ *   emergency box and set the exit code to 1. The interlock itself is called, not a copy of it.
  */
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
@@ -69,12 +86,35 @@ const DEMO_TELEFON = "+905550001122"; // the approver's DEMO number, passed to t
 
 /* ── CLI ─────────────────────────────────────────────────────────────────────── */
 
+/**
+ * A flag's value, in BOTH spellings: `--kampanya 123` and `--kampanya=123`. The `=` form used
+ * to be invisible here — `indexOf("--kampanya")` never matches `--kampanya=123`, so the flag
+ * counted as ABSENT and the run silently fell through to the automatic candidate pick. A very
+ * common habit must not quietly select a different campaign than the one that was typed.
+ */
 function bayrakDegeri(ad) {
+  const esitli = process.argv.find((a) => a.startsWith(`${ad}=`));
+  if (esitli !== undefined) return esitli.slice(ad.length + 1);
   const i = process.argv.indexOf(ad);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : undefined;
 }
 const MUSTERI = bayrakDegeri("--musteri");
-const KAMPANYA_ARG = bayrakDegeri("--kampanya")?.replace(/\D/g, "") || undefined;
+/**
+ * The campaign id is NOT REPAIRED. It used to be pushed through `replace(/\D/g, "")`:
+ * "223-344-55" silently became 22334455 — a DIFFERENT, possibly existing campaign — and
+ * "demo-test" became "" which, through `|| undefined`, turned into "no flag was given at all"
+ * and dropped the run into the automatic pick. Both are silent corrections of a value that
+ * decides WHICH campaign is touched, and under --canli which campaign goes live. An unreadable
+ * value is an ERROR here, loudly, before any server is started or any account is read.
+ */
+const KAMPANYA_ARG = bayrakDegeri("--kampanya");
+if (KAMPANYA_ARG !== undefined && !/^\d+$/.test(KAMPANYA_ARG)) {
+  console.error(
+    `Geçersiz --kampanya değeri: "${KAMPANYA_ARG}" — kampanya kimliği yalnız rakamlardan oluşur (örn. --kampanya 1234567890).`
+  );
+  console.error("Değer sessizce düzeltilmez: kırpılmış bir kimlik BAŞKA bir kampanyayı seçerdi.");
+  process.exit(1);
+}
 const CANLI = process.argv.includes("--canli");
 /** Hidden: it exercises Act 3's safety interlock, not the scenario — see kendiniSina
  * below. */
@@ -236,12 +276,23 @@ async function gaqlSatirlar(client, sorgu, limit = 50) {
   return m ? JSON.parse(m[1]) : [];
 }
 
-/** Reads the candidate campaigns and their current budgets with run_gaql, read-only and
- * sorted. */
+/**
+ * Reads the candidate campaigns, their current budgets and — the reason
+ * `campaign_budget.explicitly_shared` is selected — whether that budget is SHARED, read-only
+ * and sorted.
+ *
+ * Sharedness is candidate DATA, not decoration: update_campaign_budget refuses a shared budget
+ * before it ever reaches the approval prompt, and therefore before the network gate. Only an
+ * explicit `false` means "campaign-specific"; every other value — the field missing from the
+ * response, null, a string — is UNKNOWN and stays unknown. Rewriting it to false is the one
+ * thing that must not happen: that is how "could not be read" turns into "is safe".
+ */
 async function kampanyalariOku(client, kampanyaId) {
+  const alanlar =
+    "campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros, campaign_budget.explicitly_shared";
   const sorgu = kampanyaId
-    ? `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${Number(kampanyaId)} LIMIT 1`
-    : `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 50`;
+    ? `SELECT ${alanlar} FROM campaign WHERE campaign.id = ${Number(kampanyaId)} LIMIT 1`
+    : `SELECT ${alanlar} FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 50`;
   const satirlar = await gaqlSatirlar(client, sorgu, 50);
   const adaylar = satirlar
     .map((r) => ({
@@ -249,6 +300,10 @@ async function kampanyalariOku(client, kampanyaId) {
       ad: String(r?.campaign?.name ?? "(adsız)"),
       durum: durumAdi(r?.campaign?.status),
       butce: Number(r?.campaign_budget?.amount_micros) / 1e6,
+      paylasimli:
+        typeof r?.campaign_budget?.explicitly_shared === "boolean"
+          ? r.campaign_budget.explicitly_shared
+          : undefined,
     }))
     .filter((k) => k.id && Number.isFinite(k.butce) && k.butce > 0);
   if (!adaylar.length) {
@@ -264,9 +319,95 @@ async function kampanyalariOku(client, kampanyaId) {
   return adaylar;
 }
 
-/** The single candidate for Acts 1 and 2: the least dangerous campaign. */
-async function kampanyaOku(client, kampanyaId) {
-  return (await kampanyalariOku(client, kampanyaId))[0];
+/** The demo's own attempt in Acts 1 and 2: a raise of exactly one unit. */
+const denemeButcesi = (kampanya) => Math.round((kampanya.butce + 1) * 100) / 100;
+
+/**
+ * The gates update_campaign_budget applies BEFORE the network gate (src/tools/write.ts:415 and
+ * :440): the account's safety ceiling and the budget's sharedness. Each answers with a text of
+ * its own, so on a campaign that trips one of them Acts 1 and 2 CANNOT show the network
+ * evidence — the very situation Act 3 already checks for in advance and skips honestly instead
+ * of throwing on stage. Returns the reason, or undefined when nothing is known to block it.
+ *
+ * A sharedness that could not be read is not called clear here — it is simply not provable
+ * from the read-only surface. The server still refuses it, and that refusal is recognised by
+ * onKapiRediMi, so the act reports an honest skip rather than a demo crash.
+ */
+function butceOnKapisi(kampanya, hedefButce, tavan) {
+  if (kampanya.paylasimli === true) {
+    return `"${kampanya.ad}" (#${kampanya.id}) PAYLAŞIMLI bir bütçe kullanıyor — ön kapı ağ kapısından önce cevap verir.`;
+  }
+  if (tavan !== undefined && hedefButce > tavan) {
+    return (
+      `"${kampanya.ad}" (#${kampanya.id}) günlük bütçesi ${kampanya.butce}, denenecek artış ${hedefButce}, ` +
+      `hesabın güvenlik tavanı ${tavan} — ön kapı ağ kapısından önce cevap verir.`
+    );
+  }
+  return undefined;
+}
+
+/**
+ * EVERY refusal update_campaign_budget can produce BEFORE it consults the network gate, each
+ * recognised by a phrase of its own: the safety ceiling, a ceiling configuration that is itself
+ * broken and a non-positive amount (src/util.ts budgetGuard, called at src/tools/write.ts:415),
+ * then the two sharedness answers — unreadable, and shared (src/tools/write.ts:443 and :448).
+ *
+ * This list is the ONLY thing that makes a refusal a front-door refusal. A new pre-gate, or a
+ * reworded one, drops OUT of the list rather than into it, and lands on the loud path below —
+ * which is the fail-closed direction: the stage never claims a gate that it cannot name.
+ */
+const ON_KAPI_RETLERI = [
+  /hesabın güvenlik tavanının \(/, // requested budget over the account's safety ceiling
+  /bütçe tavanı yapılandırması geçersiz/, // the ceiling itself is unusable (NaN or <= 0)
+  /bütçe 0'dan büyük olmalı/, // a non-positive amount never reaches the network gate
+  /kampanyaya özel mi OKUNAMADI/, // explicitly_shared absent from the response
+  /PAYLAŞIMLI bir bütçe kullanıyor/, // the budget is shared with other campaigns
+];
+
+/**
+ * Did a gate BEFORE the network's answer this? RECOGNISED BY NAME — never by exclusion.
+ *
+ * This used to read "opens with 'Reddedildi:' and does not carry 'AĞ DOĞRULAMASI'", and that
+ * classified the NETWORK GATE'S OWN fail-closed refusals as front-door ones: the gate writes
+ * its accusations in capitals ("AĞ DOĞRULAMASI BAŞARISIZ") but its unanswered-check refusals
+ * in lower case — "Reddedildi: ağ doğrulaması tamamlanamadı — SIM Swap kontrolünden yanıt
+ * alınamadı." and its siblings for the location, device-swap, call-forwarding and
+ * reachability links, plus the missing-config refusals in src/networkTrust.ts and the
+ * "ağ doğrulama yapılandırması onay kapısına ulaşmadı" refusal in src/approval.ts. Measured
+ * against those two files, the old predicate called nearly half of the gate's own refusal
+ * texts a front-door refusal. The exact moment the gate DID speak — and refused BECAUSE it
+ * could not trust what it saw — was then staged as "the front door answered, the network gate
+ * never spoke", and the run exited 0 telling the jury the opposite of what happened.
+ *
+ * So only a refusal MATCHING a known pre-gate phrase is called one. Anything unrecognised —
+ * the network's own fail-closed text, a refusal from a gate added later, an error text — is
+ * NOT claimed as a front-door answer: Act 2 ends loudly with the server's words on screen
+ * (exit code 1) and Act 1 refuses to narrate a decision nobody made.
+ *
+ * This softens NOTHING: a refusal is still a refusal, no write happened, and the act goes on
+ * to report that the network evidence could NOT be shown instead of claiming that it was. The
+ * checks that accuse — a prompt shown even once, a budget that really moved — run BEFORE this
+ * classification and are never reclassified by it.
+ */
+const onKapiRediMi = (metin) =>
+  /Reddedildi:/.test(metin) && !/AĞ DOĞRULAMASI/.test(metin) && ON_KAPI_RETLERI.some((d) => d.test(metin));
+
+/**
+ * The single candidate for Acts 1 and 2: the least dangerous campaign whose path is not
+ * ALREADY KNOWN to end at a gate before the network's.
+ *
+ * The old pick was "PAUSED first, then the smallest budget", and the cheapest campaign won even
+ * when its budget was shared — so the act attempted a raise the server refuses at the door, and
+ * Act 2 died with "beklenen ağ retiyle bitmedi" mid-demo. Ranking is a PREFERENCE, not a
+ * filter: on an account where nothing is provably clear a candidate is still returned, and
+ * whether the act may run at all stays butceOnKapisi's decision.
+ */
+async function kampanyaOku(client, kampanyaId, tavan) {
+  const adaylar = await kampanyalariOku(client, kampanyaId);
+  // 0 = provably clear · 1 = sharedness unknown · 2 = known to be refused before the network.
+  // Array#sort is stable, so within one rank the order kampanyalariOku chose is preserved.
+  const sira = (k) => (butceOnKapisi(k, denemeButcesi(k), tavan) ? 2 : k.paylasimli === false ? 0 : 1);
+  return [...adaylar].sort((a, b) => sira(a) - sira(b))[0];
 }
 
 /** Reads the account's daily budget ceiling from the READ-ONLY limits resource; undefined
@@ -330,6 +471,66 @@ async function yayinaAdayBul(client, tercihId, tavan) {
 }
 
 /**
+ * Reads the campaign's CURRENT daily budget back from the account; undefined when it cannot be
+ * read. An unreadable budget is NOT "unchanged": every caller treats undefined as the
+ * fail-closed case and goes on to revert.
+ *
+ * UNKNOWN IS NOT 0. `Number(null)` and `Number("")` are both 0, and 0 is a perfectly readable
+ * budget — so a field arriving as null or empty used to come back as a REAL value of zero.
+ * That is the very bug the server side documents at src/tools/write.ts:665 ("`?? 0` was
+ * REMOVED here: it counted an unreadable budget as 0"); here it accused the server of a write
+ * nobody made: read back as 0, `eskisiGibi` goes false, Act 1 performs a needless revert and,
+ * when the operator declined, throws "GÜVENLİK İHLALİ ... 25 yerine 0 okundu" on stage. Only
+ * a number or a non-empty string is a reading; anything else is silence.
+ */
+async function butceOku(client, kampanyaId) {
+  try {
+    const [satir] = await gaqlSatirlar(
+      client,
+      `SELECT campaign.id, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${Number(kampanyaId)} LIMIT 1`,
+      1
+    );
+    const ham = satir?.campaign_budget?.amount_micros;
+    if (typeof ham !== "number" && typeof ham !== "string") return undefined;
+    if (typeof ham === "string" && ham.trim() === "") return undefined;
+    const tl = Number(ham) / 1e6;
+    return Number.isFinite(tl) ? tl : undefined;
+  } catch (e) {
+    yaz(kirmizi(`Günlük bütçe geri okunamadı (${e?.message ?? e}).`));
+    return undefined;
+  }
+}
+
+/** Two budgets are the same value: they come back as floats over the wire. */
+const ayniButce = (a, b) => a !== undefined && b !== undefined && Math.abs(a - b) < 0.005;
+
+/**
+ * Returns the daily budget to its old value and verifies it BY READING IT BACK — the same
+ * doctrine as duraklatVeDogrula, for the same reason: believing the tool's answer is not
+ * enough, because a budget left raised spends real money every day it stays up. It retries
+ * once.
+ */
+async function butceGeriAlVeDogrula(client, kampanya) {
+  for (let deneme = 1; deneme <= 2; deneme++) {
+    try {
+      const res = await client.callTool({
+        name: "update_campaign_budget",
+        arguments: { customerId: MUSTERI, campaignId: kampanya.id, newDailyBudget: kampanya.butce },
+      });
+      const metin = ilkMetin(res);
+      yaz(res.isError ? kirmizi(`Bütçe geri alma denemesi ${deneme} HATA döndü: ${metin}`) : soluk(`Bütçe geri alma denemesi ${deneme}: ${metin}`));
+    } catch (e) {
+      yaz(kirmizi(`Bütçe geri alma denemesi ${deneme} hata verdi: ${e?.message ?? e}`));
+    }
+    const suanki = await butceOku(client, kampanya.id);
+    if (ayniButce(suanki, kampanya.butce)) return true;
+    yaz(kirmizi(`Bütçe geri alma denemesi ${deneme}: günlük bütçe hâlâ ${suanki ?? "okunamadı"} (beklenen ${kampanya.butce}).`));
+    if (deneme < 2) await bekle(1500);
+  }
+  return false;
+}
+
+/**
  * Returns the campaign to PAUSED and verifies the status BY READING IT BACK — believing the
  * tool's response is not enough, because a campaign left live spends real money. It retries
  * once.
@@ -373,6 +574,23 @@ function geriAlmaBagir(kampanya) {
   );
 }
 
+/** The budget raise could not be proven reverted: no staying quiet — SHOUT on screen. */
+function butceGeriAlmaBagir(kampanya, eskiButce) {
+  kutu(
+    "ACİL — ELLE MÜDAHALE GEREKİYOR",
+    [
+      "!!! BÜTÇE ARTIŞININ GERİ ALINDIĞI DOĞRULANAMADI !!!",
+      `Kampanya: "${kampanya?.ad ?? "?"}" (#${kampanya?.id ?? "?"}) · Hesap: ${MUSTERI ?? "?"}`,
+      `Olması gereken günlük bütçe: ${eskiButce ?? "?"} — hesapta DAHA YÜKSEK kalmış olabilir.`,
+      "GERÇEK PARA HARCANIYOR OLABİLİR — ŞİMDİ ELLE DÜŞÜR:",
+      "  Google Ads arayüzü → Kampanyalar → günlük bütçeyi eski değerine çek",
+      `  ya da MCP: update_campaign_budget(customerId=${MUSTERI ?? "?"}, campaignId=${kampanya?.id ?? "?"}, newDailyBudget=${eskiButce ?? "?"})`,
+      "(Bütçe düşürme onay istemez; harcamayı azaltan işlemler her zaman serbesttir.)",
+    ],
+    kirmizi
+  );
+}
+
 /**
  * Extracts the network-verification evidence lines — the chain's links — from the prompt
  * text. How many links there are depends on how much evidence the server attached; the script
@@ -392,25 +610,45 @@ let cikisKodu = 0;
 const ozet = []; // karşılaştırma tablosu satırları
 const EYLEM_BUTCE = "bütçe +1 (MEDIUM/24s)";
 const EYLEM_YAYIN = `yayına alma (HIGH/${PENCERE_YUKSEK}s)`;
-/** Act 3/A's live rehearsal: the campaign counts as "live" until proven otherwise — it
- * fails closed. */
+/** THE BUDGET SLOT of the interlock, shared by BOTH budget raises: Act 1's live +1 and Act 2's
+ * attempt, which really calls the write tool in dry mode too. A raise counts as APPLIED until
+ * the ACCOUNT proves otherwise — it fails closed, exactly like Act 3's flag below. One slot,
+ * because a raise left standing is one and the same emergency whichever act made it; the act
+ * that armed it is named on screen at the time, not in the flag. */
+let butceKampanya;
+let butceEskiDeger;
+let butceGeriAlinmadi = false;
+/** Act 3's live rehearsal (3/A) and its write attempt in 3/B: the campaign counts as "live"
+ * until proven otherwise — it fails closed. */
 let perde3Kampanya;
 let perde3GeriAlinmadi = false;
 
 /**
  * THE SAFETY INTERLOCK — one place, one truth.
  *
- * If, in Act 3/A's live rehearsal, it CANNOT BE PROVEN that the campaign taken live returned
- * to PAUSED, we do not stay quiet: the red emergency box is printed and the exit code becomes
- * 1. Binding that flag to the exit code happens in THIS function; the run's finally block and
- * the hidden --kendini-sina path both call the SAME function, so the path under test is
- * exactly the path the live rehearsal uses, with no duplicated code.
+ * If it CANNOT BE PROVEN that a write which spends money was reverted — Act 1's +1 budget
+ * raise returning to its old value, or the campaign taken live in Act 3 returning to PAUSED —
+ * we do not stay quiet: the red emergency box is printed and the exit code becomes 1. Binding
+ * those flags to the exit code happens in THIS function; the run's finally block and the
+ * hidden --kendini-sina path both call the SAME function, so the path under test is exactly
+ * the path the live rehearsals use, with no duplicated code.
+ *
+ * Both flags are checked, not the first one that happens to be up: two different writes can be
+ * left standing in one run, and each names its own manual fix.
  *
  * @returns whether the interlock fired
  */
 function guvenlikKilidiniUygula() {
-  if (!perde3GeriAlinmadi) return false;
-  geriAlmaBagir(perde3Kampanya);
+  let tetiklendi = false;
+  if (butceGeriAlinmadi) {
+    butceGeriAlmaBagir(butceKampanya, butceEskiDeger);
+    tetiklendi = true;
+  }
+  if (perde3GeriAlinmadi) {
+    geriAlmaBagir(perde3Kampanya);
+    tetiklendi = true;
+  }
+  if (!tetiklendi) return false;
   cikisKodu = 1;
   process.exitCode = 1;
   return true;
@@ -419,10 +657,11 @@ function guvenlikKilidiniUygula() {
 /**
  * Death by signal SKIPS the finally block.
  *
- * In Act 3/A's live rehearsal there is a short but real window between the campaign being set
- * to ENABLED and its return to PAUSED. Press Ctrl+C in that window and Node's default
+ * In the live rehearsals there is a short but real window between the money-spending write and
+ * its reversal — Act 1 between the +1 raise and the return to the old budget, Act 3 between
+ * ENABLED and the return to PAUSED. Press Ctrl+C in that window and Node's default
  * behaviour ends the process without running the finally: no emergency box is printed, the
- * exit code is not 1, and the campaign stays live spending real money. This hook carries the
+ * exit code is not 1, and the write stays up spending real money. This hook carries the
  * interlock's promise — that however the run ends, this is what speaks last — onto the signal
  * path too. When the interlock does not fire, outside the danger window, the signal ends the
  * process the usual way, with code 128 plus the signal number.
@@ -432,7 +671,7 @@ for (const sinyal of ["SIGINT", "SIGTERM"]) {
     const tetiklendi = guvenlikKilidiniUygula();
     if (tetiklendi) {
       console.error(
-        kirmizi(`\n${sinyal} ile yarıda kesildi — YUKARIDAKİ KAMPANYA HÂLÂ YAYINDA OLABİLİR.`)
+        kirmizi(`\n${sinyal} ile yarıda kesildi — YUKARIDAKİ ACİL KUTUSU GEÇERLİDİR: kampanya yayında ya da bütçesi yüksek kalmış olabilir.`)
       );
       process.exit(1);
     }
@@ -443,12 +682,13 @@ for (const sinyal of ["SIGINT", "SIGTERM"]) {
 /**
  * The hidden --kendini-sina: it DOES NOT PLAY the scenario, it only proves in both
  * directions that the safety interlock really is wired up — reversal verified means no box
- * and code 0; not verified means the box and code 1. If the check cannot confirm its own
- * expectation it exits 2: better a loud break than quietly passing as "the interlock was
- * tested".
+ * and code 0; not verified means the box and code 1. BOTH money-spending writes are exercised,
+ * each on its own: Act 3's going live and a budget raise. If the check cannot confirm
+ * its own expectation it exits 2: better a loud break than quietly passing as "the interlock
+ * was tested".
  */
 if (KENDINI_SINA) {
-  yaz(kalin("KENDİNİ SINAMA — Perde 3 güvenlik kilidi çıkış koduna bağlı mı?"));
+  yaz(kalin("KENDİNİ SINAMA — güvenlik kilidi çıkış koduna bağlı mı? (Perde 1 bütçesi + Perde 3 yayını)"));
 
   perde3Kampanya = { id: "0", ad: "(kendini-sınama sahte kampanyası)", durum: "PAUSED", butce: 0 };
   perde3GeriAlinmadi = false;
@@ -456,7 +696,7 @@ if (KENDINI_SINA) {
     console.error(kirmizi("KENDİNİ SINAMA BAŞARISIZ: geri alma DOĞRULANMIŞKEN kilit tetiklendi."));
     process.exit(2);
   }
-  yaz(yesil("  1/2  perde3GeriAlinmadi=false → acil kutusu YOK, çıkış kodu 0 (beklenen)."));
+  yaz(yesil("  1/3  iki bayrak da false → acil kutusu YOK, çıkış kodu 0 (beklenen)."));
 
   perde3GeriAlinmadi = true;
   const tetiklendi = guvenlikKilidiniUygula();
@@ -464,7 +704,23 @@ if (KENDINI_SINA) {
     console.error(kirmizi("KENDİNİ SINAMA BAŞARISIZ: geri alma DOĞRULANAMAMIŞKEN çıkış kodu 1 olmadı."));
     process.exit(2);
   }
-  yaz(yesil("  2/2  perde3GeriAlinmadi=true → acil kutusu basıldı, çıkış kodu 1 (beklenen)."));
+  yaz(yesil("  2/3  perde3GeriAlinmadi=true → yayın acil kutusu basıldı, çıkış kodu 1 (beklenen)."));
+
+  // The budget flag is exercised ON ITS OWN: with Act 3's flag down again, the exit code may
+  // only be 1 if an unreverted budget raise reaches the interlock by itself.
+  perde3GeriAlinmadi = false;
+  perde3Kampanya = undefined;
+  cikisKodu = 0;
+  process.exitCode = 0;
+  butceKampanya = { id: "0", ad: "(kendini-sınama sahte kampanyası)", durum: "PAUSED", butce: 10 };
+  butceEskiDeger = 10;
+  butceGeriAlinmadi = true;
+  const butceTetiklendi = guvenlikKilidiniUygula();
+  if (!butceTetiklendi || cikisKodu !== 1 || process.exitCode !== 1) {
+    console.error(kirmizi("KENDİNİ SINAMA BAŞARISIZ: bütçe geri alması DOĞRULANAMAMIŞKEN çıkış kodu 1 olmadı."));
+    process.exit(2);
+  }
+  yaz(yesil("  3/3  butceGeriAlinmadi=true → bütçe acil kutusu basıldı, çıkış kodu 1 (beklenen)."));
   yaz(kalin(`Kilit bağlı: bayrak çıkış kodunu ${cikisKodu} yaptı — aynı fonksiyonu koşunun finally'si de çağırır.`));
   process.exit(cikisKodu); // 1 — kilidin çıkış kodunu gerçekten bozduğunun kanıtı
 }
@@ -522,13 +778,50 @@ try {
   yaz(soluk("Sunucu süreci 1 başlatıldı (stdio) — araçlar yüklendi."));
   await bekle();
 
-  const kampanya = await kampanyaOku(istemci, KAMPANYA_ARG);
-  const hedefButce = Math.round((kampanya.butce + 1) * 100) / 100;
+  // The pre-gates are verified IN ADVANCE with read-only queries, exactly as Act 3 does for
+  // its own: the ceiling comes from the limits resource, sharedness from the candidate query.
+  const butceTavani = await tavanOku(istemci);
+  const kampanya = await kampanyaOku(istemci, KAMPANYA_ARG, butceTavani);
+  const hedefButce = denemeButcesi(kampanya);
+  const butceOnKapiEngeli = butceOnKapisi(kampanya, hedefButce, butceTavani);
   yaz(`Kampanya: ${kalin(`"${kampanya.ad}"`)} (#${kampanya.id}, ${kampanya.durum}) — mevcut günlük bütçe: ${kalin(kampanya.butce)}`);
-  yaz(`Deneme: ${cyan(`update_campaign_budget ${kampanya.butce} → ${hedefButce}`)} (küçük artış — onay + ağ kapısı gerektirir)`);
-  await bekle();
+  yaz(
+    soluk(
+      `Hesabın günlük bütçe tavanı (salt-okunur limits kaynağı): ${butceTavani ?? "okunamadı"} · ` +
+        `bütçe paylaşımlı mı: ${kampanya.paylasimli === undefined ? "okunamadı" : kampanya.paylasimli ? "EVET" : "hayır"}`
+    )
+  );
+  if (!butceOnKapiEngeli) {
+    yaz(`Deneme: ${cyan(`update_campaign_budget ${kampanya.butce} → ${hedefButce}`)} (küçük artış — onay + ağ kapısı gerektirir)`);
+    await bekle();
+  }
 
-  if (!CANLI) {
+  if (butceOnKapiEngeli) {
+    // No fabricated evidence: on a campaign an earlier gate refuses, the network gate never
+    // speaks at all — so both budget acts are skipped honestly, with the reason on screen.
+    kutu(
+      "PERDE 1 ve 2 ATLANDI — uydurma kanıt üretilmez",
+      [
+        butceOnKapiEngeli,
+        "update_campaign_budget önce bütçe tavanını, sonra bütçenin PAYLAŞIMLI olup olmadığını",
+        "uygular; ikisi de AĞ kapısından ÖNCE cevap verir. Böyle bir kampanyada bu perdeler",
+        "ağ kanıtını gösteremez — o yüzden dürüstçe atlanır, yazma da hiç denenmez.",
+        "Uygun aday: kampanyaya özel bütçeli + bütçesi tavanın bir birim altında kalan kampanya",
+        "(--kampanya ile de verilebilir).",
+      ],
+      sari
+    );
+    for (const perde of ["1", "2"]) {
+      ozet.push({
+        perde,
+        eylem: EYLEM_BUTCE,
+        sim: perde === "1" ? "temiz" : "degisti",
+        karar: "atlandı (ön kapı ağ kapısından önce cevap verir)",
+        istem: "gösterilmedi (perde koşmadı)",
+        yazma: "yok (perde koşmadı)",
+      });
+    }
+  } else if (!CANLI) {
     yaz(sari("[kuru] araç çağrısı atlandı — gerçek yazma yapılmadı (--canli bayrağı verilirse gerçekten çağrılır)."));
     yaz(
       soluk(
@@ -546,45 +839,130 @@ try {
       yazma: "[kuru] atlandı",
     });
   } else {
-    const res = await istemci.callTool(
-      {
-        name: "update_campaign_budget",
-        arguments: { customerId: MUSTERI, campaignId: kampanya.id, newDailyBudget: hedefButce },
-      },
-      undefined,
-      ONAY_ZAMAN_ASIMI // insan klavyeye uzanırken 60 sn'lik SDK varsayılanı çağrıyı düşürürdü
-    );
-    const metin = ilkMetin(res);
+    // Fail closed: from the moment BEFORE the call, the raise counts as APPLIED. Whether it
+    // really was is decided by the ACCOUNT — not by the tool's answer, and not by the
+    // assumption "the operator said no, so nothing was written". That is Act 3's doctrine,
+    // and money left on a daily budget is spent every day it stays up.
+    butceKampanya = kampanya;
+    butceEskiDeger = kampanya.butce;
+    butceGeriAlinmadi = true;
+
+    let metin = "";
+    let cagriHatasi1;
+    try {
+      const res = await istemci.callTool(
+        {
+          name: "update_campaign_budget",
+          arguments: { customerId: MUSTERI, campaignId: kampanya.id, newDailyBudget: hedefButce },
+        },
+        undefined,
+        ONAY_ZAMAN_ASIMI // insan klavyeye uzanırken 60 sn'lik SDK varsayılanı çağrıyı düşürürdü
+      );
+      metin = ilkMetin(res);
+      yaz(perde1OperatorOnayi ? yesil(`BAŞARI: ${metin}`) : sari(`Sunucu yanıtı: ${metin}`));
+    } catch (e) {
+      // The call dropped: whether the write happened is UNKNOWN. The read-back below decides,
+      // not the assumption "I got an error, so nothing was written".
+      cagriHatasi1 = e?.message ?? String(e);
+      yaz(kirmizi(`Bütçe artışı çağrısı hata verdi: ${cagriHatasi1}`));
+    }
+    await bekle();
+
+    // The account is read, not the answer. An unreadable budget is NOT "unchanged": it goes
+    // down the revert path too, because a revert is a DECREASE and a decrease is always safe.
+    const butceSonrasi = await butceOku(istemci, kampanya.id);
+    const eskisiGibi = ayniButce(butceSonrasi, kampanya.butce);
+    let geriAlindi = eskisiGibi; // nothing to revert if the budget never moved
+    if (!eskisiGibi) {
+      yaz(soluk(`Temizlik: günlük bütçe ${kampanya.butce} değerine çekiliyor (azaltma onay istemez) — hesaptan GERİ OKUNARAK doğrulanacak.`));
+      geriAlindi = await butceGeriAlVeDogrula(istemci, kampanya);
+    }
+    butceGeriAlinmadi = !geriAlindi;
+    if (!geriAlindi) {
+      yaz(kirmizi("BÜTÇE GERİ ALMA DOĞRULANAMADI — ayrıntı ve elle müdahale adımları koşunun EN SONUNDA."));
+    } else {
+      butceKampanya = undefined;
+      if (!eskisiGibi) yaz(yesil(`Geri alma DOĞRULANDI: günlük bütçe yeniden ${kampanya.butce} (hesaptan geri okundu).`));
+    }
+
+    // Only now — with the account back where it belongs — may this act end in an error.
+    if (cagriHatasi1) {
+      throw new Error(
+        `Perde 1 çağrısı tamamlanamadı: ${cagriHatasi1}\n` +
+          `Günlük bütçe hesaptan geri okundu: ${butceSonrasi ?? "okunamadı"} (beklenen ${kampanya.butce}).`
+      );
+    }
     if (!perde1OperatorOnayi) {
-      // The operator did not type 'Evet': no write was applied — that is not a demo
-      // failure, it is a real decision.
-      yaz(sari(`Operatör onay vermedi — sunucu yazmayı uygulamadı. Sunucu yanıtı: ${metin}`));
+      // The operator did not type 'Evet': that is a real decision, not a demo failure — but
+      // the ACCOUNT says whether a write happened, and a write with no approval is a breach.
+      // Only a budget actually READ as different accuses anyone: an unreadable budget was
+      // already pushed back down above, and "unknown" is not evidence of a write.
+      if (butceSonrasi !== undefined && !eskisiGibi) {
+        throw new Error(
+          `GÜVENLİK İHLALİ: operatör onay vermedi ama günlük bütçe ${kampanya.butce} yerine ${butceSonrasi} okundu.`
+        );
+      }
+      // The prompt was never shown at all: an earlier gate answered and NOBODY was asked, so
+      // the operator is not the one who said no. Saying otherwise would put a decision on
+      // stage that no human ever made. The pre-flight rules this out where it can; a
+      // sharedness that could not be read cannot be ruled out in advance.
+      const kimseyeSorulmadi = perde1IstemSayisi === 0;
+      const onKapiCevapladi = kimseyeSorulmadi && onKapiRediMi(metin);
+      /**
+       * NOBODY WAS ASKED AND THE GATE CANNOT BE NAMED.
+       *
+       * The network gate's own fail-closed refusals ("...ağ doğrulaması tamamlanamadı — SIM
+       * Swap kontrolünden yanıt alınamadı"), its accusation, and any refusal added later all
+       * land here. This branch used to fall through to "Operatör onay vermedi", which is a
+       * DECISION NOBODY MADE — the very thing the paragraph above forbids. So the act now says
+       * only what it can prove: the prompt was never shown, and the server's answer, whatever
+       * it was, is quoted rather than attributed.
+       */
+      const adsizRet = kimseyeSorulmadi && !onKapiCevapladi;
+      yaz(
+        sari(
+          onKapiCevapladi
+            ? `Onay istemi HİÇ gösterilmedi: ret ağ kapısından ÖNCEKİ bir kapıdan geldi — ${metin}`
+            : adsizRet
+              ? `Onay istemi HİÇ gösterilmedi — bu bir OPERATÖR KARARI DEĞİLDİR; reddi ÖN KAPININ verdiği DOĞRULANAMADI (sunucu metni tanınan hiçbir ön kapı reddiyle eşleşmiyor). Sunucu yanıtı: ${metin}`
+              : eskisiGibi
+                ? "Operatör onay vermedi — sunucu yazmayı uygulamadı (bütçe hesaptan GERİ OKUNARAK doğrulandı)."
+                : "Operatör onay vermedi — bütçe geri okunamadı; güvenli taraf olarak eski değere çekildi."
+        )
+      );
       ozet.push({
         perde: "1",
         eylem: EYLEM_BUTCE,
         sim: "temiz",
-        karar: "GEÇER (SIM değişimi yok)",
-        istem: `gösterildi (${perde1IstemSayisi}) → operatör reddetti`,
-        yazma: "yok (onay verilmedi)",
+        karar: onKapiCevapladi
+          ? "atlandı (ön kapı ağ kapısından önce cevap verdi)"
+          : adsizRet
+            ? "atlandı (reddi veren kapı ADLANDIRILAMADI)"
+            : "GEÇER (SIM değişimi yok)",
+        istem: onKapiCevapladi
+          ? "gösterilmedi (ön kapı reddetti)"
+          : adsizRet
+            ? "HİÇ gösterilmedi (0) — kimseye sorulmadı"
+            : `gösterildi (${perde1IstemSayisi}) → operatör reddetti`,
+        yazma: onKapiCevapladi
+          ? "yok (ön kapı reddetti)"
+          : adsizRet
+            ? `yok (geri okundu: ${butceSonrasi ?? "okunamadı"})`
+            : eskisiGibi
+              ? "yok (onay verilmedi)"
+              : "yok (onay verilmedi; bütçe eski değere çekildi)",
       });
     } else {
       if (!/güncellendi/.test(metin) || !perde1KanitVar) {
         throw new Error(`Perde 1 beklenen BAŞARI ile bitmedi. Sunucu yanıtı:\n${metin}`);
       }
-      yaz(yesil(`BAŞARI: ${metin}`));
-      await bekle();
-      const geri = await istemci.callTool({
-        name: "update_campaign_budget",
-        arguments: { customerId: MUSTERI, campaignId: kampanya.id, newDailyBudget: kampanya.butce },
-      });
-      yaz(soluk(`Temizlik: bütçe eski değerine döndürüldü (azaltma onay istemez) — ${ilkMetin(geri)}`));
       ozet.push({
         perde: "1",
         eylem: EYLEM_BUTCE,
         sim: "temiz",
         karar: "GEÇER (SIM değişimi yok)",
         istem: `gösterildi (${perde1IstemSayisi}) → operatör Evet yazdı`,
-        yazma: "+1 uygulandı, geri alındı",
+        yazma: geriAlindi ? "+1 uygulandı, geri alındı (doğrulandı)" : "+1 uygulandı — GERİ ALINAMADI (!)",
       });
     }
   }
@@ -595,47 +973,154 @@ try {
   /* ── ACT 2: the SIM was swapped ────────────────────────────────────────────── */
   await perdeBasligi(2, `AEGIS_NAC_SIMULATE=degisti — İKİNCİ sunucu süreci: SIM değişmiş sayılır`);
 
-  let perde2IstemSayisi = 0;
-  istemci = await sunucuBaslat("degisti", async () => {
-    perde2IstemSayisi++;
-    return { action: "decline" }; // buraya HİÇ düşmemeli; düşerse bile fail-closed
-  });
-  yaz(soluk("Sunucu süreci 2 başlatıldı (stdio) — aynı istemci, aynı elicitation yeteneği."));
-  await bekle();
+  if (butceOnKapiEngeli) {
+    // The pre-flight in Act 1 already found the gate that would answer instead of the
+    // network's, and pushed BOTH summary rows there; this scene has nothing left to attempt.
+    yaz(sari(`Perde 2 atlandı: ${butceOnKapiEngeli}`));
+  } else if (butceGeriAlinmadi) {
+    // A raise that is still standing is not a reason to attempt another one: Act 2 re-reads
+    // the budget, so it would take the RAISED value and try +1 ON TOP of it. This is the same
+    // rule Acts 3/A and 3/B follow — no new money-spending write while an earlier one is
+    // unreverted — and it is the reason the emergency box at the end names a single amount.
+    yaz(kirmizi("Perde 2 atlandı: bütçe artışının geri alındığı doğrulanana kadar başka yazma denenmez."));
+    ozet.push({
+      perde: "2",
+      eylem: EYLEM_BUTCE,
+      sim: "degisti",
+      karar: "atlandı (bütçe geri alınamadı)",
+      istem: "gösterilmedi (perde koşmadı)",
+      yazma: "yok (perde koşmadı)",
+    });
+  } else {
+    let perde2IstemSayisi = 0;
+    istemci = await sunucuBaslat("degisti", async () => {
+      perde2IstemSayisi++;
+      return { action: "decline" }; // buraya HİÇ düşmemeli; düşerse bile fail-closed
+    });
+    yaz(soluk("Sunucu süreci 2 başlatıldı (stdio) — aynı istemci, aynı elicitation yeteneği."));
+    await bekle();
 
-  // The budget is RE-READ in this process: the attempt must be a definite INCREASE under
-  // every condition — a call that is not an increase never reaches the network gate, and in
-  // dry mode it would perform a write.
-  const kampanya2 = await kampanyaOku(istemci, kampanya.id);
-  const hedefButce2 = Math.round((kampanya2.butce + 1) * 100) / 100;
-  yaz(`Aynı deneme: ${cyan(`update_campaign_budget ${kampanya2.butce} → ${hedefButce2}`)} — bu kez ağ "SIM değişti" diyor.`);
-  yaz(soluk("(Bu çağrı kuru modda da güvenli: ağ kapısı yazmadan ÖNCE reddeder — reddetmezse demo hata verir.)"));
-  await bekle();
+    // The budget is RE-READ in this process: the attempt must be a definite INCREASE under
+    // every condition — a call that is not an increase never reaches the network gate, and in
+    // dry mode it would perform a write.
+    const kampanya2 = await kampanyaOku(istemci, kampanya.id, butceTavani);
+    const hedefButce2 = denemeButcesi(kampanya2);
+    yaz(`Aynı deneme: ${cyan(`update_campaign_budget ${kampanya2.butce} → ${hedefButce2}`)} — bu kez ağ "SIM değişti" diyor.`);
+    yaz(soluk("(Bu çağrı kuru modda da güvenli: ağ kapısı yazmadan ÖNCE reddeder — reddetmezse demo hata verir.)"));
+    await bekle();
 
-  const res2 = await istemci.callTool({
-    name: "update_campaign_budget",
-    arguments: { customerId: MUSTERI, campaignId: kampanya2.id, newDailyBudget: hedefButce2 },
-  });
-  const metin2 = ilkMetin(res2);
-  if (!/AĞ DOĞRULAMASI BAŞARISIZ/.test(metin2)) {
-    throw new Error(`Perde 2 beklenen ağ retiyle bitmedi (istem sayısı: ${perde2IstemSayisi}). Sunucu yanıtı:\n${metin2}`);
+    // Fail closed, exactly as in Act 1 and Act 3/B: this scene REALLY CALLS the write tool —
+    // in dry mode too, because here it is the NETWORK GATE that answers. The gate is EXPECTED
+    // to refuse before any write, but "expected" is not "verified": a regression that let the
+    // write through would leave a raised daily budget spending real money every day it stays
+    // up, and a bare "DEMO HATASI" would be the only thing on screen. So the flag goes up
+    // BEFORE the call and only comes down once the ACCOUNT has proven the budget did not move.
+    butceKampanya = kampanya2;
+    butceEskiDeger = kampanya2.butce;
+    butceGeriAlinmadi = true;
+
+    let metin2 = "";
+    let cagriHatasi2;
+    try {
+      const res2 = await istemci.callTool({
+        name: "update_campaign_budget",
+        arguments: { customerId: MUSTERI, campaignId: kampanya2.id, newDailyBudget: hedefButce2 },
+      });
+      metin2 = ilkMetin(res2);
+    } catch (e) {
+      // The call dropped: whether the write happened is UNKNOWN — the read-back below decides,
+      // not the assumption "I got an error, so nothing was written".
+      cagriHatasi2 = e?.message ?? String(e);
+      yaz(kirmizi(`Perde 2 çağrısı hata verdi: ${cagriHatasi2}`));
+    }
+
+    // We look at the account, not at what we were told — and BEFORE any check that can throw,
+    // because a throw ahead of the read-back would leave the real budget unmeasured. An
+    // unreadable budget is NOT proof that nothing was written: it counts as raised, and the
+    // revert is a DECREASE, which is always safe and never asks for approval.
+    const butce2Sonrasi = await butceOku(istemci, kampanya2.id);
+    const butce2Yazilmis = !ayniButce(butce2Sonrasi, kampanya2.butce);
+    if (butce2Yazilmis) {
+      yaz(
+        kirmizi(
+          butce2Sonrasi === undefined
+            ? "Perde 2: RET beklenirken günlük bütçe hesaptan OKUNAMADI — yazılmış sayılır, geri alınıyor."
+            : `Perde 2: RET beklenirken günlük bütçe ${butce2Sonrasi} okundu (beklenen ${kampanya2.butce}) — geri alınıyor.`
+        )
+      );
+      const geriAlindi2 = await butceGeriAlVeDogrula(istemci, kampanya2);
+      butceGeriAlinmadi = !geriAlindi2;
+      if (geriAlindi2) {
+        butceKampanya = undefined;
+        yaz(yesil(`Geri alma DOĞRULANDI: günlük bütçe yeniden ${kampanya2.butce} (hesaptan geri okundu).`));
+      } else {
+        yaz(kirmizi("BÜTÇE GERİ ALMA DOĞRULANAMADI — ayrıntı ve elle müdahale adımları koşunun EN SONUNDA."));
+      }
+    } else {
+      butceGeriAlinmadi = false;
+      butceKampanya = undefined;
+    }
+
+    // Only now — with the account back where it belongs — may this act end in an error.
+    if (cagriHatasi2) {
+      throw new Error(
+        `Perde 2 çağrısı tamamlanamadı: ${cagriHatasi2}\n` +
+          `Günlük bütçe hesaptan geri okundu: ${butce2Sonrasi ?? "okunamadı"} (beklenen ${kampanya2.butce}).`
+      );
+    }
+    // THE ACCUSING CHECKS COME FIRST, before any classification of the refusal text: a prompt
+    // shown even once, or a budget the account says really moved, is a breach WHATEVER came
+    // back — and neither may be softened into an honest skip below.
+    if (perde2IstemSayisi !== 0) {
+      throw new Error(`GÜVENLİK İHLALİ: onay istemi ${perde2IstemSayisi} kez gösterildi — hiç gösterilmemeliydi.`);
+    }
+    if (butce2Yazilmis) {
+      throw new Error(
+        `GÜVENLİK İHLALİ: ağ kapısı reddetmeliyken kampanya #${kampanya2.id} günlük bütçesinin ` +
+          `${kampanya2.butce} kaldığı DOĞRULANAMADI (geri okuma: ${butce2Sonrasi ?? "okunamadı"}). ` +
+          `Sunucu yanıtı:\n${metin2}`
+      );
+    }
+    const agRetti = /AĞ DOĞRULAMASI BAŞARISIZ/.test(metin2);
+    if (!agRetti && !onKapiRediMi(metin2)) {
+      throw new Error(
+        `Perde 2 beklenen ağ retiyle bitmedi (istem sayısı: ${perde2IstemSayisi}, geri okunan bütçe: ` +
+          `${butce2Sonrasi ?? "okunamadı"}). Sunucu yanıtı:\n${metin2}`
+      );
+    }
+    if (!agRetti) {
+      // A gate BEFORE the network's answered — the pre-flight could not rule it out (an
+      // unreadable `explicitly_shared` is the ordinary case). No write happened, but the
+      // network evidence was never produced, so it is not claimed: the act is skipped
+      // honestly, with the server's own refusal on screen.
+      kutu("PERDE 2 ATLANDI — ön kapı cevap verdi, ağ kapısı hiç konuşmadı", metin2.split("\n"), sari);
+      yaz(sari("Bu bir ağ kanıtı DEĞİLDİR: yazma yapılmadı, ama reddi veren ağ kapısı değil önceki bir kapıdır."));
+      yaz(soluk(`Geri okuma: günlük bütçe ${butce2Sonrasi ?? "okunamadı"} — yazma yapılmadı.`));
+      ozet.push({
+        perde: "2",
+        eylem: EYLEM_BUTCE,
+        sim: "degisti",
+        karar: "atlandı (ön kapı ağ kapısından önce cevap verdi)",
+        istem: "HİÇ gösterilmedi (0)",
+        yazma: `yok (geri okundu: ${butce2Sonrasi ?? "okunamadı"})`,
+      });
+    } else {
+      kutu("RET — AĞ DOĞRULAMASI BAŞARISIZ", metin2.split("\n"), kirmizi);
+      yaz(yesil("Doğrulandı: elicitation handler HİÇ çağrılmadı (0 istem)."));
+      yaz(kalin("Onay istemi insana hiç ulaşmadı — SIM'i yeni değişmiş 'onaylayıcı' saldırgan olabilir."));
+      yaz(soluk(`Geri okuma: günlük bütçe ${butce2Sonrasi} — yazma yapılmadı.`));
+      ozet.push({
+        perde: "2",
+        eylem: EYLEM_BUTCE,
+        sim: "degisti",
+        karar: "RET (ağ doğrulaması başarısız)",
+        istem: "HİÇ gösterilmedi (0)",
+        yazma: `yok (geri okundu: ${butce2Sonrasi})`,
+      });
+    }
+    await istemci.close();
+    istemci = undefined;
   }
-  kutu("RET — AĞ DOĞRULAMASI BAŞARISIZ", metin2.split("\n"), kirmizi);
-  if (perde2IstemSayisi !== 0) {
-    throw new Error(`GÜVENLİK İHLALİ: onay istemi ${perde2IstemSayisi} kez gösterildi — hiç gösterilmemeliydi.`);
-  }
-  yaz(yesil("Doğrulandı: elicitation handler HİÇ çağrılmadı (0 istem)."));
-  yaz(kalin("Onay istemi insana hiç ulaşmadı — SIM'i yeni değişmiş 'onaylayıcı' saldırgan olabilir."));
-  ozet.push({
-    perde: "2",
-    eylem: EYLEM_BUTCE,
-    sim: "degisti",
-    karar: "RET (ağ doğrulaması başarısız)",
-    istem: "HİÇ gösterilmedi (0)",
-    yazma: "yok (kapıda reddedildi)",
-  });
-  await istemci.close();
-  istemci = undefined;
   await bekle(900);
 
   /* ── ACT 3: the HIGH layer of the SAME gate — going live ───────────────────── */
@@ -737,21 +1222,34 @@ try {
     yaz(`Deneme: ${cyan(`set_campaign_status #${aday3.id} → ENABLED`)} (HIGH katman — ${PENCERE_YUKSEK} saatlik pencere)`);
     await bekle();
 
-    // The live rehearsal runs ONLY on a PAUSED campaign: on one that is already live, the
-    // reversal step would STOP it — and we do not pause someone else's live campaign.
-    const canliProva = CANLI && aday3.durum === "PAUSED";
+    // The live rehearsal is performed ONLY on a campaign the operator NAMED with --kampanya,
+    // and only while it is PAUSED. The naming half of that promise used to live in the file
+    // header alone: with no --kampanya the script picks a candidate ITSELF, and --canli then
+    // took THAT campaign live — a real, merely paused campaign whose name the operator had
+    // never even seen. The automatic pick stays read-only; the path that spends money asks for
+    // explicit intent. The PAUSED half is the other reason: on a campaign that is already
+    // live, the reversal step would STOP it, and we do not pause someone else's live campaign.
+    // And no new money-spending write is started while an EARLIER raise (Act 1's or Act 2's)
+    // is still unreverted — the same rule Act 2 and 3/B follow.
+    const adlandirilmis = Boolean(KAMPANYA_ARG);
+    const canliProva = CANLI && adlandirilmis && aday3.durum === "PAUSED" && !butceGeriAlinmadi;
     if (CANLI && !canliProva) {
       yaz(
         sari(
-          `[canlı atlandı] "${aday3.ad}" (#${aday3.id}) PAUSED değil (${aday3.durum}) — ` +
-            "sahne sonundaki geri alma adımı zaten yayındaki bir kampanyayı DURDURURDU."
+          !adlandirilmis
+            ? `[canlı atlandı] --kampanya verilmedi: "${aday3.ad}" (#${aday3.id}) betiğin KENDİ seçtiği adaydır — ` +
+                "gerçekten yayına alma yalnız operatörün açıkça adlandırdığı TEST kampanyasında yapılır."
+            : butceGeriAlinmadi
+              ? "[canlı atlandı] Bütçe artışı geri alınamadı — doğrulanana kadar başka yazma denenmez."
+              : `[canlı atlandı] "${aday3.ad}" (#${aday3.id}) PAUSED değil (${aday3.durum}) — ` +
+                "sahne sonundaki geri alma adımı zaten yayındaki bir kampanyayı DURDURURDU."
         )
       );
     }
 
     if (!canliProva) {
       if (!CANLI) {
-        yaz(sari("[kuru] araç çağrısı atlandı — kampanya yayına ALINMADI (--canli bayrağı verilirse gerçekten alınır ve geri alınır)."));
+        yaz(sari("[kuru] araç çağrısı atlandı — kampanya yayına ALINMADI (--canli ve --kampanya BİRLİKTE verilirse gerçekten alınır ve geri alınır)."));
       }
       yaz(
         soluk(
@@ -767,7 +1265,13 @@ try {
         perde: "3/A",
         eylem: EYLEM_YAYIN,
         sim: "temiz",
-        karar: CANLI ? `atlandı (${aday3.durum} — PAUSED değil)` : "[kuru] koşulmadı",
+        karar: CANLI
+          ? !adlandirilmis
+            ? "atlandı (--kampanya verilmedi)"
+            : butceGeriAlinmadi
+              ? "atlandı (bütçe geri alınamadı)"
+              : `atlandı (${aday3.durum} — PAUSED değil)`
+          : "[kuru] koşulmadı",
         istem: CANLI ? "gösterilmedi (perde koşmadı)" : "[kuru] çağrıya gelinmedi",
         yazma: CANLI ? "yok (atlandı)" : "[kuru] atlandı",
       });
@@ -895,14 +1399,21 @@ try {
     await bekle(900);
 
     /* ── ACT 3/B: the SIM was swapped — a hard refusal, the prompt NEVER shown ─── */
-    if (perde3GeriAlinmadi) {
-      // While a campaign may still be live, no new write is attempted.
-      yaz(kirmizi("Perde 3/B atlandı: 3/A'nın geri alması doğrulanana kadar başka yazma denenmez."));
+    // While ANY earlier money-spending write may still be standing — a campaign left live in
+    // 3/A, or a budget raise from Acts 1 or 2 — no new write is attempted. 3/B calls the write
+    // tool for real (the gate is what refuses), so it belongs under the same rule.
+    const bekleyenYazma = perde3GeriAlinmadi
+      ? "3/A'nın geri alması"
+      : butceGeriAlinmadi
+        ? "bütçe artışının geri alınması"
+        : undefined;
+    if (bekleyenYazma) {
+      yaz(kirmizi(`Perde 3/B atlandı: ${bekleyenYazma} doğrulanana kadar başka yazma denenmez.`));
       ozet.push({
         perde: "3/B",
         eylem: EYLEM_YAYIN,
         sim: "degisti",
-        karar: "atlandı (3/A geri alınamadı)",
+        karar: perde3GeriAlinmadi ? "atlandı (3/A geri alınamadı)" : "atlandı (bütçe geri alınamadı)",
         istem: "gösterilmedi (perde koşmadı)",
         yazma: "yok (perde koşmadı)",
       });
@@ -919,13 +1430,79 @@ try {
       yaz(soluk("(Ön kapılar 3/A'da geçildi; cevabı veren AĞ kapısıdır. Kuru modda da güvenli: kapı yazmadan ÖNCE reddeder.)"));
       await bekle();
 
-      const res3b = await istemci.callTool({
-        name: "set_campaign_status",
-        arguments: { customerId: MUSTERI, campaignId: aday3.id, status: "ENABLED" },
-      });
-      const metin3b = ilkMetin(res3b);
+      // Fail closed, exactly as in 3/A: this scene REALLY CALLS the write tool — in dry mode
+      // too, because here the network gate is what answers. The gate is EXPECTED to refuse
+      // before any write, but "expected" is not "verified": a regression that lets the write
+      // through would put a campaign live on stage, and the flag is what turns that into a red
+      // box instead of a bare demo error. So it goes up BEFORE the call and only comes down
+      // once the account has PROVEN the campaign is not live.
+      // A candidate that was already ENABLED before this run — possible only when --kampanya
+      // names one — was not put live by us, and we do not pause someone else's live campaign.
+      const zatenYayindaydi = aday3.durum === "ENABLED";
+      if (!zatenYayindaydi) {
+        perde3Kampanya = aday3;
+        perde3GeriAlinmadi = true;
+      }
+
+      let metin3b = "";
+      let cagriHatasi3b;
+      try {
+        const res3b = await istemci.callTool({
+          name: "set_campaign_status",
+          arguments: { customerId: MUSTERI, campaignId: aday3.id, status: "ENABLED" },
+        });
+        metin3b = ilkMetin(res3b);
+      } catch (e) {
+        // The call dropped: whether the write happened is UNKNOWN — the read-back below
+        // decides, not the assumption "I got an error, so nothing was written".
+        cagriHatasi3b = e?.message ?? String(e);
+        yaz(kirmizi(`Perde 3/B çağrısı hata verdi: ${cagriHatasi3b}`));
+      }
+
+      // We look at the account, not at what we were told: that no write happened is verified
+      // BY READING IT BACK — and BEFORE any check that can throw, because a throw ahead of the
+      // read-back would leave the campaign's real state unmeasured.
+      let durumB;
+      let okunabildiB = true;
+      try {
+        const [satirB] = await gaqlSatirlar(
+          istemci,
+          `SELECT campaign.id, campaign.status FROM campaign WHERE campaign.id = ${Number(aday3.id)} LIMIT 1`,
+          1
+        );
+        durumB = durumAdi(satirB?.campaign?.status);
+      } catch (e) {
+        okunabildiB = false;
+        durumB = `okunamadı (${e?.message ?? e})`;
+      }
+
+      // An unreadable status is NOT proof that nothing was written: it counts as live.
+      const yayindaOlabilir = !zatenYayindaydi && (durumB === "ENABLED" || !okunabildiB);
+      if (yayindaOlabilir) {
+        yaz(kirmizi(`Perde 3/B: RET beklenirken kampanya #${aday3.id} durumu "${durumB}" okundu — geri alınıyor.`));
+        const geriAlindiB = await duraklatVeDogrula(istemci, aday3);
+        perde3GeriAlinmadi = !geriAlindiB;
+        if (geriAlindiB) {
+          perde3Kampanya = undefined;
+          yaz(yesil("Geri alma DOĞRULANDI: kampanya yeniden PAUSED (durum hesaptan geri okundu)."));
+        } else {
+          yaz(kirmizi("GERİ ALMA DOĞRULANAMADI — ayrıntı ve elle müdahale adımları koşunun EN SONUNDA."));
+        }
+      } else {
+        perde3GeriAlinmadi = false;
+        perde3Kampanya = undefined;
+      }
+
+      // Only now — with the account back where it belongs — may this act end in an error.
+      if (cagriHatasi3b) {
+        throw new Error(
+          `Perde 3/B çağrısı tamamlanamadı: ${cagriHatasi3b}\nKampanya #${aday3.id} durumu hesaptan geri okundu: ${durumB}.`
+        );
+      }
       if (!/AĞ DOĞRULAMASI BAŞARISIZ/.test(metin3b)) {
-        throw new Error(`Perde 3/B beklenen ağ retiyle bitmedi (istem sayısı: ${perde3bIstemSayisi}). Sunucu yanıtı:\n${metin3b}`);
+        throw new Error(
+          `Perde 3/B beklenen ağ retiyle bitmedi (istem sayısı: ${perde3bIstemSayisi}, geri okunan durum: ${durumB}). Sunucu yanıtı:\n${metin3b}`
+        );
       }
       kutu(`RET — AĞ DOĞRULAMASI BAŞARISIZ (HIGH katman, ${PENCERE_YUKSEK} saat)`, metin3b.split("\n"), kirmizi);
       if (perde3bIstemSayisi !== 0) {
@@ -937,24 +1514,8 @@ try {
       } else {
         yaz(kalin(`Perde 2'nin 24 saatlik penceresi burada ${PENCERE_YUKSEK} saat: aynı kapı, daha riskli eylem, daha geniş bakış.`));
       }
-
-      // We look at the account, not at what we were told: that no write happened is verified
-      // BY READING IT BACK.
-      let durumB;
-      try {
-        const [satirB] = await gaqlSatirlar(
-          istemci,
-          `SELECT campaign.id, campaign.status FROM campaign WHERE campaign.id = ${Number(aday3.id)} LIMIT 1`,
-          1
-        );
-        durumB = durumAdi(satirB?.campaign?.status);
-      } catch (e) {
-        durumB = `okunamadı (${e?.message ?? e})`;
-      }
-      // If the candidate was already handed to us as ENABLED, which is possible only in dry
-      // mode, that is not a violation.
-      if (durumB === "ENABLED" && aday3.durum !== "ENABLED") {
-        throw new Error(`GÜVENLİK İHLALİ: ret metnine rağmen kampanya #${aday3.id} ENABLED okundu.`);
+      if (yayindaOlabilir) {
+        throw new Error(`GÜVENLİK İHLALİ: ret metnine rağmen kampanya #${aday3.id} durumu "${durumB}" okundu.`);
       }
       yaz(soluk(`Geri okuma: kampanya #${aday3.id} durumu ${durumB} — yazma yapılmadı.`));
       ozet.push({

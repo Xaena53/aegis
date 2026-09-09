@@ -208,8 +208,37 @@ async function sahne(no: string, etiket: string, numara: string): Promise<void> 
     console.log(gri("    ── raw output from the gate (Turkish — the product's language) ──"));
     for (const satir of sarmala(karar.engel, 66)) console.log(gri("    " + satir));
     console.log("");
-    console.log("    " + kalin("elicitation prompts shown: ") + kirmizi(kalin("0")));
-    console.log("    " + kalin("campaign state:            ") + yesil(kalin("unchanged")));
+    /**
+     * THESE TWO LINES ARE NOT A COUNTER — AND THEY NO LONGER LOOK LIKE ONE.
+     *
+     * They used to read "elicitation prompts shown: 0" / "campaign state: unchanged": the
+     * shape of a measurement, but both values were literals typed between quotes. This
+     * script calls `agDogrula` directly — it builds no MCP client, registers no elicitation
+     * handler and calls no write tool, so there is nothing here to count and nothing here
+     * to read back. The repo is public: a jury that opens this file would find the
+     * "measurement" hard-coded, and that single discovery would put every other number in
+     * the video in doubt.
+     *
+     * So the screen states what this run really establishes — the gate refused, and a
+     * refusal returns from the approval layer (src/approval.ts) BEFORE any prompt is
+     * requested — and it hands the counting over to the command that genuinely does it:
+     * `npm run demo` drives the same server over real MCP, counts the elicitations and
+     * throws "GÜVENLİK İHLALİ" if one is ever shown.
+     *
+     * test/onarimVideoDemo.test.ts holds both ends: no counter-shaped claim while this
+     * script has no counter, and the command named on screen must really do the counting.
+     */
+    console.log(
+      "    " + kalin("approval prompt: ") + kirmizi(kalin("never reached")) +
+        gri("   the refusal returns before any prompt")
+    );
+    console.log(
+      "    " + kalin("campaign state:  ") + yesil(kalin("untouched")) +
+        gri("       this script calls no write tool")
+    );
+    console.log("");
+    console.log(gri("    Counted, not claimed: `npm run demo` runs the same server over real"));
+    console.log(gri("    MCP, counts the approval prompts and fails if one is ever shown."));
     console.log("");
     console.log(gri("    The chain stops at the first bad signal — the remaining links were"));
     console.log(gri("    never asked. A refusal does not need a second opinion."));

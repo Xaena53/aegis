@@ -64,12 +64,37 @@ const DOCKER_ZAMAN_ASIMI_MS = 20_000;
 
 /* ── CLI ─────────────────────────────────────────────────────────────────────── */
 
+/**
+ * A flag's value, in BOTH spellings: `--musteri 123` and `--musteri=123`. The `=` form used to
+ * be invisible here — `indexOf("--kampanya")` never matches `--kampanya=123`, so the flag
+ * counted as ABSENT and the rehearsal played the demo with NO campaign at all while reporting
+ * that everything was fine. The demo script spells this the same way; the two must not drift.
+ */
 function bayrakDegeri(ad) {
+  const esitli = process.argv.find((a) => a.startsWith(`${ad}=`));
+  if (esitli !== undefined) return esitli.slice(ad.length + 1);
   const i = process.argv.indexOf(ad);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : undefined;
 }
 const MUSTERI = bayrakDegeri("--musteri");
-const KAMPANYA = bayrakDegeri("--kampanya")?.replace(/\D/g, "") || undefined;
+/**
+ * The campaign id is NOT REPAIRED — the same contract as scripts/demo-senaryo.mjs, and it has
+ * to hold HERE as well, because the rehearsal is the wrapper the operator runs before the
+ * stage and it hands this value on to the demo as its own --kampanya. It used to go through
+ * `replace(/\D/g, "")`: "223-344-55" silently became 22334455 — a DIFFERENT, possibly existing
+ * campaign — and the demo's digits-only gate then saw nothing but digits and waved it through.
+ * The gate never fired on this path because the invalid value was made to LOOK valid before it
+ * got there, and the rehearsal reported "ready for the stage" for a campaign the operator had
+ * never named. An unreadable value is an ERROR, loudly, before any check runs.
+ */
+const KAMPANYA = bayrakDegeri("--kampanya");
+if (KAMPANYA !== undefined && !/^\d+$/.test(KAMPANYA)) {
+  console.error(
+    `Geçersiz --kampanya değeri: "${KAMPANYA}" — kampanya kimliği yalnız rakamlardan oluşur (örn. --kampanya 1234567890).`
+  );
+  console.error("Değer sessizce düzeltilmez: kırpılmış bir kimlik BAŞKA bir kampanyayı seçerdi.");
+  process.exit(1);
+}
 
 /* ── Reading .env: PRESENCE only, values are never printed ───────────────────── */
 

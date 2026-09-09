@@ -195,7 +195,17 @@ export function slugUret(ad) {
 
 /** The full plan summary shown in the terminal before approval — validated fields
  * only. */
-function planOzetiSatirlari({ plan, kreatif, efektifTavan, tavanKaynagi, musteri, url, yayinla, dagitim }) {
+export function planOzetiSatirlari({
+  plan,
+  kreatif,
+  efektifTavan,
+  tavanKaynagi,
+  musteri,
+  url,
+  yayinla,
+  dagitim,
+  uygulananKanal,
+}) {
   const gruplar = Array.isArray(plan.adGruplari) ? plan.adGruplari : [];
   const kelimeSayisi = gruplar.reduce(
     (t, g) => t + (Array.isArray(g?.anahtarKelimeler) ? g.anahtarKelimeler.length : 0),
@@ -212,7 +222,33 @@ function planOzetiSatirlari({ plan, kreatif, efektifTavan, tavanKaynagi, musteri
    * PART of the total.
    */
   const coklu = Array.isArray(dagitim) && dagitim.length > 1;
-  const kanalAdi = Array.isArray(dagitim) && dagitim.length ? dagitim[0].kanal : null;
+  /**
+   * THE CHANNEL NAMED ON THE SCREEN IS THE ONE THAT WILL BE WRITTEN TO - PICKED BY NAME.
+   *
+   * It used to be `dagitim[0].kanal`, which left the label to the MODEL's ordering while the
+   * FIGURE beside it was already picked by name (uygulanacakPay). With the allocation coming
+   * back as `[{kanal:"meta",...},{kanal:"google",...}]` the screen read "30 TL - the SHARE of
+   * the 'meta' channel" and "this approval covers ONLY the 'meta' share", while the campaign
+   * being created was a GOOGLE one. The operator approved one platform and got another; the
+   * screen even contradicted itself, listing meta's share as 70 two lines above.
+   *
+   * The same rule as the creation path now governs the label: `uygulanacakPay` by name.
+   */
+  const uygulananPay = uygulanacakPay(dagitim, uygulananKanal);
+  const kanalAdi = uygulananPay ? uygulananPay.kanal : null;
+  /**
+   * Fail closed: if the channel that will be written to cannot be named, the approval screen
+   * is NOT shown at all. A screen that names no channel - or the wrong one - would collect an
+   * approval for something other than what gets created, so no screen is the safe outcome:
+   * the throw stops the run before the first write.
+   */
+  if (coklu && !kanalAdi) {
+    throw new Error(
+      `Onay ekranı kurulamadı: bütçe ${dagitim.length} kanala bölündü ama yazılacak kanal ` +
+        `('${String(uygulananKanal)}') dağıtımda bulunamadı (${dagitimOzeti(dagitim)}). ` +
+        `Hangi kanalın onaylandığı söylenemeyeceği için hiçbir yazma yapılmaz.`
+    );
+  }
   const butceSatirlari = coklu
     ? [
         `│ Günlük bütçe : ${plan.butceGunlukTL} TL — '${kanalAdi}' kanalının PAYI`,
@@ -327,33 +363,49 @@ async function efektifTavanBelirle(mcp, musteri, cliTavan) {
  * as 'Evet', the outcome is a REFUSAL. A silent channel does not stand in for approval — it
  * fails closed, the same contract as operatoreSor in the demo script.
  *
- * THERE IS A SECOND CONSEQUENCE, AND IT IS DELIBERATE TOO: because each call builds its own
- * interface, on piped input the first question consumes stdin and the SECOND question sees
- * EOF immediately.
- * So `printf 'Evet\nEvet\n' | npm run brain -- --uygula --yayinla`
- * CANNOT AUTOMATE the go-live STEP; the second approval is refused and the campaign stays
- * PAUSED.
+ * A CLOSED INPUT IS NOT THE ONLY WAY TO REACH THIS GATE WITH NOBODY BEHIND IT, WHICH IS WHY
+ * THE CHANNEL ITSELF IS CHECKED BEFORE THE QUESTION IS ASKED: an OPEN pipe answers.
+ * Measured, not assumed - `echo evet | ...` used to resolve `rl.question` with "evet"
+ * BEFORE the close fired, so the WRITE approval went through with no one at the keyboard.
+ * Only the SECOND question saw EOF, which is why `printf 'Evet\nEvet\n' | ...` looked
+ * safe: the gate that came first had already been passed.
  *
- * That is not a shortcoming, it is the very reason the gate exists: human approval that can
- * be fed down a pipe is not human approval. For a script-driven demonstration there is
- * `npm run demo`, and it says plainly on screen that it is giving the approval itself.
+ * So the rule is the channel, not the timing: if stdin is not a terminal the answer is ""
+ * and the run is refused - a pipe, a file, `< /dev/null`, CI, a background job alike.
+ * Human approval that can be fed down a pipe is not human approval. For a script-driven
+ * demonstration there is `npm run demo`, and it says plainly on screen that it is giving
+ * the approval itself.
  */
 /**
  * THE HUMAN GATE. An empty string is ALWAYS a refusal, and that is a rule, not a quiet
  * default.
  *
- * The question is RACED against the stream closing. Without that race, in an environment
- * whose input is closed — a pipeline, CI, a background job — `rl.question` never resolves:
- * the process hangs and looks from outside like it is working. Because the close returns ""
- * and the caller accepts ONLY "evet", a question that cannot be answered becomes a refusal —
- * and passing approval down a pipe is deliberately impossible: `echo evet | ...` gets caught
- * by the same close race.
+ * TWO LOCKS, GUARDING DIFFERENT THINGS. First: the input must be a TERMINAL, so a channel
+ * with no human on it never gets to answer at all. Second, for the terminal that DOES
+ * answer, the question is RACED against the stream closing - a session dropped mid-question
+ * would otherwise leave `rl.question` unresolved, the process hanging while looking from
+ * outside like it is working. The close resolves with "" and the caller accepts ONLY
+ * "evet", so an unanswerable question is a refusal on either lock.
  *
  * The streams are taken as parameters and default to the real ones in production. That seam
- * is for the tests alone, so the gate's behaviour can be exercised without a real
- * terminal.
+ * is for the tests alone, so the gate's behaviour can be exercised without a real terminal;
+ * a stand-in stream has to set `isTTY` itself to be treated as one.
  */
 export async function operatorOnayi(soru, { girdi = process.stdin, cikti = process.stdout } = {}) {
+  /**
+   * THE CHANNEL IS CHECKED BEFORE THE QUESTION IS ASKED. Not being a terminal is not a
+   * suspicion to be weighed, it is a refusal: whatever arrives over such a channel was not
+   * typed by an operator standing in front of this screen. The refusal is LOUD - whoever
+   * piped the run is told why, so it never reads as a hang or as a silent "no".
+   */
+  if (!girdi || girdi.isTTY !== true) {
+    cikti?.write?.(
+      "\nOnay ALINMADI: bu soru yalnız gerçek bir terminalden cevaplanabilir; stdin bir " +
+        "boru/dosya/CI girdisi (örn. `echo evet | ...`). Ret sayıldı — hiçbir yazma " +
+        "yapılmadı.\n"
+    );
+    return "";
+  }
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: girdi, output: cikti });
   try {
@@ -490,6 +542,9 @@ async function ana() {
       console.log(`\n[4/${N}] Uygulama — insan onayı gerekiyor.`);
       for (const satir of planOzetiSatirlari({
         dagitim,
+        // The screen names the channel the campaign is created on, not the model's first
+        // entry - the same share the plan was built with.
+        uygulananKanal: birincilPay.kanal,
         plan,
         kreatif,
         efektifTavan,
@@ -527,13 +582,35 @@ async function ana() {
     let yayinSonucu;
     if (girdi.yayinla) {
       console.log(`\n[5/${N}] Yayına alma — AYRI ve açık ikinci onay gerekiyor.`);
-      if (!uygulamaSonucu || uygulamaSonucu.basari !== true || !uygulamaSonucu.kampanyaId) {
-        const neden =
-          uygulamaSonucu === undefined
-            ? "kurulum onayı verilmedi — ortada yayına alınacak kampanya yok."
-            : "kurulum tamamlanmadı (kampanya yarım ya da ID doğrulanamadı); yarım kampanya yayına alınmaz.";
-        console.log(`Yayına alma ATLANDI: ${neden}`);
-        yayinSonucu = { denendi: false, durum: "atlandi", sonucMetni: neden, kanitSatirlari: [] };
+      /**
+       * The name the ACCOUNT carries, as uygula() reports it — never plan.kampanyaAdi.
+       * yayinaAl strips this exact string out of the copy of the server's answer it
+       * classifies, so a wrong string here breaks the classification in silence (see the
+       * comment at the yayinaAl call below). Not knowing that name is therefore a reason NOT
+       * TO GO LIVE rather than a detail to shrug off: unknown goes to refusal.
+       */
+      const yazilanAd = uygulamaSonucu?.kampanyaAdi;
+      const adBilinmiyor = typeof yazilanAd !== "string" || yazilanAd.trim() === "";
+      let atlamaNedeni;
+      if (uygulamaSonucu === undefined) {
+        atlamaNedeni = "kurulum onayı verilmedi — ortada yayına alınacak kampanya yok.";
+      } else if (uygulamaSonucu.basari !== true || !uygulamaSonucu.kampanyaId) {
+        atlamaNedeni =
+          "kurulum tamamlanmadı (kampanya yarım ya da ID doğrulanamadı); yarım kampanya yayına alınmaz.";
+      } else if (adBilinmiyor) {
+        atlamaNedeni =
+          "kurulumun hesaba YAZDIĞI kampanya adı geri dönmedi — yayın denemesinin sonucu ağ " +
+          "kapısı reddi mi, sıradan bir sunucu reddi mi, güvenilir biçimde sınıflandırılamaz. " +
+          "Bilinmeyen ad redde gider; kampanya PAUSED kalıyor.";
+      }
+      if (atlamaNedeni) {
+        console.log(`Yayına alma ATLANDI: ${atlamaNedeni}`);
+        yayinSonucu = {
+          denendi: false,
+          durum: "atlandi",
+          sonucMetni: atlamaNedeni,
+          kanitSatirlari: [],
+        };
       } else {
         for (const satir of yayinOzetiSatirlari({
           plan,
@@ -561,12 +638,26 @@ async function ana() {
               kampanyaId: uygulamaSonucu.kampanyaId,
               musteriId: girdi.musteri,
               /**
-               * The name is passed in so it can be removed from the CLASSIFICATION of the
-               * result: the server puts the campaign name into its refusal text, and that
-               * name was written by the model, so a pattern search could mistake the
-               * model's free text for the gate's own output.
+               * THE NAME HANDED OVER IS THE ONE THE ACCOUNT CARRIES, NOT THE ONE THE MODEL
+               * WROTE.
+               *
+               * yayinaAl removes this string from the copy of the server's answer it
+               * classifies: the server quotes the campaign's name in its refusal text, and
+               * that name is the MODEL's free text, so a pattern search must not read it as
+               * the gate's own output.
+               *
+               * plan.kampanyaAdi is NOT that string. uygula() trims the plan's name and
+               * prefixes a run stamp, so what stands in the server's answer is
+               * "<damga> — <trimlenmiş ad>". Handing the bare model string over here does not
+               * merely strip too little — it strips TOO MUCH, everywhere the phrase occurs:
+               * a campaign the model called "AĞ DOĞRULAMASI BAŞARISIZ" erased the gate's OWN
+               * headline out of a GENUINE network refusal, whose text carries no campaign
+               * name at all. That refusal was then classified 'reddedildi' and the report
+               * never printed its "GÜVENLİK KAPISI ÇALIŞTI" block: the model got to choose
+               * when the network gate's work disappeared from the record. Measured, not
+               * assumed — see test/yayinAdAyiklama.test.mjs.
                */
-              kampanyaAdi: plan.kampanyaAdi,
+              kampanyaAdi: yazilanAd,
             },
             { cagir: mcp.cagir }
           );
