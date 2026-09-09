@@ -584,7 +584,7 @@ rejected by two layers that masked each other, so neither could be shown to work
 ### Live trust-chain verification
 
 `npm run smoke` proves the Google side against a real account. `npm run agtest` does the same
-for the network side: twenty-two checks against Nokia's live platform in one command, covering
+for the network side: twenty-three checks against Nokia's live platform in one command, covering
 every link, the step-up path and the risk mapping.
 
 Every check runs through the production path — `nacIstemciSecenekleri()` and `agDogrula()` —

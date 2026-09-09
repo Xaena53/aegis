@@ -573,7 +573,7 @@ katman birbirini maskeliyordu — yani ikisinin de çalıştığı gösterilemiy
 ### Güven zincirinin canlı doğrulaması
 
 `npm run smoke` Google tarafını gerçek hesaba karşı kanıtlar. `npm run agtest` aynı şeyi ağ
-tarafı için yapar: Nokia'nın canlı platformuna karşı tek komutta yirmi iki kontrol — bütün
+tarafı için yapar: Nokia'nın canlı platformuna karşı tek komutta yirmi üç kontrol — bütün
 halkalar, kademeli doğrulama ve risk eşlemesi.
 
 Her kontrol üretim yolundan geçer — `nacIstemciSecenekleri()` ve `agDogrula()` — elle kurulmuş
